@@ -23,7 +23,7 @@ VIDEO_STORAGE_DIR = "saved_videos"
 os.makedirs(VIDEO_STORAGE_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------------------
-# 2. BULLETPROOF CSS (STOPS MATERIAL ICON BLEED & DARK CONTAINER OVERLAYS)
+# 2. BULLETPROOF CSS (PREVENTS MATERIAL ICON BLEED & DARK OVERLAY BOXES)
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
@@ -36,12 +36,12 @@ st.markdown("""
             color: #0F172A !important;
         }
 
-        /* Targeted Text Color (Prevents breaking Material Icons) */
+        /* Targeted Text Color (Prevents breaking Material Icons like arrow_drop_down) */
         p, h1, h2, h3, h4, h5, h6, label, span, li, td, th {
             color: #0F172A !important;
         }
 
-        /* Markdown & Preparation Tab Visibility */
+        /* Markdown Container Visibility */
         [data-testid="stMarkdownContainer"] p,
         [data-testid="stMarkdownContainer"] li,
         [data-testid="stMarkdownContainer"] h1,
@@ -51,7 +51,7 @@ st.markdown("""
             color: #0F172A !important;
         }
 
-        /* Expander Title & Container Fix */
+        /* Expander Container Fix */
         div[data-aria-expanded="true"] p, 
         div[data-aria-expanded="false"] p,
         [data-testid="stExpander"] details summary p {
@@ -65,7 +65,7 @@ st.markdown("""
             border-radius: 8px !important;
         }
 
-        /* File Uploader Fix (Prevents dark box background) */
+        /* File Uploader Fix (Removes dark overlay box) */
         [data-testid="stFileUploader"] {
             border: 2px dashed #0284C7 !important;
             border-radius: 12px !important;
@@ -87,7 +87,7 @@ st.markdown("""
             border-right: 1px solid #E2E8F0 !important;
         }
 
-        /* Form Controls */
+        /* Form Inputs */
         div[data-baseweb="select"] > div,
         .stSelectbox select, 
         .stTextArea textarea, 
@@ -115,7 +115,7 @@ st.markdown("""
             background-color: #1D4ED8 !important;
         }
 
-        /* Tab Navigation Styling */
+        /* Tab Navigation Bar */
         .stTabs [data-baseweb="tab-list"] {
             gap: 12px;
             border-bottom: 2px solid #E2E8F0;
@@ -169,7 +169,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------------------
-# 3. HELPER FUNCTIONS & LLM PIPELINE
+# 3. HELPER FUNCTIONS & API PIPELINE WITH SECRETS RESOLUTION
 # ------------------------------------------------------------------------------
 @st.cache_resource
 def load_speech_model():
@@ -177,8 +177,17 @@ def load_speech_model():
 
 whisper_model = load_speech_model()
 
-GROQ_API_KEY = "YOUR_GROQ_API_KEY_HERE"
-client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY != "YOUR_GROQ_API_KEY_HERE" else None
+# Fetch GROQ API key safely from Streamlit Secrets or Environment
+GROQ_API_KEY = None
+if "GROQ_API_KEY" in st.secrets:
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+elif os.getenv("GROQ_API_KEY"):
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+if GROQ_API_KEY and GROQ_API_KEY != "YOUR_GROQ_API_KEY_HERE":
+    client = Groq(api_key=GROQ_API_KEY)
+else:
+    client = None
 
 if "history" not in st.session_state:
     st.session_state["history"] = []
@@ -217,7 +226,7 @@ Evaluate candidate responses with technical rigor.
 
 def get_groq_response(prompt):
     if not client:
-        return "GROQ API Key is missing. Replace YOUR_GROQ_API_KEY_HERE in app.py."
+        return "GROQ API Key is missing. Please add 'GROQ_API_KEY' to Streamlit App Settings -> Secrets."
     try:
         response = client.chat.completions.create(
             messages=[
@@ -382,18 +391,18 @@ with tab_practice:
 
     if resume_file is not None:
         resume_text = extract_pdf_data(resume_file)
-        with st.spinner("Extracting comprehensive resume details..."):
+        with st.spinner("Extracting candidate resume details..."):
             parse_prompt = f"""
             Analyze the following resume text and return STRICT JSON with exact keys:
             {{
                 "Name": "<Candidate Full Name>",
                 "Education": "<Degrees, Institutions, Specializations>",
-                "Work_Experience": "<Total years, key roles, companies, and key responsibilities>",
+                "Work_Experience": "<Total years, key roles, companies, and responsibilities>",
                 "Key_Skills": "<Technical and functional skills>",
-                "Projects_Achievements": "<Key projects, research, doctorate focus, or certifications>",
-                "Summary": "<2-3 sentence overview>"
+                "Projects_Achievements": "<Key projects, research, or certifications>",
+                "Summary": "<2-3 sentence summary>"
             }}
-            Do not include any commentary or markdown wrap outside valid JSON.
+            Do not include commentary or markdown wrapping outside valid JSON.
             Resume Text:
             {resume_text[:3500]}
             """
@@ -410,12 +419,12 @@ with tab_practice:
             st.session_state["candidate_name"] = c_name
             st.session_state["resume_details"] = resume_data
             
-            st.success(f"Resume loaded successfully for {st.session_state['candidate_name']}!")
+            st.success(f"Resume loaded for {st.session_state['candidate_name']}!")
             
-            with st.expander("Extracted Resume Details & Insights"):
+            with st.expander("Extracted Resume Insights"):
                 if isinstance(resume_data, dict):
                     st.markdown(f"**Candidate Name:** {resume_data.get('Name', 'N/A')}")
-                    st.markdown(f"**Education Background:** {resume_data.get('Education', 'N/A')}")
+                    st.markdown(f"**Education:** {resume_data.get('Education', 'N/A')}")
                     st.markdown(f"**Work Experience:** {resume_data.get('Work_Experience', 'N/A')}")
                     st.markdown(f"**Key Skills:** {resume_data.get('Key_Skills', 'N/A')}")
                     st.markdown(f"**Projects & Achievements:** {resume_data.get('Projects_Achievements', 'N/A')}")
@@ -440,7 +449,7 @@ with tab_practice:
     elif category == "Company Specific":
         selected_comp = st.selectbox("Select Target Recruiter:", IPER_RECRUITERS)
 
-    # RESUME QUESTION GENERATION & REGULAR QUESTION GENERATION
+    # GENERATE INTERVIEW QUESTION
     if st.button("Generate Interview Question", use_container_width=True):
         if category == "Resume-Based (Tailored)":
             if not st.session_state.get("resume_details"):
