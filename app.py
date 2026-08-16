@@ -14,26 +14,27 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # ------------------------------------------------------------------------------
-# 1. STREAMLIT CONFIGURATION & ENVIRONMENT Setup
+# 1. macOS FFMPEG ENVIRONMENT FIX & STREAMLIT CONFIGURATION
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="IPER Placement & Interview Portal", layout="wide")
-
+# Explicitly append standard macOS binary paths (Apple Silicon & Intel) for ffmpeg detection
+os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin" + os.pathsep + "/usr/local/bin" + os.pathsep + "/usr/bin"
 ssl._create_default_https_context = ssl._create_unverified_context
-os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin" + os.pathsep + "/usr/local/bin"
+
+st.set_page_config(page_title="IPER Placement & Interview Portal", layout="wide")
 
 VIDEO_STORAGE_DIR = "saved_videos"
 os.makedirs(VIDEO_STORAGE_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------------------
-# 2. NAVY BLUE & WHITE THEME (SAFE STYLING WITHOUT ICON/LIGATURE BREAKS)
+# 2. NAVY BLUE & WHITE THEME (CLEAN & ISOLATED STYLING)
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         
-        /* Global Font & Canvas Settings */
+        /* Global Canvas */
         html, body, .stApp {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
             background-color: #FFFFFF !important;
             color: #0F172A !important;
         }
@@ -43,20 +44,19 @@ st.markdown("""
             padding-top: 2rem !important;
         }
 
-        /* Headings */
+        /* Typography */
         h1, h2, h3, h4, h5, h6 {
             color: #0F172A !important;
             font-family: 'Inter', sans-serif !important;
             font-weight: 700 !important;
         }
 
-        /* Standard Text Paragraphs and Labels */
         p, label, td, th {
             color: #1E293B !important;
             font-family: 'Inter', sans-serif !important;
         }
 
-        /* Radio Buttons - Navy Blue Theme */
+        /* Radio Buttons */
         div[role="radiogroup"] label {
             color: #0F172A !important;
         }
@@ -72,7 +72,7 @@ st.markdown("""
             border-right: 1px solid #E2E8F0 !important;
         }
 
-        /* Dropdowns & Text Inputs */
+        /* Inputs & Selectboxes */
         div[data-baseweb="select"] > div,
         .stSelectbox select, 
         .stTextArea textarea, 
@@ -84,7 +84,7 @@ st.markdown("""
             font-family: 'Inter', sans-serif !important;
         }
 
-        /* Unified Navy Blue Action Buttons */
+        /* Navy Action Buttons */
         .stButton > button {
             background-color: #0F172A !important;
             color: #FFFFFF !important;
@@ -104,7 +104,7 @@ st.markdown("""
             border-color: #1E3A8A !important;
         }
 
-        /* File Uploader Clean Border Fix */
+        /* Native File Uploader Clean Container */
         [data-testid="stFileUploader"] {
             border: 1px dashed #0F172A !important;
             border-radius: 6px !important;
@@ -112,7 +112,7 @@ st.markdown("""
             background-color: #FFFFFF !important;
         }
 
-        /* Sidebar Navigation Items */
+        /* Sidebar Navigation Radios */
         [data-testid="stSidebar"] div[role="radiogroup"] > label {
             background-color: #FFFFFF !important;
             border: 1px solid #E2E8F0 !important;
@@ -433,347 +433,4 @@ if selected_nav == "Resume Checker & Job Matcher":
                 """
                 parsed_raw = get_groq_response(parse_prompt)
                 try:
-                    clean_json = parsed_raw.replace("```json", "").replace("```", "").strip()
-                    resume_data = json.loads(clean_json)
-                    c_name = resume_data.get("Name", "Candidate")
-                except Exception:
-                    c_name = "Candidate"
-                    resume_data = {"Summary": parsed_raw, "RawText": res_raw_text[:2000]}
-                
-                st.session_state["candidate_name"] = c_name
-                st.session_state["resume_details"] = resume_data
-                st.success(f"Loaded profile for **{st.session_state['candidate_name']}**")
-
-    with col_jd:
-        st.subheader("2. Target Job Description")
-        jd_input_option = st.radio("Provide Job Description via:", ["Upload File (PDF/DOCX/Image)", "Paste Text Direct"], horizontal=True)
-        
-        jd_text = ""
-        if jd_input_option == "Upload File (PDF/DOCX/Image)":
-            jd_file = st.file_uploader("Upload Job Description File:", type=["pdf", "docx", "doc", "png", "jpg", "jpeg"], key="ats_jd_upload")
-            if jd_file:
-                jd_text = extract_text_from_file(jd_file)
-                st.info(f"Loaded File: `{jd_file.name}`")
-        else:
-            jd_text = st.text_area("Paste Job Description Text Here:", height=180, placeholder="Paste requirements, job duties, and key qualifications...")
-
-    st.markdown("---")
-
-    if st.button("Check Match & Review Suggestions", use_container_width=True):
-        if not ats_resume_file:
-            st.error("Please upload your candidate resume first.")
-        elif not jd_text.strip():
-            st.error("Please upload or paste a Job Description.")
-        else:
-            with st.spinner("Reviewing match and alignment..."):
-                candidate_name = st.session_state.get("candidate_name", "Candidate")
-                resume_content = json.dumps(st.session_state.get("resume_details", {}))
-                
-                ats_prompt = f"""
-                Act as a helpful Corporate Recruiter & Placement Reviewer at IPER Bhopal.
-                Evaluate the resume alignment for candidate '{candidate_name}'.
-
-                Resume Information:
-                {resume_content}
-
-                Job Description Information:
-                {jd_text}
-
-                Return ONLY valid JSON with this exact structure:
-                {{
-                    "CandidateName": "{candidate_name}",
-                    "ATSScore": <0-100 integer score>,
-                    "Category": "<MUST be exactly one of: High Match | Good Match | Needs Improvement>",
-                    "ExecutiveSummary": "<Greeting addressing {candidate_name} by name with a friendly summary of overall fit>",
-                    "Strengths": ["<Strength 1>", "<Strength 2>", "<Strength 3>"],
-                    "AreasOfImprovement": ["<Area 1>", "<Area 2>", "<Area 3>"],
-                    "RecommendedChanges": ["<Specific bullet update 1>", "<Keyword addition 2>", "<Formatting tip 3>"],
-                    "MissingKeywords": ["<Keyword 1>", "<Keyword 2>", "<Keyword 3>"]
-                }}
-                """
-                raw_ats_response = get_groq_response(ats_prompt)
-                
-                try:
-                    clean_ats = raw_ats_response.replace("```json", "").replace("```", "").strip()
-                    ats_result = json.loads(clean_ats)
-                    
-                    st.subheader(f"Resume Analysis for {candidate_name}")
-                    
-                    score = ats_result.get("ATSScore", 70)
-                    category_rating = ats_result.get("Category", "Good Match")
-                    
-                    m1, m2 = st.columns(2)
-                    with m1:
-                        st.metric("Overall Match Score", f"{score} / 100")
-                    with m2:
-                        st.metric("Fit Status", category_rating)
-                    
-                    st.write(ats_result.get("ExecutiveSummary", ""))
-                    st.markdown("---")
-
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.markdown("### Profile Strengths")
-                        for str_item in ats_result.get("Strengths", []):
-                            st.markdown(f"- **{str_item}**")
-                            
-                        st.markdown("### Suggested Keywords to Add")
-                        for kw in ats_result.get("MissingKeywords", []):
-                            st.markdown(f"- `{kw}`")
-                            
-                    with c2:
-                        st.markdown("### Areas to Improve")
-                        for imp in ats_result.get("AreasOfImprovement", []):
-                            st.markdown(f"- {imp}")
-                            
-                        st.markdown("### Practical Recommendations")
-                        for chg in ats_result.get("RecommendedChanges", []):
-                            st.markdown(f"- {chg}")
-
-                except Exception:
-                    st.markdown(raw_ats_response)
-
-# SECTION 2: INTERVIEW PREPARATION GUIDE
-elif selected_nav == "Interview Preparation Guide":
-    st.title("Interview Preparation Guide")
-    st.caption("Select a business domain and question to study key evaluation objectives, effective response frameworks, and model benchmark answers.")
-    
-    prep_category = st.selectbox("Select Study Domain:", ["General and Core Skills"] + SPECIALIZATIONS + ["Company Specific"])
-    
-    selected_question = None
-    if prep_category == "Company Specific":
-        comp_choice = st.selectbox("Select Target Company:", IPER_RECRUITERS)
-        if st.button("Load Top Recruiter Questions"):
-            with st.spinner(f"Retrieving top questions for {comp_choice}..."):
-                q_prompt = f"Generate 5 popular technical and situational interview questions asked by {comp_choice} during campus hiring."
-                st.markdown(get_groq_response(q_prompt))
-    else:
-        q_list = EXHAUSTIVE_QUESTIONS.get(prep_category, ["Describe a key challenge you faced and how you resolved it."])
-        selected_question = st.selectbox(f"Select Question to Study (15+ Available under {prep_category}):", q_list)
-
-    if selected_question:
-        st.markdown("---")
-        st.subheader(f"Study Guide: {selected_question}")
-        
-        if st.button("Generate Complete Answer Framework & Model Answer"):
-            with st.spinner("Preparing answer breakdown..."):
-                study_prompt = f"""
-                Act as a senior MBA Placement Advisor at IPER Bhopal.
-                Analyze this interview question for candidates:
-                
-                Question: "{selected_question}"
-                Domain: "{prep_category}"
-
-                Provide a clean, structured guide containing:
-                1. WHAT INTERVIEWERS LOOK FOR (Key competencies being evaluated).
-                2. HOW TO STRUCTURE YOUR ANSWER (Step-by-step structure like STAR or CAR framework).
-                3. MODEL BENCHMARK ANSWER (A clear, high-scoring sample response).
-                """
-                study_guide = get_groq_response(study_prompt)
-                st.markdown(study_guide)
-
-# SECTION 3: INTERVIEW PRACTICE ROOM
-elif selected_nav == "Interview Practice Room":
-    st.title("Interview Practice Room")
-    st.caption("Practice audio or video interview responses and receive structured, constructive feedback.")
-    
-    if st.session_state.get("resume_details"):
-        st.markdown(f"**Active Candidate:** {st.session_state['candidate_name']} *(Resume loaded)*")
-    else:
-        st.markdown("*(Tip: You can upload your resume in the **Resume Checker** section for custom questions.)*")
-
-    st.markdown("---")
-    col_mode, col_diff, col_cat = st.columns(3)
-    with col_mode:
-        mode = st.radio("Practice Format:", ["Audio Response Mode", "Video Response Mode"])
-    with col_diff:
-        difficulty = st.selectbox("Question Level:", ["Basic", "Intermediate", "Advanced"])
-    with col_cat:
-        category = st.selectbox("Question Focus:", ["Resume-Based (Custom)", "General and Core Skills", "Specialization", "Company Specific"])
-
-    selected_spec = None
-    selected_comp = None
-    if category == "Specialization":
-        selected_spec = st.selectbox("Select Specialization Track:", SPECIALIZATIONS)
-    elif category == "Company Specific":
-        selected_comp = st.selectbox("Select Target Recruiter:", IPER_RECRUITERS)
-
-    if st.button("Get Practice Question", use_container_width=True):
-        if category == "Resume-Based (Custom)":
-            if not st.session_state.get("resume_details"):
-                st.warning("Please upload your resume in the Resume Checker section first to generate custom questions.")
-            else:
-                prompt = f"""
-                Act as a supportive MBA interviewer at IPER Bhopal. 
-                Generate ONE interview question tailored to {st.session_state['candidate_name']}'s resume profile:
-                {json.dumps(st.session_state['resume_details'])}
-                Difficulty level: {difficulty}
-                Return ONLY the question text clearly.
-                """
-                with st.spinner("Generating question..."):
-                    st.session_state["current_question"] = get_groq_response(prompt)
-        else:
-            ctx = f"Domain: {category}, Level: {difficulty}"
-            if selected_spec: ctx += f", Track: {selected_spec}"
-            if selected_comp: ctx += f", Target Company: {selected_comp}"
-            if st.session_state["resume_details"]: ctx += f", Candidate Context: {json.dumps(st.session_state['resume_details'])}"
-            
-            prompt = f"Act as an MBA interviewer at IPER Bhopal. Generate ONE interview question for '{st.session_state['candidate_name']}' based on: {ctx}. Return ONLY question text."
-            with st.spinner("Retrieving question..."):
-                st.session_state["current_question"] = get_groq_response(prompt)
-
-    if "current_question" in st.session_state:
-        st.markdown(f"### Question for {st.session_state['candidate_name']}")
-        st.write(f"*{st.session_state['current_question']}*")
-        st.markdown("---")
-
-        extracted_transcript = ""
-        saved_video_filename = "N/A"
-
-        if mode == "Audio Response Mode":
-            st.subheader("Record Your Audio Answer")
-            audio_data = st.audio_input("Click to record your voice:")
-            if audio_data is not None:
-                st.audio(audio_data)
-                with st.spinner("Converting audio to text..."):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-                        tmp_file.write(audio_data.getvalue())
-                        tmp_path = tmp_file.name
-                    try:
-                        extracted_transcript = transcribe_indian_english_audio(tmp_path)
-                    except Exception as err:
-                        st.error(f"Speech transcription error: {err}")
-                    finally:
-                        if os.path.exists(tmp_path): os.remove(tmp_path)
-                
-                if extracted_transcript:
-                    st.success("Audio recorded and transcribed successfully.")
-
-        elif mode == "Video Response Mode":
-            st.subheader("1. Record & Save Video")
-            render_video_recorder_component()
-            
-            st.subheader("2. Upload Saved Video File")
-            uploaded_video = st.file_uploader("Upload recorded video file (.webm, .mp4):", type=["webm", "mp4"])
-            
-            if uploaded_video is not None:
-                ts = time.strftime("%Y%m%d_%H%M%S")
-                saved_video_filename = f"video_{ts}.webm"
-                saved_video_path = os.path.join(VIDEO_STORAGE_DIR, saved_video_filename)
-                
-                with open(saved_video_path, "wb") as f:
-                    f.write(uploaded_video.read())
-                
-                st.video(saved_video_path)
-                st.success(f"Video file saved: `{saved_video_filename}`")
-                
-                with st.spinner("Transcribing video audio track..."):
-                    try:
-                        extracted_transcript = transcribe_indian_english_audio(saved_video_path)
-                        st.success("Video audio transcribed successfully.")
-                    except Exception as err:
-                        st.error(f"Transcription error: {err}")
-
-        final_response_text = st.text_area(
-            "Answer Transcript (Review or Edit Text Before Submitting):", 
-            value=extracted_transcript, 
-            height=140
-        )
-
-        if st.button("Submit Response for Feedback"):
-            if not final_response_text.strip():
-                st.error("Please record your audio/video response or write your transcript text first.")
-            else:
-                with st.spinner("Analyzing your response..."):
-                    c_name = st.session_state['candidate_name']
-                    eval_prompt = f"""
-                    Act as an encouraging MBA placement mentor at IPER Bhopal.
-                    Evaluate the response for candidate: {c_name}.
-                    Address {c_name} warmly by name across feedback areas.
-
-                    Question Asked: {st.session_state['current_question']}
-                    Candidate Response: {final_response_text}
-                    Resume Context: {json.dumps(st.session_state.get('resume_details', {}))}
-                    Practice Mode: {mode}
-
-                    Return response in VALID JSON strictly matching this structure:
-                    {{
-                        "CandidateName": "{c_name}",
-                        "GradingScore": <0-100 integer>,
-                        "ExecutiveSummary": "<Warm greeting addressing {c_name} with an overall summary>",
-                        "TechnicalAssessment": "<Evaluation of subject knowledge and key points, addressing {c_name}>",
-                        "CommunicationAssessment": "<Assessment of clarity, structure, and delivery, addressing {c_name}>",
-                        "ResumeAlignment": "<How effectively {c_name} referenced their experience>",
-                        "KeyFlaws": "<Constructive highlights of points missed or needing clarity>",
-                        "CorrectiveSteps": "<Practical tips for {c_name} to improve next time>",
-                        "Benchmark100Answer": "<A clear, exemplary benchmark model answer>"
-                    }}
-                    """
-                    raw_eval = get_groq_response(eval_prompt)
-                    
-                    try:
-                        clean_json = raw_eval.replace("```json", "").replace("```", "").strip()
-                        eval_data = json.loads(clean_json)
-                        
-                        st.subheader(f"Feedback & Evaluation for {c_name}")
-                        score = eval_data['GradingScore']
-                        
-                        st.metric("Performance Score", f"{score} / 100")
-                        
-                        if "ExecutiveSummary" in eval_data:
-                            st.write(eval_data["ExecutiveSummary"])
-                        st.markdown("---")
-
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            st.markdown("### Subject Knowledge & Accuracy")
-                            st.write(eval_data['TechnicalAssessment'])
-                            st.markdown("### Delivery & Communication Structure")
-                            st.write(eval_data['CommunicationAssessment'])
-                        with c2:
-                            st.markdown("### Resume Connection")
-                            st.write(eval_data['ResumeAlignment'])
-                            st.markdown("### Points to Polish")
-                            st.write(eval_data['KeyFlaws'])
-
-                        st.markdown(f"### Next Steps & Coaching for {c_name}")
-                        st.write(eval_data['CorrectiveSteps'])
-
-                        with st.expander("Read Model Benchmark Answer (100/100)"):
-                            st.write(eval_data['Benchmark100Answer'])
-
-                        st.session_state["history"].append({
-                            "Timestamp": time.strftime("%Y-%m-%d %H:%M"),
-                            "Candidate": c_name,
-                            "Mode": mode,
-                            "Domain": f"{category}" + (f" - {selected_spec}" if selected_spec else ""),
-                            "Question": st.session_state['current_question'],
-                            "Score": score,
-                            "VideoFile": saved_video_filename
-                        })
-                        st.success("Session saved to practice history.")
-
-                    except Exception:
-                        st.markdown(raw_eval)
-
-# SECTION 4: PERFORMANCE DASHBOARD
-elif selected_nav == "Performance Dashboard":
-    st.title("Performance Dashboard & Progress Analytics")
-    st.caption("Track your overall practice sessions, average scores, and improvement trends over time.")
-    
-    if not st.session_state["history"]:
-        st.info("No practice attempts recorded yet. Complete a session in the Interview Practice Room to view analytics.")
-    else:
-        df = pd.DataFrame(st.session_state["history"])
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Sessions Completed", len(df))
-        m2.metric("Average Practice Score", f"{df['Score'].mean():.1f} / 100")
-        m3.metric("Highest Score Achieved", f"{df['Score'].max()} / 100")
-
-        st.markdown("---")
-        st.subheader("Score Progress Over Time")
-        st.line_chart(df, y="Score")
-
-        st.subheader("Practice History Log")
-        st.dataframe(df, use_container_width=True)
+                    clean_json = parsed_raw.replace("```json", "").replace("
