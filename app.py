@@ -14,9 +14,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # ------------------------------------------------------------------------------
-# 1. macOS FFMPEG ENVIRONMENT FIX & STREAMLIT CONFIGURATION
+# 1. ENVIRONMENT & STREAMLIT CONFIGURATION
 # ------------------------------------------------------------------------------
-# Explicitly append standard macOS binary paths (Apple Silicon & Intel) for ffmpeg detection
 os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin" + os.pathsep + "/usr/local/bin" + os.pathsep + "/usr/bin"
 ssl._create_default_https_context = ssl._create_unverified_context
 
@@ -26,13 +25,12 @@ VIDEO_STORAGE_DIR = "saved_videos"
 os.makedirs(VIDEO_STORAGE_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------------------
-# 2. NAVY BLUE & WHITE THEME (CLEAN & ISOLATED STYLING)
+# 2. UI STYLING (NAVY BLUE & WHITE THEME)
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         
-        /* Global Canvas */
         html, body, .stApp {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
             background-color: #FFFFFF !important;
@@ -44,7 +42,6 @@ st.markdown("""
             padding-top: 2rem !important;
         }
 
-        /* Typography */
         h1, h2, h3, h4, h5, h6 {
             color: #0F172A !important;
             font-family: 'Inter', sans-serif !important;
@@ -56,7 +53,6 @@ st.markdown("""
             font-family: 'Inter', sans-serif !important;
         }
 
-        /* Radio Buttons */
         div[role="radiogroup"] label {
             color: #0F172A !important;
         }
@@ -66,13 +62,11 @@ st.markdown("""
             border-color: #0F172A !important;
         }
 
-        /* Sidebar Styling */
         [data-testid="stSidebar"] {
             background-color: #FFFFFF !important;
             border-right: 1px solid #E2E8F0 !important;
         }
 
-        /* Inputs & Selectboxes */
         div[data-baseweb="select"] > div,
         .stSelectbox select, 
         .stTextArea textarea, 
@@ -84,7 +78,6 @@ st.markdown("""
             font-family: 'Inter', sans-serif !important;
         }
 
-        /* Navy Action Buttons */
         .stButton > button {
             background-color: #0F172A !important;
             color: #FFFFFF !important;
@@ -104,7 +97,6 @@ st.markdown("""
             border-color: #1E3A8A !important;
         }
 
-        /* Native File Uploader Clean Container */
         [data-testid="stFileUploader"] {
             border: 1px dashed #0F172A !important;
             border-radius: 6px !important;
@@ -112,7 +104,6 @@ st.markdown("""
             background-color: #FFFFFF !important;
         }
 
-        /* Sidebar Navigation Radios */
         [data-testid="stSidebar"] div[role="radiogroup"] > label {
             background-color: #FFFFFF !important;
             border: 1px solid #E2E8F0 !important;
