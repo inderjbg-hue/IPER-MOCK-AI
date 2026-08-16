@@ -363,10 +363,281 @@ SPECIALIZATIONS = ["Marketing", "Finance", "Human Resource (HR)", "Banking and F
 IPER_RECRUITERS = ["Amul", "Asian Paints", "HDFC Bank", "ICICI Securities", "Deloitte", "Trident Group", "Berger Paints"]
 
 # ------------------------------------------------------------------------------
-# 5. SIDEBAR NAVIGATION CONTROLS
+# 5. STUDENT AUTHENTICATION & ACCOUNT MANAGEMENT
 # ------------------------------------------------------------------------------
-st.sidebar.markdown("## IPER Placement Portal")
+import sqlite3
+import hashlib
+import secrets
+import shutil
+from datetime import datetime
+
+DATABASE_PATH = os.getenv("DATABASE_PATH", "students.db")
+ALLOWED_EMAIL_DOMAIN = "@iper.ac.in"
+
+
+def is_valid_iper_email(email):
+    email = email.strip().lower()
+    return bool(re.fullmatch(r"[A-Za-z0-9._%+-]+@iper\.ac\.in", email))
+
+
+def get_db_connection():
+    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_database():
+    conn = get_db_connection()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS students (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            scholar_id TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            password_salt TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS interview_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            timestamp TEXT NOT NULL,
+            domain TEXT,
+            score INTEGER,
+            mode TEXT,
+            question TEXT,
+            FOREIGN KEY(student_id) REFERENCES students(id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def hash_password(password, salt=None):
+    salt = salt or secrets.token_hex(16)
+    password_hash = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("utf-8"), 200_000
+    ).hex()
+    return password_hash, salt
+
+
+def verify_password(password, stored_hash, stored_salt):
+    password_hash, _ = hash_password(password, stored_salt)
+    return secrets.compare_digest(password_hash, stored_hash)
+
+
+def create_student(first_name, last_name, scholar_id, email, password):
+    email = email.strip().lower()
+    scholar_id = scholar_id.strip().upper()
+    password_hash, password_salt = hash_password(password)
+
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO students
+            (first_name, last_name, scholar_id, email, password_hash, password_salt, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                first_name.strip(),
+                last_name.strip(),
+                scholar_id,
+                email,
+                password_hash,
+                password_salt,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        )
+        conn.commit()
+        return True, "Account created successfully. You can now sign in."
+    except sqlite3.IntegrityError as exc:
+        message = str(exc).lower()
+        if "email" in message:
+            return False, "This email ID is already registered. Please sign in."
+        if "scholar_id" in message:
+            return False, "This Scholar ID is already registered."
+        return False, "This account could not be created because the details already exist."
+    finally:
+        conn.close()
+
+
+def authenticate_student(email, password):
+    email = email.strip().lower()
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM students WHERE email = ?", (email,)
+    ).fetchone()
+    conn.close()
+
+    if row and verify_password(password, row["password_hash"], row["password_salt"]):
+        return dict(row)
+    return None
+
+
+def load_student_attempts(student_id):
+    conn = get_db_connection()
+    rows = conn.execute(
+        """
+        SELECT timestamp, domain, score, mode, question
+        FROM interview_attempts
+        WHERE student_id = ?
+        ORDER BY id ASC
+        """,
+        (student_id,),
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "Timestamp": row["timestamp"],
+            "Candidate": "Student",
+            "Domain": row["domain"] or "",
+            "Score": row["score"] or 0,
+            "Mode": row["mode"] or "",
+            "Question": row["question"] or "",
+        }
+        for row in rows
+    ]
+
+
+def save_student_attempt(student_id, domain, score, mode, question):
+    conn = get_db_connection()
+    conn.execute(
+        """
+        INSERT INTO interview_attempts
+        (student_id, timestamp, domain, score, mode, question)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            student_id,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            domain,
+            int(score),
+            mode,
+            question,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def render_authentication_panel():
+    st.markdown(
+        """
+        <div style='text-align:center; padding: 30px 10px 10px 10px;'>
+            <h1 style='margin-bottom:5px;'>IPER Student Placement Portal</h1>
+            <p style='font-size:16px; color:#475569;'>Student Login & Career Readiness Hub</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    login_tab, signup_tab = st.tabs(["🔐 Student Sign In", "📝 Student Sign Up"])
+
+    with login_tab:
+        st.subheader("Sign in to your student account")
+        with st.form("student_login_form"):
+            login_email = st.text_input("Email ID", placeholder="yourname@iper.ac.in")
+            login_password = st.text_input("Password", type="password")
+            login_submitted = st.form_submit_button("Sign In", use_container_width=True)
+
+        if login_submitted:
+            normalized_email = login_email.strip().lower()
+            if not is_valid_iper_email(normalized_email):
+                st.error("Please use your official @iper.ac.in email ID.")
+            elif not login_password:
+                st.error("Please enter your password.")
+            else:
+                student = authenticate_student(normalized_email, login_password)
+                if student:
+                    st.session_state["authenticated"] = True
+                    st.session_state["student_id"] = student["id"]
+                    st.session_state["student_email"] = student["email"]
+                    st.session_state["first_name"] = student["first_name"]
+                    st.session_state["last_name"] = student["last_name"]
+                    st.session_state["scholar_id"] = student["scholar_id"]
+                    st.session_state["candidate_name"] = student["first_name"]
+                    st.session_state["history"] = load_student_attempts(student["id"])
+                    st.session_state["resume_details"] = None
+                    st.success(f"Welcome back, {student['first_name']}!")
+                    st.rerun()
+                else:
+                    st.error("Invalid email ID or password.")
+
+    with signup_tab:
+        st.subheader("Create your IPER student account")
+        st.info("Only official @iper.ac.in email IDs can be registered.")
+
+        with st.form("student_signup_form"):
+            col1, col2 = st.columns(2)
+            with col1:
+                first_name = st.text_input("First Name")
+                scholar_id = st.text_input("Scholar ID")
+                email = st.text_input("Email ID (will be used as Login ID)", placeholder="yourname@iper.ac.in")
+            with col2:
+                last_name = st.text_input("Last Name")
+                create_password = st.text_input("Create Password", type="password")
+                confirm_password = st.text_input("Confirm Password", type="password")
+
+            signup_submitted = st.form_submit_button("Create Student Account", use_container_width=True)
+
+        if signup_submitted:
+            normalized_email = email.strip().lower()
+
+            if not first_name.strip() or not last_name.strip():
+                st.error("Please enter both First Name and Last Name.")
+            elif not scholar_id.strip():
+                st.error("Please enter your Scholar ID.")
+            elif not is_valid_iper_email(normalized_email):
+                st.error("Registration is restricted to official @iper.ac.in email IDs. Personal email IDs are not allowed.")
+            elif len(create_password) < 8:
+                st.error("Password must contain at least 8 characters.")
+            elif create_password != confirm_password:
+                st.error("Create Password and Confirm Password do not match.")
+            else:
+                ok, message = create_student(
+                    first_name, last_name, scholar_id, normalized_email, create_password
+                )
+                if ok:
+                    st.success(message)
+                    st.info("Please open the Student Sign In tab and log in with your @iper.ac.in email ID.")
+                else:
+                    st.error(message)
+
+
+init_database()
+
+FFMPEG_PATH = shutil.which("ffmpeg")
+
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    render_authentication_panel()
+    st.stop()
+
+# Keep the logged-in student's first name as the permanent personalized display name.
+st.session_state["candidate_name"] = st.session_state.get("first_name", "Student")
+
+# Personalized header shown throughout the logged-in student panel.
+st.markdown(
+    f"<div style='padding:8px 0 2px 0; font-size:18px; font-weight:600; color:#0F172A;'>Welcome, {st.session_state.get("first_name", "Student")} 👋</div>",
+    unsafe_allow_html=True,
+)
+
+# ------------------------------------------------------------------------------
+# 6. SIDEBAR NAVIGATION CONTROLS
+# ------------------------------------------------------------------------------
+
+st.sidebar.markdown("## IPER Student Portal")
+st.sidebar.markdown(f"### Welcome, {st.session_state.get('first_name', 'Student')} 👋")
+st.sidebar.caption(f"Scholar ID: {st.session_state.get('scholar_id', 'N/A')}")
 st.sidebar.markdown("Career Readiness & Interview Hub")
+if not FFMPEG_PATH:
+    st.sidebar.warning("FFmpeg is not installed. Audio/video transcription will not work until FFmpeg is added to the deployment environment.")
 st.sidebar.markdown("---")
 
 selected_nav = st.sidebar.radio(
@@ -378,6 +649,12 @@ selected_nav = st.sidebar.radio(
         "Performance Dashboard"
     ]
 )
+
+if st.sidebar.button("Log Out", use_container_width=True):
+    for key in ["authenticated", "student_id", "student_email", "first_name", "last_name", "scholar_id", "candidate_name", "resume_details", "current_question"]:
+        st.session_state.pop(key, None)
+    st.session_state["history"] = []
+    st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Recent Attempts**")
@@ -431,9 +708,8 @@ if selected_nav == "Resume Checker & Job Matcher":
                     c_name = "Candidate"
                     resume_data = {"Summary": parsed_raw, "RawText": res_raw_text[:2000]}
                 
-                st.session_state["candidate_name"] = c_name
                 st.session_state["resume_details"] = resume_data
-                st.success(f"Loaded profile for **{st.session_state['candidate_name']}**")
+                st.success(f"Resume loaded successfully for **{st.session_state.get('first_name', 'Student')}**")
 
     with col_jd:
         st.subheader("2. Target Job Description")
@@ -457,7 +733,7 @@ if selected_nav == "Resume Checker & Job Matcher":
             st.error("Please upload or paste a Job Description.")
         else:
             with st.spinner("Reviewing match and alignment..."):
-                candidate_name = st.session_state.get("candidate_name", "Candidate")
+                candidate_name = st.session_state.get("first_name", "Student")
                 resume_content = json.dumps(st.session_state.get("resume_details", {}))
                 
                 ats_prompt = f"""
@@ -569,7 +845,7 @@ elif selected_nav == "Interview Practice Room":
     st.caption("Practice audio or video interview responses and receive structured, constructive feedback.")
     
     if st.session_state.get("resume_details"):
-        st.markdown(f"**Active Candidate:** {st.session_state['candidate_name']} *(Resume loaded)*")
+        st.markdown(f"**Active Student:** {st.session_state.get('first_name', 'Student')} *(Resume loaded)*")
     else:
         st.markdown("*(Tip: You can upload your resume in the **Resume Checker** section for custom questions.)*")
 
@@ -596,7 +872,7 @@ elif selected_nav == "Interview Practice Room":
             else:
                 prompt = f"""
                 Act as a supportive MBA interviewer at IPER Bhopal. 
-                Generate ONE interview question tailored to {st.session_state['candidate_name']}'s resume profile:
+                Generate ONE interview question tailored to {st.session_state.get('first_name', 'Student')}'s resume profile:
                 {json.dumps(st.session_state['resume_details'])}
                 Difficulty level: {difficulty}
                 Return ONLY the question text clearly.
@@ -609,12 +885,12 @@ elif selected_nav == "Interview Practice Room":
             if selected_comp: ctx += f", Target Company: {selected_comp}"
             if st.session_state["resume_details"]: ctx += f", Candidate Context: {json.dumps(st.session_state['resume_details'])}"
             
-            prompt = f"Act as an MBA interviewer at IPER Bhopal. Generate ONE interview question for '{st.session_state['candidate_name']}' based on: {ctx}. Return ONLY question text."
+            prompt = f"Act as an MBA interviewer at IPER Bhopal. Generate ONE interview question for '{st.session_state.get('first_name', 'Student')}' based on: {ctx}. Return ONLY question text."
             with st.spinner("Retrieving question..."):
                 st.session_state["current_question"] = get_groq_response(prompt)
 
     if "current_question" in st.session_state:
-        st.markdown(f"### Question for {st.session_state['candidate_name']}")
+        st.markdown(f"### Question for {st.session_state.get('first_name', 'Student')}")
         st.write(f"*{st.session_state['current_question']}*")
         st.markdown("---")
 
@@ -634,6 +910,8 @@ elif selected_nav == "Interview Practice Room":
                         extracted_transcript = transcribe_indian_english_audio(tmp_path)
                     except Exception as err:
                         st.error(f"Speech transcription error: {err}")
+                        if not FFMPEG_PATH:
+                            st.info("FFmpeg is missing. Add `ffmpeg` to packages.txt (Streamlit Cloud) or install it in your Dockerfile (Cloud Run).")
                     finally:
                         if os.path.exists(tmp_path): os.remove(tmp_path)
                 
@@ -649,7 +927,8 @@ elif selected_nav == "Interview Practice Room":
             
             if uploaded_video is not None:
                 ts = time.strftime("%Y%m%d_%H%M%S")
-                saved_video_filename = f"video_{ts}.webm"
+                video_ext = "mp4" if uploaded_video.name.lower().endswith(".mp4") else "webm"
+                saved_video_filename = f"video_{ts}.{video_ext}"
                 saved_video_path = os.path.join(VIDEO_STORAGE_DIR, saved_video_filename)
                 
                 with open(saved_video_path, "wb") as f:
@@ -664,6 +943,8 @@ elif selected_nav == "Interview Practice Room":
                         st.success("Video audio transcribed successfully.")
                     except Exception as err:
                         st.error(f"Speech transcription error: {err}")
+                        if not FFMPEG_PATH:
+                            st.info("FFmpeg is missing. Add `ffmpeg` to packages.txt (Streamlit Cloud) or install it in your Dockerfile (Cloud Run).")
 
         final_response_text = st.text_area(
             "Answer Transcript (Review or Edit Text Before Submitting):", 
@@ -676,7 +957,7 @@ elif selected_nav == "Interview Practice Room":
                 st.error("Please record your audio/video response or write your transcript text first.")
             else:
                 with st.spinner("Analyzing your response..."):
-                    c_name = st.session_state['candidate_name']
+                    c_name = st.session_state.get('first_name', 'Student')
                     eval_prompt = f"""
                     Act as an encouraging MBA placement mentor at IPER Bhopal.
                     Evaluate the response for candidate: {c_name}.
@@ -732,14 +1013,23 @@ elif selected_nav == "Interview Practice Room":
                         st.markdown("### Benchmark 100/100 Answer")
                         st.write(eval_result.get("Benchmark100Answer", ""))
 
-                        st.session_state["history"].append({
-                            "Timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        attempt_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                        attempt = {
+                            "Timestamp": attempt_timestamp,
                             "Candidate": c_name,
                             "Domain": category,
                             "Score": score,
                             "Mode": mode,
                             "Question": st.session_state.get("current_question", "")
-                        })
+                        }
+                        st.session_state["history"].append(attempt)
+                        save_student_attempt(
+                            st.session_state["student_id"],
+                            category,
+                            score,
+                            mode,
+                            st.session_state.get("current_question", "")
+                        )
 
                     except (json.JSONDecodeError, TypeError, ValueError):
                         st.warning("The AI response was not returned as valid JSON. The raw feedback is shown below.")
@@ -776,7 +1066,7 @@ elif selected_nav == "Performance Dashboard":
             dashboard_rows.append({
                 "Attempt": index,
                 "Date & Time": item.get("Timestamp", ""),
-                "Candidate": item.get("Candidate", "Candidate"),
+                "Candidate": st.session_state.get("first_name", item.get("Candidate", "Student")),
                 "Domain": item.get("Domain", ""),
                 "Mode": item.get("Mode", ""),
                 "Score": item.get("Score", 0)
