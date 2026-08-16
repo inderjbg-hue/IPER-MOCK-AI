@@ -24,14 +24,14 @@ VIDEO_STORAGE_DIR = "saved_videos"
 os.makedirs(VIDEO_STORAGE_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------------------
-# 2. NAVY BLUE & WHITE THEME WITH INTER FONT TYPOGRAPHY
+# 2. NAVY BLUE & WHITE THEME (SAFE STYLING WITHOUT ICON/LIGATURE BREAKS)
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         
         /* Global Font & Canvas Settings */
-        html, body, .stApp, .main, [class*="css"] {
+        html, body, .stApp {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
             background-color: #FFFFFF !important;
             color: #0F172A !important;
@@ -42,47 +42,27 @@ st.markdown("""
             padding-top: 2rem !important;
         }
 
-        /* Standardized Navy Blue Headings */
+        /* Headings */
         h1, h2, h3, h4, h5, h6 {
             color: #0F172A !important;
             font-family: 'Inter', sans-serif !important;
             font-weight: 700 !important;
         }
 
-        p, label, span, li, td, th {
+        /* Standard Text Paragraphs and Labels */
+        p, label, td, th {
             color: #1E293B !important;
             font-family: 'Inter', sans-serif !important;
         }
 
-        [data-testid="stMarkdownContainer"] p,
-        [data-testid="stMarkdownContainer"] li {
-            color: #1E293B !important;
-        }
-
-        /* Clean White Cards & Containers */
-        [data-testid="stExpander"] {
-            border: 1px solid #E2E8F0 !important;
-            background-color: #FFFFFF !important;
-            border-radius: 6px !important;
-            box-shadow: none !important;
-        }
-        
-        div[data-aria-expanded="true"] p, 
-        div[data-aria-expanded="false"] p {
+        /* Radio Buttons - Navy Blue Theme */
+        div[role="radiogroup"] label {
             color: #0F172A !important;
-            font-weight: 600 !important;
-        }
-
-        /* Minimal File Input Box */
-        [data-testid="stFileUploader"] {
-            border: 1px dashed #0F172A !important;
-            border-radius: 6px !important;
-            padding: 16px !important;
-            background-color: #FFFFFF !important;
         }
         
-        [data-testid="stFileUploaderDropzone"] {
-            background-color: #FFFFFF !important;
+        div[role="radiogroup"] div[data-checked="true"] > div {
+            background-color: #0F172A !important;
+            border-color: #0F172A !important;
         }
 
         /* Sidebar Styling */
@@ -123,7 +103,15 @@ st.markdown("""
             border-color: #1E3A8A !important;
         }
 
-        /* Sidebar Radio Navigation Items */
+        /* File Uploader Clean Border Fix */
+        [data-testid="stFileUploader"] {
+            border: 1px dashed #0F172A !important;
+            border-radius: 6px !important;
+            padding: 12px !important;
+            background-color: #FFFFFF !important;
+        }
+
+        /* Sidebar Navigation Items */
         [data-testid="stSidebar"] div[role="radiogroup"] > label {
             background-color: #FFFFFF !important;
             border: 1px solid #E2E8F0 !important;
@@ -272,7 +260,7 @@ def render_video_recorder_component():
     components.html(html_code, height=340)
 
 # ------------------------------------------------------------------------------
-# 4. EXHAUSTIVE QUESTION REPOSITORY (15+ QUESTIONS PER CATEGORY)
+# 4. QUESTION REPOSITORY
 # ------------------------------------------------------------------------------
 EXHAUSTIVE_QUESTIONS = {
     "General and Core Skills": [
@@ -383,7 +371,7 @@ SPECIALIZATIONS = ["Marketing", "Finance", "Human Resource (HR)", "Banking and F
 IPER_RECRUITERS = ["Amul", "Asian Paints", "HDFC Bank", "ICICI Securities", "Deloitte", "Trident Group", "Berger Paints"]
 
 # ------------------------------------------------------------------------------
-# 5. SIDEBAR NAVIGATION CONTROLS (REORDERED: PREPARATION ABOVE PRACTICE)
+# 5. SIDEBAR NAVIGATION CONTROLS
 # ------------------------------------------------------------------------------
 st.sidebar.markdown("## IPER Placement Portal")
 st.sidebar.markdown("Career Readiness & Interview Hub")
@@ -414,9 +402,7 @@ else:
 # 6. APPLICATION SECTIONS
 # ------------------------------------------------------------------------------
 
-# ==============================================================================
 # SECTION 1: RESUME CHECKER & JOB MATCHER
-# ==============================================================================
 if selected_nav == "Resume Checker & Job Matcher":
     st.title("Resume Checker & Job Matcher")
     st.caption("Upload your resume and a target job description to get clarity on your match level, key strengths, and areas to polish.")
@@ -546,9 +532,7 @@ if selected_nav == "Resume Checker & Job Matcher":
                 except Exception:
                     st.markdown(raw_ats_response)
 
-# ==============================================================================
-# SECTION 2: INTERVIEW PREPARATION GUIDE (POSITIONED ABOVE PRACTICE ROOM)
-# ==============================================================================
+# SECTION 2: INTERVIEW PREPARATION GUIDE
 elif selected_nav == "Interview Preparation Guide":
     st.title("Interview Preparation Guide")
     st.caption("Select a business domain and question to study key evaluation objectives, effective response frameworks, and model benchmark answers.")
@@ -587,9 +571,7 @@ elif selected_nav == "Interview Preparation Guide":
                 study_guide = get_groq_response(study_prompt)
                 st.markdown(study_guide)
 
-# ==============================================================================
-# SECTION 3: INTERVIEW PRACTICE ROOM (POSITIONED BELOW PREPARATION GUIDE)
-# ==============================================================================
+# SECTION 3: INTERVIEW PRACTICE ROOM
 elif selected_nav == "Interview Practice Room":
     st.title("Interview Practice Room")
     st.caption("Practice audio or video interview responses and receive structured, constructive feedback.")
@@ -773,9 +755,7 @@ elif selected_nav == "Interview Practice Room":
                     except Exception:
                         st.markdown(raw_eval)
 
-# ==============================================================================
 # SECTION 4: PERFORMANCE DASHBOARD
-# ==============================================================================
 elif selected_nav == "Performance Dashboard":
     st.title("Performance Dashboard & Progress Analytics")
     st.caption("Track your overall practice sessions, average scores, and improvement trends over time.")
