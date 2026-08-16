@@ -485,4 +485,4 @@ if selected_nav == "Resume Checker & Job Matcher":
                 raw_ats_response = get_groq_response(ats_prompt)
                 
                 try:
-                    clean_ats = raw_ats_response.replace("```json", "").replace("
+                    clean_ats = raw_ats_response.replace("```json", "").replace("```", "").strip()
