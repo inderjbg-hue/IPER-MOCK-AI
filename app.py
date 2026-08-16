@@ -24,22 +24,27 @@ VIDEO_STORAGE_DIR = "saved_videos"
 os.makedirs(VIDEO_STORAGE_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------------------
-# 2. BULLETPROOF STYLING (PREVENTS MATERIAL ICON BLEED & DARK OVERLAY BOXES)
+# 2. PROFESSIONAL INTER FONT STYLING & CLEAN UI
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         
-        /* Base Background */
+        /* Apply Inter font globally across all Streamlit elements */
+        html, body, .stApp, .main, [class*="css"] {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+        }
+
+        /* Base Background and Typography */
         .main .block-container, .stApp {
             background-color: #FFFFFF !important;
-            font-family: 'Inter', sans-serif;
             color: #0F172A !important;
         }
 
-        /* Prevent breaking Material Icons (e.g. arrow_drop_down) */
+        /* Targeted Text Colors */
         p, h1, h2, h3, h4, h5, h6, label, span, li, td, th {
             color: #0F172A !important;
+            font-family: 'Inter', sans-serif !important;
         }
 
         [data-testid="stMarkdownContainer"] p,
@@ -51,7 +56,7 @@ st.markdown("""
             color: #0F172A !important;
         }
 
-        /* Expander Styling */
+        /* Clean Expander Container */
         div[data-aria-expanded="true"] p, 
         div[data-aria-expanded="false"] p,
         [data-testid="stExpander"] details summary p {
@@ -62,15 +67,15 @@ st.markdown("""
         [data-testid="stExpander"] {
             border: 1px solid #E2E8F0 !important;
             background-color: #F8FAFC !important;
-            border-radius: 8px !important;
+            border-radius: 6px !important;
         }
 
         /* File Uploaders */
         [data-testid="stFileUploader"] {
-            border: 2px dashed #0284C7 !important;
-            border-radius: 12px !important;
+            border: 1px dashed #0284C7 !important;
+            border-radius: 8px !important;
             padding: 12px !important;
-            background-color: #F0F9FF !important;
+            background-color: #F8FAFC !important;
         }
         
         [data-testid="stFileUploaderDropzone"] {
@@ -81,7 +86,7 @@ st.markdown("""
             color: #0F172A !important;
         }
 
-        /* Sidebar Styling */
+        /* Sidebar Corporate Styling */
         [data-testid="stSidebar"] {
             background-color: #F8FAFC !important;
             border-right: 1px solid #E2E8F0 !important;
@@ -94,39 +99,43 @@ st.markdown("""
         .stTextInput input {
             background-color: #FFFFFF !important;
             color: #0F172A !important;
-            border: 1.5px solid #CBD5E1 !important;
-            border-radius: 8px !important;
+            border: 1px solid #CBD5E1 !important;
+            border-radius: 6px !important;
+            font-family: 'Inter', sans-serif !important;
         }
 
-        /* Action Buttons */
+        /* Primary Action Buttons */
         .stButton > button {
-            background-color: #2563EB !important;
+            background-color: #1E3A8A !important;
             color: #FFFFFF !important;
-            font-weight: 700 !important;
-            font-size: 15px !important;
-            border-radius: 8px !important;
+            font-weight: 600 !important;
+            font-size: 14px !important;
+            border-radius: 6px !important;
             border: none !important;
-            padding: 0.6rem 1.3rem !important;
+            padding: 0.5rem 1.2rem !important;
+            letter-spacing: 0.3px;
         }
         .stButton > button p {
             color: #FFFFFF !important;
         }
         .stButton > button:hover {
-            background-color: #1D4ED8 !important;
+            background-color: #1E40AF !important;
         }
 
-        /* Sidebar Navigation Radio Buttons */
+        /* Sidebar Navigation Radio Options */
         [data-testid="stSidebar"] div[role="radiogroup"] > label {
             background-color: #FFFFFF !important;
-            border: 1px solid #CBD5E1 !important;
-            border-radius: 8px !important;
+            border: 1px solid #E2E8F0 !important;
+            border-radius: 6px !important;
             padding: 10px 14px !important;
             margin-bottom: 8px !important;
-            font-weight: 600 !important;
+            font-weight: 500 !important;
+            font-size: 14px !important;
+            transition: all 0.2s ease;
         }
         [data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
-            border-color: #2563EB !important;
-            background-color: #EFF6FF !important;
+            border-color: #1E3A8A !important;
+            background-color: #F1F5F9 !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -213,12 +222,12 @@ def get_groq_response(prompt):
 
 def render_video_recorder_component():
     html_code = """
-    <div style="font-family: 'Inter', sans-serif; border: 2px solid #CBD5E1; border-radius: 8px; padding: 15px; background: #FFFFFF;">
-        <video id="preview" autoplay playsinline muted style="width: 100%; max-height: 240px; background: #000; border-radius: 6px;"></video>
+    <div style="font-family: 'Inter', sans-serif; border: 1px solid #CBD5E1; border-radius: 6px; padding: 15px; background: #FFFFFF;">
+        <video id="preview" autoplay playsinline muted style="width: 100%; max-height: 240px; background: #000; border-radius: 4px;"></video>
         <div style="margin-top: 12px; display: flex; gap: 10px;">
-            <button id="startBtn" onclick="startRec()" style="background: #059669; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">Start Video Recording</button>
-            <button id="stopBtn" onclick="stopRec()" disabled style="background: #DC2626; color: white; border: none; padding: 9px 16px; border-radius: 6px; cursor: pointer; font-weight: 600;">Stop & Save</button>
-            <a id="downloadAnchor" style="display:none; background: #0284C7; color: white; text-decoration: none; padding: 9px 16px; border-radius: 6px; font-size: 14px; font-weight: 600;">Download Recording (.webm)</a>
+            <button id="startBtn" onclick="startRec()" style="background: #059669; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif;">Start Video Recording</button>
+            <button id="stopBtn" onclick="stopRec()" disabled style="background: #DC2626; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif;">Stop & Save</button>
+            <a id="downloadAnchor" style="display:none; background: #0284C7; color: white; text-decoration: none; padding: 8px 14px; border-radius: 4px; font-size: 13px; font-weight: 600; font-family: 'Inter', sans-serif;">Download Recording (.webm)</a>
         </div>
         <div id="status" style="margin-top: 10px; font-size: 13px; color: #0F172A; font-weight: 500;">Status: Camera Idle</div>
     </div>
@@ -292,26 +301,26 @@ SPECIALIZATIONS = ["Marketing", "Finance", "Human Resource (HR)", "Banking and F
 IPER_RECRUITERS = ["Amul", "Asian Paints", "HDFC Bank", "ICICI Securities", "Deloitte", "Trident Group", "Berger Paints"]
 
 # ------------------------------------------------------------------------------
-# 5. SIDEBAR NAVIGATION CONTROLS (RESUME TOP, INTERVIEW BELOW)
+# 5. PROFESSIONAL SIDEBAR NAVIGATION (NO EMOJIS)
 # ------------------------------------------------------------------------------
-st.sidebar.title("IPER MOCK AI")
-st.sidebar.markdown("### Navigation Menu")
+st.sidebar.markdown("## IPER MOCK AI")
+st.sidebar.markdown("**Placement & ATS Portal**")
+st.sidebar.markdown("---")
 
-# Primary navigation panel
 selected_nav = st.sidebar.radio(
-    "Select Portal Section:",
+    "NAVIGATION MENU",
     [
-        "📄 Resume ATS Analyzer", 
-        "🎙️ Practice Interview Terminal", 
-        "📚 Interview Preparation Module", 
-        "📊 Dashboard & Analytics"
+        "Resume ATS Analyzer", 
+        "Practice Interview Terminal", 
+        "Interview Preparation Module", 
+        "Dashboard & Analytics"
     ]
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Attempt Logs")
+st.sidebar.markdown("**Evaluation History**")
 if not st.session_state["history"]:
-    st.sidebar.info("No practice attempts recorded yet.")
+    st.sidebar.info("No recorded attempts.")
 else:
     for idx, session in enumerate(reversed(st.session_state["history"]), 1):
         with st.sidebar.expander(f"Attempt #{len(st.session_state['history']) - idx + 1}: {session['Timestamp']}"):
@@ -320,14 +329,14 @@ else:
             st.markdown(f"**Score:** {session['Score']}/100")
 
 # ------------------------------------------------------------------------------
-# 6. PORTAL SECTION ROUTING
+# 6. PORTAL NAVIGATION ROUTING
 # ------------------------------------------------------------------------------
 
 # ==============================================================================
 # SECTION 1: RESUME ATS ANALYZER (TOP ITEM IN SIDEBAR)
 # ==============================================================================
-if selected_nav == "📄 Resume ATS Analyzer":
-    st.title("IPER Resume ATS Analyzer")
+if selected_nav == "Resume ATS Analyzer":
+    st.title("Resume ATS Analyzer & Alignment Module")
     st.caption("Upload candidate resume and target Job Description (JD) for ATS scoring, structural breakdown, and edits.")
 
     col_res, col_jd = st.columns(2)
@@ -364,7 +373,7 @@ if selected_nav == "📄 Resume ATS Analyzer":
                 
                 st.session_state["candidate_name"] = c_name
                 st.session_state["resume_details"] = resume_data
-                st.success(f"Resume profile extracted for **{st.session_state['candidate_name']}**")
+                st.success(f"Resume profile extracted for {st.session_state['candidate_name']}")
 
     with col_jd:
         st.subheader("2. Target Job Description (JD)")
@@ -375,7 +384,7 @@ if selected_nav == "📄 Resume ATS Analyzer":
             jd_file = st.file_uploader("Upload Job Description:", type=["pdf", "docx", "doc", "png", "jpg", "jpeg"], key="ats_jd_upload")
             if jd_file:
                 jd_text = extract_text_from_file(jd_file)
-                st.info(f"Loaded JD File: `{jd_file.name}`")
+                st.info(f"Loaded JD File: {jd_file.name}")
         else:
             jd_text = st.text_area("Paste Job Description (JD) Text Here:", height=180, placeholder="Paste requirements, job roles, and qualifications...")
 
@@ -429,11 +438,11 @@ if selected_nav == "📄 Resume ATS Analyzer":
                         st.metric("Overall ATS Compatibility Score", f"{score} / 100")
                     with m2:
                         if category_rating == "Excellent":
-                            st.success(f"Resume Strength Rating: **EXCELLENT**")
+                            st.success("Resume Strength Rating: EXCELLENT")
                         elif category_rating == "Good":
-                            st.info(f"Resume Strength Rating: **GOOD**")
+                            st.info("Resume Strength Rating: GOOD")
                         else:
-                            st.warning(f"Resume Strength Rating: **AVERAGE**")
+                            st.warning("Resume Strength Rating: AVERAGE")
                     
                     st.info(ats_result.get("ExecutiveSummary", ""))
                     
@@ -460,16 +469,16 @@ if selected_nav == "📄 Resume ATS Analyzer":
                     st.markdown(raw_ats_response)
 
 # ==============================================================================
-# SECTION 2: MOCK INTERVIEW TERMINAL (POSITIONED BELOW RESUME SECTION)
+# SECTION 2: PRACTICE INTERVIEW TERMINAL
 # ==============================================================================
-elif selected_nav == "🎙️ Practice Interview Terminal":
-    st.title("IPER Practice & Interview Evaluation Terminal")
-    st.caption("Conduct audio or video mock interviews with personalized AI feedback.")
+elif selected_nav == "Practice Interview Terminal":
+    st.title("Practice & Interview Evaluation Terminal")
+    st.caption("Conduct audio or video mock interviews with personalized panel evaluation.")
     
     if st.session_state.get("resume_details"):
         st.success(f"Active Candidate Profile: **{st.session_state['candidate_name']}** (Loaded from Resume ATS section)")
     else:
-        st.info("Tip: Upload candidate resume in the **Resume ATS Analyzer** sidebar section to activate tailored questions.")
+        st.info("Tip: Upload candidate resume in the **Resume ATS Analyzer** section to activate tailored questions.")
 
     col_mode, col_diff, col_cat = st.columns(3)
     with col_mode:
@@ -489,7 +498,7 @@ elif selected_nav == "🎙️ Practice Interview Terminal":
     if st.button("Generate Interview Question", use_container_width=True):
         if category == "Resume-Based (Tailored)":
             if not st.session_state.get("resume_details"):
-                st.warning("Please upload candidate resume first in the Resume ATS Analyzer sidebar section.")
+                st.warning("Please upload candidate resume first in the Resume ATS Analyzer menu option.")
             else:
                 prompt = f"""
                 Act as a strict MBA interviewer at IPER Bhopal. 
@@ -649,7 +658,7 @@ elif selected_nav == "🎙️ Practice Interview Terminal":
 # ==============================================================================
 # SECTION 3: INTERVIEW PREPARATION MODULE
 # ==============================================================================
-elif selected_nav == "📚 Interview Preparation Module":
+elif selected_nav == "Interview Preparation Module":
     st.title("Interview Preparation Module")
     st.caption("Select a domain and question to study the Objective, Answering Structure, and Benchmark Sample Answer.")
     
@@ -690,7 +699,7 @@ elif selected_nav == "📚 Interview Preparation Module":
 # ==============================================================================
 # SECTION 4: DASHBOARD & ANALYTICS
 # ==============================================================================
-elif selected_nav == "📊 Dashboard & Analytics":
+elif selected_nav == "Dashboard & Analytics":
     st.title("Performance Dashboard & Analytics")
     if not st.session_state["history"]:
         st.info("No practice attempts logged yet. Complete a session in the Practice Interview Terminal.")
