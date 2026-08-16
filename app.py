@@ -13,9 +13,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # ------------------------------------------------------------------------------
-# 1. STREAMLIT CONFIG & SYSTEM PATHS
+# 1. STREAMLIT CONFIGURATION & ENVIRONMENT Setup
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="IPER Placement & ATS Portal", layout="wide")
+st.set_page_config(page_title="IPER Placement & Interview Portal", layout="wide")
 
 ssl._create_default_https_context = ssl._create_unverified_context
 os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin" + os.pathsep + "/usr/local/bin"
@@ -24,105 +24,106 @@ VIDEO_STORAGE_DIR = "saved_videos"
 os.makedirs(VIDEO_STORAGE_DIR, exist_ok=True)
 
 # ------------------------------------------------------------------------------
-# 2. PROFESSIONAL INTER FONT STYLING & CLEAN UI
+# 2. NAVY BLUE & WHITE THEME WITH INTER FONT TYPOGRAPHY
 # ------------------------------------------------------------------------------
 st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         
-        /* Apply Inter font globally across all Streamlit elements */
+        /* Global Font & Canvas Settings */
         html, body, .stApp, .main, [class*="css"] {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-        }
-
-        /* Base Background and Typography */
-        .main .block-container, .stApp {
             background-color: #FFFFFF !important;
             color: #0F172A !important;
         }
 
-        /* Targeted Text Colors */
-        p, h1, h2, h3, h4, h5, h6, label, span, li, td, th {
+        .main .block-container {
+            background-color: #FFFFFF !important;
+            padding-top: 2rem !important;
+        }
+
+        /* Standardized Navy Blue Headings */
+        h1, h2, h3, h4, h5, h6 {
             color: #0F172A !important;
+            font-family: 'Inter', sans-serif !important;
+            font-weight: 700 !important;
+        }
+
+        p, label, span, li, td, th {
+            color: #1E293B !important;
             font-family: 'Inter', sans-serif !important;
         }
 
         [data-testid="stMarkdownContainer"] p,
-        [data-testid="stMarkdownContainer"] li,
-        [data-testid="stMarkdownContainer"] h1,
-        [data-testid="stMarkdownContainer"] h2,
-        [data-testid="stMarkdownContainer"] h3,
-        [data-testid="stMarkdownContainer"] h4 {
-            color: #0F172A !important;
+        [data-testid="stMarkdownContainer"] li {
+            color: #1E293B !important;
         }
 
-        /* Clean Expander Container */
+        /* Clean White Cards & Containers */
+        [data-testid="stExpander"] {
+            border: 1px solid #E2E8F0 !important;
+            background-color: #FFFFFF !important;
+            border-radius: 6px !important;
+            box-shadow: none !important;
+        }
+        
         div[data-aria-expanded="true"] p, 
-        div[data-aria-expanded="false"] p,
-        [data-testid="stExpander"] details summary p {
+        div[data-aria-expanded="false"] p {
             color: #0F172A !important;
             font-weight: 600 !important;
         }
-        
-        [data-testid="stExpander"] {
-            border: 1px solid #E2E8F0 !important;
-            background-color: #F8FAFC !important;
-            border-radius: 6px !important;
-        }
 
-        /* File Uploaders */
+        /* Minimal File Input Box */
         [data-testid="stFileUploader"] {
-            border: 1px dashed #0284C7 !important;
-            border-radius: 8px !important;
-            padding: 12px !important;
-            background-color: #F8FAFC !important;
+            border: 1px dashed #0F172A !important;
+            border-radius: 6px !important;
+            padding: 16px !important;
+            background-color: #FFFFFF !important;
         }
         
         [data-testid="stFileUploaderDropzone"] {
             background-color: #FFFFFF !important;
         }
 
-        [data-testid="stFileUploader"] * {
-            color: #0F172A !important;
-        }
-
-        /* Sidebar Corporate Styling */
+        /* Sidebar Styling */
         [data-testid="stSidebar"] {
-            background-color: #F8FAFC !important;
+            background-color: #FFFFFF !important;
             border-right: 1px solid #E2E8F0 !important;
         }
 
-        /* Form Inputs */
+        /* Dropdowns & Text Inputs */
         div[data-baseweb="select"] > div,
         .stSelectbox select, 
         .stTextArea textarea, 
         .stTextInput input {
             background-color: #FFFFFF !important;
             color: #0F172A !important;
-            border: 1px solid #CBD5E1 !important;
+            border: 1px solid #94A3B8 !important;
             border-radius: 6px !important;
             font-family: 'Inter', sans-serif !important;
         }
 
-        /* Primary Action Buttons */
+        /* Unified Navy Blue Action Buttons */
         .stButton > button {
-            background-color: #1E3A8A !important;
+            background-color: #0F172A !important;
             color: #FFFFFF !important;
             font-weight: 600 !important;
             font-size: 14px !important;
             border-radius: 6px !important;
-            border: none !important;
-            padding: 0.5rem 1.2rem !important;
-            letter-spacing: 0.3px;
+            border: 1px solid #0F172A !important;
+            padding: 0.5rem 1.4rem !important;
         }
+
         .stButton > button p {
             color: #FFFFFF !important;
         }
+
         .stButton > button:hover {
-            background-color: #1E40AF !important;
+            background-color: #1E3A8A !important;
+            border-color: #1E3A8A !important;
         }
 
-        /* Sidebar Navigation Radio Options */
+        /* Sidebar Radio Navigation Items */
         [data-testid="stSidebar"] div[role="radiogroup"] > label {
             background-color: #FFFFFF !important;
             border: 1px solid #E2E8F0 !important;
@@ -131,17 +132,18 @@ st.markdown("""
             margin-bottom: 8px !important;
             font-weight: 500 !important;
             font-size: 14px !important;
-            transition: all 0.2s ease;
+            color: #0F172A !important;
         }
+
         [data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
-            border-color: #1E3A8A !important;
-            background-color: #F1F5F9 !important;
+            border-color: #0F172A !important;
+            background-color: #F8FAFC !important;
         }
     </style>
 """, unsafe_allow_html=True)
 
 # ------------------------------------------------------------------------------
-# 3. HELPER FUNCTIONS & API PIPELINE WITH SECRETS RESOLUTION
+# 3. HELPER FUNCTIONS & API INTEGRATION
 # ------------------------------------------------------------------------------
 @st.cache_resource
 def load_speech_model():
@@ -199,9 +201,9 @@ def transcribe_indian_english_audio(audio_path):
     return result.get("text", "").strip()
 
 STRICT_MENTOR_SYSTEM_PROMPT = """
-You are a senior MBA Placement Panel Auditor and HR ATS Evaluator at IPER Bhopal.
+You are a supportive MBA Placement Director and HR Reviewer at IPER Bhopal.
 Address the candidate respectfully by name in all responses.
-Provide exact, detailed, professional analysis.
+Provide clear, structured, professional guidance using user-friendly words.
 """
 
 def get_groq_response(prompt):
@@ -225,11 +227,11 @@ def render_video_recorder_component():
     <div style="font-family: 'Inter', sans-serif; border: 1px solid #CBD5E1; border-radius: 6px; padding: 15px; background: #FFFFFF;">
         <video id="preview" autoplay playsinline muted style="width: 100%; max-height: 240px; background: #000; border-radius: 4px;"></video>
         <div style="margin-top: 12px; display: flex; gap: 10px;">
-            <button id="startBtn" onclick="startRec()" style="background: #059669; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif;">Start Video Recording</button>
-            <button id="stopBtn" onclick="stopRec()" disabled style="background: #DC2626; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif;">Stop & Save</button>
-            <a id="downloadAnchor" style="display:none; background: #0284C7; color: white; text-decoration: none; padding: 8px 14px; border-radius: 4px; font-size: 13px; font-weight: 600; font-family: 'Inter', sans-serif;">Download Recording (.webm)</a>
+            <button id="startBtn" onclick="startRec()" style="background: #0F172A; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif;">Start Video Recording</button>
+            <button id="stopBtn" onclick="stopRec()" disabled style="background: #475569; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif;">Stop & Save</button>
+            <a id="downloadAnchor" style="display:none; background: #0F172A; color: white; text-decoration: none; padding: 8px 14px; border-radius: 4px; font-size: 13px; font-weight: 600; font-family: 'Inter', sans-serif;">Download Video (.webm)</a>
         </div>
-        <div id="status" style="margin-top: 10px; font-size: 13px; color: #0F172A; font-weight: 500;">Status: Camera Idle</div>
+        <div id="status" style="margin-top: 10px; font-size: 13px; color: #0F172A; font-weight: 500;">Status: Camera Ready</div>
     </div>
     <script>
         let recorder, chunks = [], streamRef;
@@ -253,7 +255,7 @@ def render_video_recorder_component():
                 recorder.start(1000);
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
-                document.getElementById('status').innerText = 'Status: Live Recording...';
+                document.getElementById('status').innerText = 'Status: Recording in Progress...';
             } catch (err) {
                 document.getElementById('status').innerText = 'Camera Error: ' + err.message;
             }
@@ -270,30 +272,110 @@ def render_video_recorder_component():
     components.html(html_code, height=340)
 
 # ------------------------------------------------------------------------------
-# 4. QUESTION DATA REPOSITORIES
+# 4. EXHAUSTIVE QUESTION REPOSITORY (15+ QUESTIONS PER CATEGORY)
 # ------------------------------------------------------------------------------
 EXHAUSTIVE_QUESTIONS = {
     "General and Core Skills": [
-        "1. Walk me through your resume highlighting key academic achievements.",
-        "2. What are your top 3 professional strengths and 2 key areas of improvement?",
-        "3. Describe a situation where you led a team under a tight deadline.",
-        "4. How do you handle constructive criticism from senior managers?",
-        "5. Explain your 5-year career blueprint post-MBA."
+        "1. Walk me through your resume highlighting your core achievements.",
+        "2. What are your top 3 professional strengths and 2 areas of growth?",
+        "3. Describe a situation where you led a team under a strict deadline.",
+        "4. How do you handle constructive feedback from team managers?",
+        "5. What is your 5-year career blueprint after completing your MBA?",
+        "6. Tell me about a time you resolved a difficult conflict within a group.",
+        "7. How do you prioritize tasks when managing multiple project deadlines?",
+        "8. Describe a major failure or setback you experienced and how you bounced back.",
+        "9. Why did you choose IPER for your management degree?",
+        "10. How do you stay updated with current business and economic trends?",
+        "11. Give an example of how you used data to solve a complex problem.",
+        "12. What makes you a suitable candidate for corporate management roles?",
+        "13. How do you adapt when project goals change unexpectedly?",
+        "14. Describe your personal leadership and communication style.",
+        "15. What motivates you to perform at your best in a workplace setting?"
     ],
     "Marketing": [
-        "1. Differentiate between push and pull marketing strategies with industry examples.",
-        "2. How do you design a high-converting digital marketing funnel for B2B SaaS?",
-        "3. Explain the 7 Ps of Service Marketing in the hospitality sector."
+        "1. Differentiate between push and pull marketing strategies with real examples.",
+        "2. How do you design a high-converting digital marketing funnel?",
+        "3. Explain the 7 Ps of Service Marketing in the context of retail.",
+        "4. How do you measure Customer Lifetime Value (CLV) and Customer Acquisition Cost (CAC)?",
+        "5. What is the difference between B2B and B2C marketing approaches?",
+        "6. Explain the concept of Brand Positioning and how to create a Unique Selling Proposition (USP).",
+        "7. How would you handle a PR crisis for a consumer products brand?",
+        "8. Explain Search Engine Optimization (SEO) vs. Search Engine Marketing (SEM).",
+        "9. What is Market Segmentation, and how do Demographics differ from Psychographics?",
+        "10. Describe the steps involved in launching a new product in a competitive market.",
+        "11. How does Content Marketing build long-term customer loyalty?",
+        "12. What key metrics do you track to measure social media campaign success?",
+        "13. Explain the Product Life Cycle (PLC) and marketing actions at each stage.",
+        "14. How do influencer marketing strategies impact consumer purchasing behavior?",
+        "15. What is Guerrilla Marketing, and when is it most effective?"
     ],
     "Finance": [
-        "1. Explain the 3 main financial statements and how they interconnect.",
+        "1. Explain the 3 main financial statements and how they link together.",
         "2. What is Working Capital, and how do you calculate Net Working Capital?",
-        "3. Describe the DCF valuation methodology and how to select a Discount Rate."
+        "3. Describe the Discounted Cash Flow (DCF) valuation methodology.",
+        "4. What is the difference between Capital Expenditure (CapEx) and Operational Expenditure (OpEx)?",
+        "5. Explain the concept of the Time Value of Money (TVM).",
+        "6. What is the Capital Asset Pricing Model (CAPM) and how is Beta used?",
+        "7. Differentiate between Debt Financing and Equity Financing.",
+        "8. What is NPV (Net Present Value) and IRR (Internal Rate of Return)?",
+        "9. Explain the Liquidity Ratios vs. Profitability Ratios with formulas.",
+        "10. What is a Balance Sheet, and why must assets always equal liabilities plus equity?",
+        "11. How does inflation impact interest rates and corporate cash flows?",
+        "12. What is Financial Leverage, and how does it affect risk and return?",
+        "13. Explain the difference between primary and secondary financial markets.",
+        "14. How do you analyze a company's financial health using a Cash Flow Statement?",
+        "15. What is Dupont Analysis, and what are its three key components?"
     ],
     "Human Resource (HR)": [
-        "1. Explain the step-by-step SHRM recruitment and selection pipeline.",
-        "2. How do you handle workplace conflict between two senior executives?",
-        "3. Explain the 360-Degree Performance Appraisal technique."
+        "1. Explain the step-by-step recruitment and selection workflow.",
+        "2. How do you handle workplace conflict between two senior employees?",
+        "3. Explain the 360-Degree Performance Appraisal technique.",
+        "4. What is the difference between Training and Development?",
+        "5. How do you design a competitive Compensation and Benefits structure?",
+        "6. What strategies would you use to reduce employee turnover in a high-stress sector?",
+        "7. Explain HR Analytics and how data improves talent management decisions.",
+        "8. What is the role of HR during corporate restructuring or mergers?",
+        "9. How do you foster Diversity, Equity, and Inclusion (DEI) in an organization?",
+        "10. Explain the concept of Organizational Culture and how HR influences it.",
+        "11. What is the difference between Job Description and Job Specification?",
+        "12. How do you conduct an effective Exit Interview?",
+        "13. What is Succession Planning, and why is it critical for business continuity?",
+        "14. Explain key labor laws and compliance regulations every HR manager should know.",
+        "15. How do you manage performance issues using Performance Improvement Plans (PIP)?"
+    ],
+    "Banking and Finance": [
+        "1. Explain the difference between Retail Banking and Corporate Banking.",
+        "2. What are Non-Performing Assets (NPAs), and how do banks manage them?",
+        "3. Explain the role and functions of the Reserve Bank of India (RBI).",
+        "4. What is repo rate and reverse repo rate, and how do they impact the economy?",
+        "5. Describe the KYC (Know Your Customer) guidelines and their importance.",
+        "6. What is the difference between a Savings Account and a Current Account?",
+        "7. Explain the concept of Credit Risk and how credit scores are calculated.",
+        "8. What is the Basel III framework, and why is capital adequacy important?",
+        "9. How do commercial banks generate profit?",
+        "10. What is the difference between NEFT, RTGS, and IMPS payment systems?",
+        "11. What is an Initial Public Offering (IPO), and how is it underwritten?",
+        "12. Explain Asset Reconstruction Companies (ARCs) and their role in resolving NPAs.",
+        "13. What is the difference between Money Market and Capital Market?",
+        "14. How do digital banking platforms impact traditional brick-and-mortar operations?",
+        "15. Explain the concept of Microfinance and its social and economic impact."
+    ],
+    "Tourism and Services Industry": [
+        "1. What are the unique characteristics of services marketing compared to physical goods?",
+        "2. How do you manage service quality expectations using the SERVQUAL model?",
+        "3. Explain the concept of Yield Management in the hotel and airline sectors.",
+        "4. How do you handle an unhappy guest complaint in hospitality management?",
+        "5. What is Sustainable Tourism, and how can companies promote eco-friendly travel?",
+        "6. Explain the role of Destination Marketing Organizations (DMOs).",
+        "7. How does customer relationship management (CRM) build customer loyalty in services?",
+        "8. Describe the impact of online travel aggregators (OTAs) on traditional agencies.",
+        "9. What is Moment of Truth in service delivery, and why is it vital?",
+        "10. How do service blueprints help streamline operational workflows?",
+        "11. Explain crisis management strategies for hospitality and tourism businesses.",
+        "12. How has technology transformed guest check-in and booking experiences?",
+        "13. What is the economic multiplier effect in international tourism?",
+        "14. How do seasonal demand fluctuations affect staff planning in travel and tourism?",
+        "15. Explain Event Management fundamentals when organizing large corporate conferences."
     ]
 }
 
@@ -301,49 +383,49 @@ SPECIALIZATIONS = ["Marketing", "Finance", "Human Resource (HR)", "Banking and F
 IPER_RECRUITERS = ["Amul", "Asian Paints", "HDFC Bank", "ICICI Securities", "Deloitte", "Trident Group", "Berger Paints"]
 
 # ------------------------------------------------------------------------------
-# 5. PROFESSIONAL SIDEBAR NAVIGATION (NO EMOJIS)
+# 5. SIDEBAR NAVIGATION CONTROLS (REORDERED: PREPARATION ABOVE PRACTICE)
 # ------------------------------------------------------------------------------
-st.sidebar.markdown("## IPER MOCK AI")
-st.sidebar.markdown("**Placement & ATS Portal**")
+st.sidebar.markdown("## IPER Placement Portal")
+st.sidebar.markdown("Career Readiness & Interview Hub")
 st.sidebar.markdown("---")
 
 selected_nav = st.sidebar.radio(
-    "NAVIGATION MENU",
+    "MAIN MENU",
     [
-        "Resume ATS Analyzer", 
-        "Practice Interview Terminal", 
-        "Interview Preparation Module", 
-        "Dashboard & Analytics"
+        "Resume Checker & Job Matcher", 
+        "Interview Preparation Guide", 
+        "Interview Practice Room", 
+        "Performance Dashboard"
     ]
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**Evaluation History**")
+st.sidebar.markdown("**Recent Attempts**")
 if not st.session_state["history"]:
-    st.sidebar.info("No recorded attempts.")
+    st.sidebar.info("No practice attempts recorded yet.")
 else:
     for idx, session in enumerate(reversed(st.session_state["history"]), 1):
-        with st.sidebar.expander(f"Attempt #{len(st.session_state['history']) - idx + 1}: {session['Timestamp']}"):
+        with st.sidebar.expander(f"Session #{len(st.session_state['history']) - idx + 1}: {session['Timestamp']}"):
             st.markdown(f"**Candidate:** {session.get('Candidate', 'N/A')}")
-            st.markdown(f"**Domain:** {session['Domain']}")
+            st.markdown(f"**Topic:** {session['Domain']}")
             st.markdown(f"**Score:** {session['Score']}/100")
 
 # ------------------------------------------------------------------------------
-# 6. PORTAL NAVIGATION ROUTING
+# 6. APPLICATION SECTIONS
 # ------------------------------------------------------------------------------
 
 # ==============================================================================
-# SECTION 1: RESUME ATS ANALYZER (TOP ITEM IN SIDEBAR)
+# SECTION 1: RESUME CHECKER & JOB MATCHER
 # ==============================================================================
-if selected_nav == "Resume ATS Analyzer":
-    st.title("Resume ATS Analyzer & Alignment Module")
-    st.caption("Upload candidate resume and target Job Description (JD) for ATS scoring, structural breakdown, and edits.")
+if selected_nav == "Resume Checker & Job Matcher":
+    st.title("Resume Checker & Job Matcher")
+    st.caption("Upload your resume and a target job description to get clarity on your match level, key strengths, and areas to polish.")
 
     col_res, col_jd = st.columns(2)
 
     with col_res:
         st.subheader("1. Candidate Resume Upload")
-        ats_resume_file = st.file_uploader("Upload Resume (PDF, Word DOCX):", type=["pdf", "docx", "doc"], key="ats_res_upload")
+        ats_resume_file = st.file_uploader("Upload Resume (PDF or Word DOCX):", type=["pdf", "docx", "doc"], key="ats_res_upload")
         
         if ats_resume_file:
             res_raw_text = extract_text_from_file(ats_resume_file)
@@ -373,52 +455,52 @@ if selected_nav == "Resume ATS Analyzer":
                 
                 st.session_state["candidate_name"] = c_name
                 st.session_state["resume_details"] = resume_data
-                st.success(f"Resume profile extracted for {st.session_state['candidate_name']}")
+                st.success(f"Loaded profile for **{st.session_state['candidate_name']}**")
 
     with col_jd:
-        st.subheader("2. Target Job Description (JD)")
-        jd_input_option = st.radio("Provide JD via:", ["Upload File (PDF/DOCX/Image)", "Paste Text Direct"], horizontal=True)
+        st.subheader("2. Target Job Description")
+        jd_input_option = st.radio("Provide Job Description via:", ["Upload File (PDF/DOCX/Image)", "Paste Text Direct"], horizontal=True)
         
         jd_text = ""
         if jd_input_option == "Upload File (PDF/DOCX/Image)":
-            jd_file = st.file_uploader("Upload Job Description:", type=["pdf", "docx", "doc", "png", "jpg", "jpeg"], key="ats_jd_upload")
+            jd_file = st.file_uploader("Upload Job Description File:", type=["pdf", "docx", "doc", "png", "jpg", "jpeg"], key="ats_jd_upload")
             if jd_file:
                 jd_text = extract_text_from_file(jd_file)
-                st.info(f"Loaded JD File: {jd_file.name}")
+                st.info(f"Loaded File: `{jd_file.name}`")
         else:
-            jd_text = st.text_area("Paste Job Description (JD) Text Here:", height=180, placeholder="Paste requirements, job roles, and qualifications...")
+            jd_text = st.text_area("Paste Job Description Text Here:", height=180, placeholder="Paste requirements, job duties, and key qualifications...")
 
     st.markdown("---")
 
-    if st.button("Run Comprehensive ATS Audit & Alignment Analysis", use_container_width=True):
+    if st.button("Check Match & Review Suggestions", use_container_width=True):
         if not ats_resume_file:
-            st.error("Please upload candidate resume first.")
+            st.error("Please upload your candidate resume first.")
         elif not jd_text.strip():
-            st.error("Please upload or paste a Job Description (JD).")
+            st.error("Please upload or paste a Job Description.")
         else:
-            with st.spinner("Executing ATS match evaluation..."):
+            with st.spinner("Reviewing match and alignment..."):
                 candidate_name = st.session_state.get("candidate_name", "Candidate")
                 resume_content = json.dumps(st.session_state.get("resume_details", {}))
                 
                 ats_prompt = f"""
-                Act as an elite Corporate ATS Auditor & Placement Director at IPER Bhopal.
-                Perform an ATS match evaluation for candidate '{candidate_name}'.
+                Act as a helpful Corporate Recruiter & Placement Reviewer at IPER Bhopal.
+                Evaluate the resume alignment for candidate '{candidate_name}'.
 
-                Candidate Resume Context:
+                Resume Information:
                 {resume_content}
 
-                Target Job Description (JD):
+                Job Description Information:
                 {jd_text}
 
-                Return ONLY valid JSON with this exact key structure:
+                Return ONLY valid JSON with this exact structure:
                 {{
                     "CandidateName": "{candidate_name}",
                     "ATSScore": <0-100 integer score>,
-                    "Category": "<MUST be exactly one of: Excellent | Good | Average>",
-                    "ExecutiveSummary": "<Greeting addressing {candidate_name} by name with summary of fit>",
+                    "Category": "<MUST be exactly one of: High Match | Good Match | Needs Improvement>",
+                    "ExecutiveSummary": "<Greeting addressing {candidate_name} by name with a friendly summary of overall fit>",
                     "Strengths": ["<Strength 1>", "<Strength 2>", "<Strength 3>"],
                     "AreasOfImprovement": ["<Area 1>", "<Area 2>", "<Area 3>"],
-                    "RecommendedChanges": ["<Specific bullet edit 1>", "<Keyword addition 2>", "<Formatting tip 3>"],
+                    "RecommendedChanges": ["<Specific bullet update 1>", "<Keyword addition 2>", "<Formatting tip 3>"],
                     "MissingKeywords": ["<Keyword 1>", "<Keyword 2>", "<Keyword 3>"]
                 }}
                 """
@@ -428,40 +510,36 @@ if selected_nav == "Resume ATS Analyzer":
                     clean_ats = raw_ats_response.replace("```json", "").replace("```", "").strip()
                     ats_result = json.loads(clean_ats)
                     
-                    st.subheader(f"ATS Evaluation Audit for {candidate_name}")
+                    st.subheader(f"Resume Analysis for {candidate_name}")
                     
                     score = ats_result.get("ATSScore", 70)
-                    category_rating = ats_result.get("Category", "Good")
+                    category_rating = ats_result.get("Category", "Good Match")
                     
                     m1, m2 = st.columns(2)
                     with m1:
-                        st.metric("Overall ATS Compatibility Score", f"{score} / 100")
+                        st.metric("Overall Match Score", f"{score} / 100")
                     with m2:
-                        if category_rating == "Excellent":
-                            st.success("Resume Strength Rating: EXCELLENT")
-                        elif category_rating == "Good":
-                            st.info("Resume Strength Rating: GOOD")
-                        else:
-                            st.warning("Resume Strength Rating: AVERAGE")
+                        st.metric("Fit Status", category_rating)
                     
-                    st.info(ats_result.get("ExecutiveSummary", ""))
-                    
+                    st.write(ats_result.get("ExecutiveSummary", ""))
+                    st.markdown("---")
+
                     c1, c2 = st.columns(2)
                     with c1:
-                        st.markdown("### Strengths Highlighted")
+                        st.markdown("### Profile Strengths")
                         for str_item in ats_result.get("Strengths", []):
                             st.markdown(f"- **{str_item}**")
                             
-                        st.markdown("### Missing Key Terms")
+                        st.markdown("### Suggested Keywords to Add")
                         for kw in ats_result.get("MissingKeywords", []):
                             st.markdown(f"- `{kw}`")
                             
                     with c2:
-                        st.markdown("### Areas of Improvement")
+                        st.markdown("### Areas to Improve")
                         for imp in ats_result.get("AreasOfImprovement", []):
                             st.markdown(f"- {imp}")
                             
-                        st.markdown("### Recommended Actionable Revisions")
+                        st.markdown("### Practical Recommendations")
                         for chg in ats_result.get("RecommendedChanges", []):
                             st.markdown(f"- {chg}")
 
@@ -469,87 +547,131 @@ if selected_nav == "Resume ATS Analyzer":
                     st.markdown(raw_ats_response)
 
 # ==============================================================================
-# SECTION 2: PRACTICE INTERVIEW TERMINAL
+# SECTION 2: INTERVIEW PREPARATION GUIDE (POSITIONED ABOVE PRACTICE ROOM)
 # ==============================================================================
-elif selected_nav == "Practice Interview Terminal":
-    st.title("Practice & Interview Evaluation Terminal")
-    st.caption("Conduct audio or video mock interviews with personalized panel evaluation.")
+elif selected_nav == "Interview Preparation Guide":
+    st.title("Interview Preparation Guide")
+    st.caption("Select a business domain and question to study key evaluation objectives, effective response frameworks, and model benchmark answers.")
+    
+    prep_category = st.selectbox("Select Study Domain:", ["General and Core Skills"] + SPECIALIZATIONS + ["Company Specific"])
+    
+    selected_question = None
+    if prep_category == "Company Specific":
+        comp_choice = st.selectbox("Select Target Company:", IPER_RECRUITERS)
+        if st.button("Load Top Recruiter Questions"):
+            with st.spinner(f"Retrieving top questions for {comp_choice}..."):
+                q_prompt = f"Generate 5 popular technical and situational interview questions asked by {comp_choice} during campus hiring."
+                st.markdown(get_groq_response(q_prompt))
+    else:
+        q_list = EXHAUSTIVE_QUESTIONS.get(prep_category, ["Describe a key challenge you faced and how you resolved it."])
+        selected_question = st.selectbox(f"Select Question to Study (15+ Available under {prep_category}):", q_list)
+
+    if selected_question:
+        st.markdown("---")
+        st.subheader(f"Study Guide: {selected_question}")
+        
+        if st.button("Generate Complete Answer Framework & Model Answer"):
+            with st.spinner("Preparing answer breakdown..."):
+                study_prompt = f"""
+                Act as a senior MBA Placement Advisor at IPER Bhopal.
+                Analyze this interview question for candidates:
+                
+                Question: "{selected_question}"
+                Domain: "{prep_category}"
+
+                Provide a clean, structured guide containing:
+                1. WHAT INTERVIEWERS LOOK FOR (Key competencies being evaluated).
+                2. HOW TO STRUCTURE YOUR ANSWER (Step-by-step structure like STAR or CAR framework).
+                3. MODEL BENCHMARK ANSWER (A clear, high-scoring sample response).
+                """
+                study_guide = get_groq_response(study_prompt)
+                st.markdown(study_guide)
+
+# ==============================================================================
+# SECTION 3: INTERVIEW PRACTICE ROOM (POSITIONED BELOW PREPARATION GUIDE)
+# ==============================================================================
+elif selected_nav == "Interview Practice Room":
+    st.title("Interview Practice Room")
+    st.caption("Practice audio or video interview responses and receive structured, constructive feedback.")
     
     if st.session_state.get("resume_details"):
-        st.success(f"Active Candidate Profile: **{st.session_state['candidate_name']}** (Loaded from Resume ATS section)")
+        st.markdown(f"**Active Candidate:** {st.session_state['candidate_name']} *(Resume loaded)*")
     else:
-        st.info("Tip: Upload candidate resume in the **Resume ATS Analyzer** section to activate tailored questions.")
+        st.markdown("*(Tip: You can upload your resume in the **Resume Checker** section for custom questions.)*")
 
+    st.markdown("---")
     col_mode, col_diff, col_cat = st.columns(3)
     with col_mode:
-        mode = st.radio("Practice Mode:", ["Audio Response Mode", "Video Response Mode"])
+        mode = st.radio("Practice Format:", ["Audio Response Mode", "Video Response Mode"])
     with col_diff:
-        difficulty = st.selectbox("Difficulty Level:", ["Basic", "Intermediate", "Expert"])
+        difficulty = st.selectbox("Question Level:", ["Basic", "Intermediate", "Advanced"])
     with col_cat:
-        category = st.selectbox("Question Domain:", ["Resume-Based (Tailored)", "General and Core Skills", "Specialization", "Company Specific"])
+        category = st.selectbox("Question Focus:", ["Resume-Based (Custom)", "General and Core Skills", "Specialization", "Company Specific"])
 
     selected_spec = None
     selected_comp = None
     if category == "Specialization":
-        selected_spec = st.selectbox("Select Track:", SPECIALIZATIONS)
+        selected_spec = st.selectbox("Select Specialization Track:", SPECIALIZATIONS)
     elif category == "Company Specific":
         selected_comp = st.selectbox("Select Target Recruiter:", IPER_RECRUITERS)
 
-    if st.button("Generate Interview Question", use_container_width=True):
-        if category == "Resume-Based (Tailored)":
+    if st.button("Get Practice Question", use_container_width=True):
+        if category == "Resume-Based (Custom)":
             if not st.session_state.get("resume_details"):
-                st.warning("Please upload candidate resume first in the Resume ATS Analyzer menu option.")
+                st.warning("Please upload your resume in the Resume Checker section first to generate custom questions.")
             else:
                 prompt = f"""
-                Act as a strict MBA interviewer at IPER Bhopal. 
+                Act as a supportive MBA interviewer at IPER Bhopal. 
                 Generate ONE interview question tailored to {st.session_state['candidate_name']}'s resume profile:
                 {json.dumps(st.session_state['resume_details'])}
-                Difficulty: {difficulty}
-                Return ONLY the question text directly.
+                Difficulty level: {difficulty}
+                Return ONLY the question text clearly.
                 """
-                with st.spinner(f"Generating question for {st.session_state['candidate_name']}..."):
+                with st.spinner("Generating question..."):
                     st.session_state["current_question"] = get_groq_response(prompt)
         else:
-            ctx = f"Domain: {category}, Difficulty: {difficulty}"
-            if selected_spec: ctx += f", Specialization: {selected_spec}"
+            ctx = f"Domain: {category}, Level: {difficulty}"
+            if selected_spec: ctx += f", Track: {selected_spec}"
             if selected_comp: ctx += f", Target Company: {selected_comp}"
-            if st.session_state["resume_details"]: ctx += f", Resume Context: {json.dumps(st.session_state['resume_details'])}"
+            if st.session_state["resume_details"]: ctx += f", Candidate Context: {json.dumps(st.session_state['resume_details'])}"
             
-            prompt = f"Act as an MBA interviewer at IPER Bhopal. Generate ONE question for '{st.session_state['candidate_name']}' based on: {ctx}. Return ONLY question text."
+            prompt = f"Act as an MBA interviewer at IPER Bhopal. Generate ONE interview question for '{st.session_state['candidate_name']}' based on: {ctx}. Return ONLY question text."
             with st.spinner("Retrieving question..."):
                 st.session_state["current_question"] = get_groq_response(prompt)
 
     if "current_question" in st.session_state:
-        st.info(f"**Assigned Question for {st.session_state['candidate_name']}:** {st.session_state['current_question']}")
-        
+        st.markdown(f"### Question for {st.session_state['candidate_name']}")
+        st.write(f"*{st.session_state['current_question']}*")
+        st.markdown("---")
+
         extracted_transcript = ""
         saved_video_filename = "N/A"
 
         if mode == "Audio Response Mode":
-            st.subheader("Record Audio Answer")
-            audio_data = st.audio_input("Record your answer:")
+            st.subheader("Record Your Audio Answer")
+            audio_data = st.audio_input("Click to record your voice:")
             if audio_data is not None:
                 st.audio(audio_data)
-                with st.spinner("Transcribing audio..."):
+                with st.spinner("Converting audio to text..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
                         tmp_file.write(audio_data.getvalue())
                         tmp_path = tmp_file.name
                     try:
                         extracted_transcript = transcribe_indian_english_audio(tmp_path)
                     except Exception as err:
-                        st.error(f"Whisper transcription error: {err}")
+                        st.error(f"Speech transcription error: {err}")
                     finally:
                         if os.path.exists(tmp_path): os.remove(tmp_path)
                 
                 if extracted_transcript:
-                    st.success("Audio transcribed successfully.")
+                    st.success("Audio recorded and transcribed successfully.")
 
         elif mode == "Video Response Mode":
-            st.subheader("Step 1: Record & Save Video Response")
+            st.subheader("1. Record & Save Video")
             render_video_recorder_component()
             
-            st.subheader("Step 2: Upload Saved Video File")
-            uploaded_video = st.file_uploader("Upload video file (.webm, .mp4):", type=["webm", "mp4"])
+            st.subheader("2. Upload Saved Video File")
+            uploaded_video = st.file_uploader("Upload recorded video file (.webm, .mp4):", type=["webm", "mp4"])
             
             if uploaded_video is not None:
                 ts = time.strftime("%Y%m%d_%H%M%S")
@@ -560,48 +682,48 @@ elif selected_nav == "Practice Interview Terminal":
                     f.write(uploaded_video.read())
                 
                 st.video(saved_video_path)
-                st.success(f"Video saved as `{saved_video_filename}`")
+                st.success(f"Video file saved: `{saved_video_filename}`")
                 
                 with st.spinner("Transcribing video audio track..."):
                     try:
                         extracted_transcript = transcribe_indian_english_audio(saved_video_path)
-                        st.success("Video audio track transcribed successfully.")
+                        st.success("Video audio transcribed successfully.")
                     except Exception as err:
                         st.error(f"Transcription error: {err}")
 
         final_response_text = st.text_area(
-            "Verified Response Transcript:", 
+            "Answer Transcript (Review or Edit Text Before Submitting):", 
             value=extracted_transcript, 
             height=140
         )
 
-        if st.button("Submit Answer for Panel Evaluation"):
+        if st.button("Submit Response for Feedback"):
             if not final_response_text.strip():
-                st.error("Please record an audio/video response or provide transcript text first.")
+                st.error("Please record your audio/video response or write your transcript text first.")
             else:
-                with st.spinner("Evaluating response..."):
+                with st.spinner("Analyzing your response..."):
                     c_name = st.session_state['candidate_name']
                     eval_prompt = f"""
-                    Act as strict placement auditor at IPER Bhopal.
-                    Evaluate response for candidate: {c_name}.
-                    Address {c_name} by name inside each feedback section.
+                    Act as an encouraging MBA placement mentor at IPER Bhopal.
+                    Evaluate the response for candidate: {c_name}.
+                    Address {c_name} warmly by name across feedback areas.
 
-                    Question: {st.session_state['current_question']}
+                    Question Asked: {st.session_state['current_question']}
                     Candidate Response: {final_response_text}
                     Resume Context: {json.dumps(st.session_state.get('resume_details', {}))}
-                    Mode: {mode}
+                    Practice Mode: {mode}
 
                     Return response in VALID JSON strictly matching this structure:
                     {{
                         "CandidateName": "{c_name}",
                         "GradingScore": <0-100 integer>,
-                        "ExecutiveSummary": "<Greeting addressing {c_name} with overall performance summary>",
-                        "TechnicalAssessment": "<Evaluation of domain accuracy, directly addressing {c_name}>",
-                        "CommunicationAssessment": "<Assessment of structure, flow, and delivery, addressing {c_name}>",
-                        "ResumeAlignment": "<How well {c_name} leveraged their background>",
-                        "KeyFlaws": "<Specific technical or structural errors>",
-                        "CorrectiveSteps": "<Actionable steps for {c_name} to improve>",
-                        "Benchmark100Answer": "<Comprehensive model answer>"
+                        "ExecutiveSummary": "<Warm greeting addressing {c_name} with an overall summary>",
+                        "TechnicalAssessment": "<Evaluation of subject knowledge and key points, addressing {c_name}>",
+                        "CommunicationAssessment": "<Assessment of clarity, structure, and delivery, addressing {c_name}>",
+                        "ResumeAlignment": "<How effectively {c_name} referenced their experience>",
+                        "KeyFlaws": "<Constructive highlights of points missed or needing clarity>",
+                        "CorrectiveSteps": "<Practical tips for {c_name} to improve next time>",
+                        "Benchmark100Answer": "<A clear, exemplary benchmark model answer>"
                     }}
                     """
                     raw_eval = get_groq_response(eval_prompt)
@@ -610,35 +732,31 @@ elif selected_nav == "Practice Interview Terminal":
                         clean_json = raw_eval.replace("```json", "").replace("```", "").strip()
                         eval_data = json.loads(clean_json)
                         
-                        st.subheader(f"Panel Evaluation Report for {c_name}")
+                        st.subheader(f"Feedback & Evaluation for {c_name}")
                         score = eval_data['GradingScore']
                         
-                        if score < 50:
-                            st.error(f"Score: {score}/100 - Below Placement Standard")
-                        elif score < 75:
-                            st.warning(f"Score: {score}/100 - Average (Needs Refinement)")
-                        else:
-                            st.success(f"Score: {score}/100 - High Performance")
-
+                        st.metric("Performance Score", f"{score} / 100")
+                        
                         if "ExecutiveSummary" in eval_data:
-                            st.info(eval_data["ExecutiveSummary"])
+                            st.write(eval_data["ExecutiveSummary"])
+                        st.markdown("---")
 
                         c1, c2 = st.columns(2)
                         with c1:
-                            st.markdown("### Technical Assessment")
+                            st.markdown("### Subject Knowledge & Accuracy")
                             st.write(eval_data['TechnicalAssessment'])
-                            st.markdown("### Communication & Delivery")
+                            st.markdown("### Delivery & Communication Structure")
                             st.write(eval_data['CommunicationAssessment'])
                         with c2:
-                            st.markdown("### Resume Alignment")
+                            st.markdown("### Resume Connection")
                             st.write(eval_data['ResumeAlignment'])
-                            st.markdown("### Key Flaws Identified")
+                            st.markdown("### Points to Polish")
                             st.write(eval_data['KeyFlaws'])
 
-                        st.markdown(f"### Mentorship & Corrective Steps for {c_name}")
+                        st.markdown(f"### Next Steps & Coaching for {c_name}")
                         st.write(eval_data['CorrectiveSteps'])
 
-                        with st.expander("View Benchmark 100/100 Model Answer"):
+                        with st.expander("Read Model Benchmark Answer (100/100)"):
                             st.write(eval_data['Benchmark100Answer'])
 
                         st.session_state["history"].append({
@@ -650,70 +768,31 @@ elif selected_nav == "Practice Interview Terminal":
                             "Score": score,
                             "VideoFile": saved_video_filename
                         })
-                        st.success("Attempt logged in sidebar history.")
+                        st.success("Session saved to practice history.")
 
                     except Exception:
                         st.markdown(raw_eval)
 
 # ==============================================================================
-# SECTION 3: INTERVIEW PREPARATION MODULE
+# SECTION 4: PERFORMANCE DASHBOARD
 # ==============================================================================
-elif selected_nav == "Interview Preparation Module":
-    st.title("Interview Preparation Module")
-    st.caption("Select a domain and question to study the Objective, Answering Structure, and Benchmark Sample Answer.")
+elif selected_nav == "Performance Dashboard":
+    st.title("Performance Dashboard & Progress Analytics")
+    st.caption("Track your overall practice sessions, average scores, and improvement trends over time.")
     
-    prep_category = st.selectbox("Select Preparation Category:", ["General and Core Skills"] + SPECIALIZATIONS + ["Company Specific"])
-    
-    selected_question = None
-    if prep_category == "Company Specific":
-        comp_choice = st.selectbox("Select Target Company:", IPER_RECRUITERS)
-        if st.button("Generate Tailored Recruiter Question Set"):
-            with st.spinner(f"Compiling questions for {comp_choice}..."):
-                q_prompt = f"Generate 5 top technical interview questions asked by {comp_choice} for MBA hires."
-                st.markdown(get_groq_response(q_prompt))
-    else:
-        q_list = EXHAUSTIVE_QUESTIONS.get(prep_category, ["Describe a key challenge you faced and how you resolved it."])
-        selected_question = st.selectbox("Select Question to Study:", q_list)
-
-    if selected_question:
-        st.markdown("---")
-        st.subheader(f"Question Study Guide: {selected_question}")
-        
-        if st.button("Generate Detailed Objective, Structure & Sample Answer"):
-            with st.spinner("Analyzing question framework..."):
-                study_prompt = f"""
-                Act as a senior MBA Placement Director at IPER Bhopal.
-                Analyze the following interview question for students:
-                
-                Question: "{selected_question}"
-                Category: "{prep_category}"
-
-                Provide a structured guide containing:
-                1. OBJECTIVE OF ASKING THE QUESTION (What competencies/skills the panel evaluates).
-                2. STRUCTURE OF THE ANSWER (Step-by-step framework like STAR, CAR, or 4Ps).
-                3. SAMPLE 100/100 BENCHMARK ANSWER (Comprehensive model answer for MBA hires).
-                """
-                study_guide = get_groq_response(study_prompt)
-                st.markdown(study_guide)
-
-# ==============================================================================
-# SECTION 4: DASHBOARD & ANALYTICS
-# ==============================================================================
-elif selected_nav == "Dashboard & Analytics":
-    st.title("Performance Dashboard & Analytics")
     if not st.session_state["history"]:
-        st.info("No practice attempts logged yet. Complete a session in the Practice Interview Terminal.")
+        st.info("No practice attempts recorded yet. Complete a session in the Interview Practice Room to view analytics.")
     else:
         df = pd.DataFrame(st.session_state["history"])
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total Practice Attempts", len(df))
-        m2.metric("Mean Assessment Score", f"{df['Score'].mean():.1f} / 100")
-        m3.metric("Peak Score Recorded", f"{df['Score'].max()} / 100")
+        m1.metric("Total Sessions Completed", len(df))
+        m2.metric("Average Practice Score", f"{df['Score'].mean():.1f} / 100")
+        m3.metric("Highest Score Achieved", f"{df['Score'].max()} / 100")
 
         st.markdown("---")
-        st.subheader("Score Progress")
+        st.subheader("Score Progress Over Time")
         st.line_chart(df, y="Score")
 
-        st.subheader("Historical Log Table")
+        st.subheader("Practice History Log")
         st.dataframe(df, use_container_width=True)
