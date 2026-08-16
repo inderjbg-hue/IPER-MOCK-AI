@@ -424,4 +424,65 @@ if selected_nav == "Resume Checker & Job Matcher":
                 """
                 parsed_raw = get_groq_response(parse_prompt)
                 try:
-                    clean_json = parsed_raw.replace("```json", "").replace("
+                    clean_json = parsed_raw.replace("```json", "").replace("```", "").strip()
+                    resume_data = json.loads(clean_json)
+                    c_name = resume_data.get("Name", "Candidate")
+                except Exception:
+                    c_name = "Candidate"
+                    resume_data = {"Summary": parsed_raw, "RawText": res_raw_text[:2000]}
+                
+                st.session_state["candidate_name"] = c_name
+                st.session_state["resume_details"] = resume_data
+                st.success(f"Loaded profile for **{st.session_state['candidate_name']}**")
+
+    with col_jd:
+        st.subheader("2. Target Job Description")
+        jd_input_option = st.radio("Provide Job Description via:", ["Upload File (PDF/DOCX/Image)", "Paste Text Direct"], horizontal=True)
+        
+        jd_text = ""
+        if jd_input_option == "Upload File (PDF/DOCX/Image)":
+            jd_file = st.file_uploader("Upload Job Description File:", type=["pdf", "docx", "doc", "png", "jpg", "jpeg"], key="ats_jd_upload")
+            if jd_file:
+                jd_text = extract_text_from_file(jd_file)
+                st.info(f"Loaded File: `{jd_file.name}`")
+        else:
+            jd_text = st.text_area("Paste Job Description Text Here:", height=180, placeholder="Paste requirements, job duties, and key qualifications...")
+
+    st.markdown("---")
+
+    if st.button("Check Match & Review Suggestions", use_container_width=True):
+        if not ats_resume_file:
+            st.error("Please upload your candidate resume first.")
+        elif not jd_text.strip():
+            st.error("Please upload or paste a Job Description.")
+        else:
+            with st.spinner("Reviewing match and alignment..."):
+                candidate_name = st.session_state.get("candidate_name", "Candidate")
+                resume_content = json.dumps(st.session_state.get("resume_details", {}))
+                
+                ats_prompt = f"""
+                Act as a helpful Corporate Recruiter & Placement Reviewer at IPER Bhopal.
+                Evaluate the resume alignment for candidate '{candidate_name}'.
+
+                Resume Information:
+                {resume_content}
+
+                Job Description Information:
+                {jd_text}
+
+                Return ONLY valid JSON with this exact structure:
+                {{
+                    "CandidateName": "{candidate_name}",
+                    "ATSScore": <0-100 integer score>,
+                    "Category": "<MUST be exactly one of: High Match | Good Match | Needs Improvement>",
+                    "ExecutiveSummary": "<Greeting addressing {candidate_name} by name with a friendly summary of overall fit>",
+                    "Strengths": ["<Strength 1>", "<Strength 2>", "<Strength 3>"],
+                    "AreasOfImprovement": ["<Area 1>", "<Area 2>", "<Area 3>"],
+                    "RecommendedChanges": ["<Specific bullet update 1>", "<Keyword addition 2>", "<Formatting tip 3>"],
+                    "MissingKeywords": ["<Keyword 1>", "<Keyword 2>", "<Keyword 3>"]
+                }}
+                """
+                raw_ats_response = get_groq_response(ats_prompt)
+                
+                try:
+                    clean_ats = raw_ats_response.replace("```json", "").replace("
