@@ -369,7 +369,6 @@ import sqlite3
 import hashlib
 import secrets
 import shutil
-import uuid
 from datetime import datetime
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "students.db")
@@ -413,6 +412,49 @@ def init_database():
             FOREIGN KEY(student_id) REFERENCES students(id)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS gd_rooms (
+            slot INTEGER PRIMARY KEY,
+            code TEXT UNIQUE,
+            topic TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Open',
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            ended_at TEXT,
+            recording_status TEXT DEFAULT 'Not Started'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS gd_participants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slot INTEGER NOT NULL,
+            scholar_id TEXT NOT NULL,
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            joined_at TEXT NOT NULL,
+            left_at TEXT,
+            active INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(slot, scholar_id),
+            FOREIGN KEY(slot) REFERENCES gd_rooms(slot)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS gd_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slot INTEGER NOT NULL,
+            scholar_id TEXT NOT NULL,
+            voice_score INTEGER NOT NULL,
+            perspective_score INTEGER NOT NULL,
+            participation_score INTEGER NOT NULL,
+            camera_clarity_score INTEGER NOT NULL,
+            strengths TEXT,
+            improvements TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    for slot in range(1, 8):
+        conn.execute("INSERT OR IGNORE INTO gd_rooms (slot, code, topic, status, created_at) VALUES (?, NULL, ?, 'Open', ?)",
+                     (slot, 'Not allocated', datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
 
@@ -525,6 +567,398 @@ def save_student_attempt(student_id, domain, score, mode, question):
     conn.close()
 
 
+
+GD_MAX_PARTICIPANTS = 7
+GD_MAX_MINUTES = 10
+GD_ROOM_COUNT = 7
+GD_DOMAIN = os.getenv("JITSI_DOMAIN", st.secrets.get("JITSI_DOMAIN", "meet.jit.si"))
+
+GD_TOPICS = [
+    "Artificial Intelligence: Job Creator or Job Killer?",
+    "Should college education be skill-based rather than degree-based?",
+    "Work From Home vs Work From Office",
+    "Is Social Media a Boon or a Curse?",
+    "Should AI be regulated?",
+    "Digital Payments and the Future of Cash",
+    "Startup Culture vs Stable Corporate Jobs",
+    "Is India ready for a cashless economy?",
+    "Sustainability vs Profitability",
+    "Can India become a global manufacturing hub?",
+    "Online Education vs Classroom Education",
+    "Is influencer marketing trustworthy?",
+    "Electric Vehicles: Future or Fad?",
+    "Should internships be mandatory for every student?",
+    "Data Privacy in the Digital Age",
+    "Is competition good for students?",
+    "Work-Life Balance vs Career Growth",
+    "Should companies hire for skills rather than degrees?",
+    "Is failure necessary for success?",
+    "Leadership: Born or Made?",
+    "Is customer experience more important than product quality?",
+    "Can technology replace human creativity?",
+    "Should college attendance be compulsory?",
+    "Are advertisements influencing consumers too much?",
+    "Ethical Issues in Artificial Intelligence",
+    "Should businesses take political stands?",
+    "Is entrepreneurship for everyone?",
+    "Green Marketing: Genuine Need or Branding Strategy?",
+    "Should companies adopt a four-day work week?",
+    "Gig Economy: Opportunity or Exploitation?",
+    "Is remote work reducing organizational culture?",
+    "Should employees be allowed to work anywhere?",
+    "Can India lead the global AI revolution?",
+    "Technology and Human Relationships",
+    "Should social media platforms be responsible for misinformation?",
+    "Is economic growth possible without environmental damage?",
+    "Brand Loyalty in the Age of Online Shopping",
+    "Should financial literacy be compulsory in colleges?",
+    "Is cryptocurrency the future of money?",
+    "Digital Banking vs Traditional Banking",
+    "Should companies monitor employee productivity digitally?",
+    "Is diversity important for business success?",
+    "Can India achieve sustainable development?",
+    "Should exams be replaced by continuous assessment?",
+    "The Future of the Indian Retail Industry",
+    "Does advertising create artificial needs?",
+    "Should businesses prioritize local suppliers?",
+    "Is globalization good for developing countries?",
+    "Should college students be allowed to use AI for assignments?",
+    "AI in Recruitment: Fairness vs Efficiency",
+    "Can emotional intelligence be more important than IQ at work?",
+    "Should companies disclose their salary ranges?",
+    "Performance Pay vs Fixed Salary",
+    "Is job security becoming less important?",
+    "Should organizations prioritize employee wellbeing?",
+    "Is customer data the new oil?",
+    "Can digital marketing replace traditional marketing?",
+    "Are discounts destroying brand value?",
+    "Should luxury brands embrace mass-market collaborations?",
+    "India's youth and entrepreneurship",
+    "Is a high salary the best measure of career success?",
+    "Should students pursue passion or job security?",
+    "Is networking more important than academic performance?",
+    "Should companies invest more in employee training?",
+    "Can automation improve workplace productivity?",
+    "Should managers use AI to evaluate employees?",
+    "Is hybrid work the best future of work?",
+    "Should companies have unlimited leave policies?",
+    "Is employee loyalty still relevant?",
+    "Can small businesses compete with e-commerce giants?",
+    "Is quick commerce changing consumer behavior permanently?",
+    "Should India prioritize domestic consumption?",
+    "Tourism as a driver of economic development",
+    "Is sustainable tourism practical?",
+    "Should public transport be free in major cities?",
+    "Electric public transport and urban mobility",
+    "Should cities discourage private vehicles?",
+    "Is population growth an economic advantage or challenge?",
+    "Should businesses be responsible for social development?",
+    "Corporate Social Responsibility: Responsibility or Marketing?",
+    "Should profit be the primary goal of business?",
+    "Can ethical business practices create competitive advantage?",
+    "Is brand reputation more valuable than short-term sales?",
+    "Should CEOs be active on social media?",
+    "The impact of short-form video on attention spans",
+    "Is digital detox necessary?",
+    "Should children have restricted social media access?",
+    "Online privacy vs national security",
+    "Should AI-generated content be labelled?",
+    "Is misinformation a bigger threat than fake news?",
+    "Should voting be compulsory?",
+    "Youth participation in nation building",
+    "Can sports create stronger communities?",
+    "Should colleges focus more on employability?",
+    "Is academic pressure helping or harming students?",
+    "Mental resilience in professional life",
+    "Should companies value soft skills equally with technical skills?",
+    "The importance of communication skills in management",
+    "Is multitasking reducing productivity?",
+    "Should employees be allowed to disconnect after work?",
+    "Leadership lessons from Indian businesses",
+    "Future of management education in India",
+    "Can India become a knowledge economy?",
+    "The role of women in India's workforce",
+    "Should organizations prioritize gender diversity?",
+    "Is meritocracy possible without equal opportunity?",
+    "Should companies recruit directly from colleges?",
+    "Campus placements vs independent job search",
+    "Are internships becoming more important than degrees?",
+]
+
+GD_DOS = [
+    "Understand the topic before speaking.",
+    "Open with a clear and relevant point when appropriate.",
+    "Listen actively and build on other participants' ideas.",
+    "Use facts, examples and business or real-world context.",
+    "Keep your contribution concise and structured.",
+    "Invite quieter members into the discussion.",
+    "Disagree with ideas respectfully, not with people.",
+    "Help the group move toward a balanced conclusion."
+]
+
+GD_DONTS = [
+    "Do not interrupt repeatedly.",
+    "Do not dominate the discussion.",
+    "Do not attack or ridicule another participant.",
+    "Do not invent statistics to sound convincing.",
+    "Do not repeat the same point without adding value.",
+    "Do not turn the GD into a one-to-one argument.",
+    "Do not stay silent for the entire discussion.",
+    "Do not force a conclusion without listening to the group."
+]
+
+
+def generate_gd_code():
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    while True:
+        code = "".join(secrets.choice(alphabet) for _ in range(6))
+        conn = get_db_connection()
+        exists = conn.execute("SELECT 1 FROM gd_rooms WHERE code = ?", (code,)).fetchone()
+        conn.close()
+        if not exists:
+            return code
+
+
+def reset_gd_slot(slot, topic):
+    code = generate_gd_code()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_db_connection()
+    conn.execute("DELETE FROM gd_participants WHERE slot = ?", (slot,))
+    conn.execute("""
+        UPDATE gd_rooms
+        SET code=?, topic=?, status='Open', created_at=?, started_at=NULL, ended_at=NULL, recording_status='Not Started'
+        WHERE slot=?
+    """, (code, topic, now, slot))
+    conn.commit()
+    conn.close()
+    return code
+
+
+def get_gd_rooms():
+    conn = get_db_connection()
+    rows = conn.execute("SELECT * FROM gd_rooms ORDER BY slot").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_gd_participants(slot):
+    conn = get_db_connection()
+    rows = conn.execute("""
+        SELECT scholar_id, first_name, last_name, joined_at
+        FROM gd_participants
+        WHERE slot=? AND active=1
+        ORDER BY joined_at
+    """, (slot,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def join_gd_room(slot, code, student):
+    conn = get_db_connection()
+    try:
+        room = conn.execute("SELECT * FROM gd_rooms WHERE slot=? AND code=?", (slot, code.strip().upper())).fetchone()
+        if not room:
+            return False, "Invalid GD room code for this room."
+        if room["status"] == "Ended":
+            return False, "This GD has already ended."
+        active_count = conn.execute("SELECT COUNT(*) FROM gd_participants WHERE slot=? AND active=1", (slot,)).fetchone()[0]
+        existing = conn.execute("SELECT * FROM gd_participants WHERE slot=? AND scholar_id=?", (slot, student["scholar_id"])).fetchone()
+        if existing and existing["active"]:
+            return True, "You are already registered in this GD room."
+        if active_count >= GD_MAX_PARTICIPANTS:
+            return False, f"This room is full. Maximum {GD_MAX_PARTICIPANTS} students are allowed."
+        conn.execute("UPDATE gd_participants SET active=0, left_at=? WHERE scholar_id=? AND active=1",
+                     (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), student["scholar_id"]))
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if existing:
+            conn.execute("UPDATE gd_participants SET first_name=?, last_name=?, joined_at=?, left_at=NULL, active=1 WHERE id=?",
+                         (student["first_name"], student["last_name"], now, existing["id"]))
+        else:
+            conn.execute("INSERT INTO gd_participants(slot, scholar_id, first_name, last_name, joined_at, active) VALUES (?, ?, ?, ?, ?, 1)",
+                         (slot, student["scholar_id"], student["first_name"], student["last_name"], now))
+        conn.commit()
+        return True, "You have joined the GD room."
+    finally:
+        conn.close()
+
+
+def leave_gd_room(slot, scholar_id):
+    conn = get_db_connection()
+    conn.execute("UPDATE gd_participants SET active=0, left_at=? WHERE slot=? AND scholar_id=?",
+                 (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), slot, scholar_id))
+    conn.commit()
+    conn.close()
+
+
+def set_gd_status(slot, status, recording_status=None):
+    conn = get_db_connection()
+    if status == "Active":
+        conn.execute("UPDATE gd_rooms SET status='Active', started_at=? WHERE slot=?",
+                     (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), slot))
+    elif status == "Ended":
+        conn.execute("UPDATE gd_rooms SET status='Ended', ended_at=?, recording_status=COALESCE(?, recording_status) WHERE slot=?",
+                     (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), recording_status, slot))
+    else:
+        conn.execute("UPDATE gd_rooms SET status=?, recording_status=COALESCE(?, recording_status) WHERE slot=?",
+                     (status, recording_status, slot))
+    conn.commit()
+    conn.close()
+
+
+def save_gd_feedback(slot, student, voice, perspective, participation, camera, strengths, improvements):
+    conn = get_db_connection()
+    conn.execute("""
+        INSERT INTO gd_feedback
+        (slot, scholar_id, voice_score, perspective_score, participation_score, camera_clarity_score, strengths, improvements, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (slot, student["scholar_id"], voice, perspective, participation, camera,
+          strengths.strip(), improvements.strip(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+    conn.close()
+
+
+def get_student_gd_feedback(scholar_id):
+    conn = get_db_connection()
+    rows = conn.execute("""
+        SELECT * FROM gd_feedback WHERE scholar_id=? ORDER BY id DESC
+    """, (scholar_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def render_jitsi_gd_room(slot, room_code, student, is_mentor=False, started_at=None):
+    room_name = f"IPER-GD-{slot}-{room_code}"
+    display_name = f"{student['first_name']} {student['last_name']} ({student['scholar_id']})"
+    role_label = "Mentor / Recording Host" if is_mentor else "Student"
+    safe_room = json.dumps(room_name)
+    safe_name = json.dumps(display_name)
+    safe_email = json.dumps(student.get("email", ""))
+    safe_started = json.dumps(started_at or "")
+    auto_record = "true" if is_mentor else "false"
+
+    html = f"""
+    <div style="font-family:Inter,Arial,sans-serif;border:1px solid #CBD5E1;border-radius:10px;overflow:hidden;background:#0F172A;">
+      <div style="padding:10px 14px;color:white;background:#0F172A;display:flex;justify-content:space-between;align-items:center;">
+        <div><b>IPER Virtual GD Room {slot}</b><br><span style="font-size:12px;opacity:.85">{role_label} • up to 7 students • 1080p preferred • hard 10-minute session</span></div>
+        <div id="gdTimer" style="font-weight:800;font-size:18px">10:00</div>
+      </div>
+      <div id="jitsi" style="width:100%;height:680px;background:#111827"></div>
+      <div id="gdStatus" style="padding:9px 14px;color:white;background:#1E293B;font-size:13px">Connecting to the GD room...</div>
+    </div>
+    <script src="https://meet.jit.si/external_api.js"></script>
+    <script>
+      const domain = {json.dumps(GD_DOMAIN)};
+      const roomName = {safe_room};
+      const displayName = {safe_name};
+      const email = {safe_email};
+      const autoRecord = {auto_record};
+      const startedAtText = {safe_started};
+      const options = {{
+        roomName: roomName,
+        width: '100%',
+        height: 680,
+        parentNode: document.querySelector('#jitsi'),
+        userInfo: {{ displayName: displayName, email: email }},
+        configOverwrite: {{
+          resolution: 1080,
+          maxFullResolutionParticipants: 7,
+          constraints: {{ video: {{ height: {{ ideal: 1080, max: 1080, min: 240 }} }} }},
+          prejoinConfig: {{ enabled: true, hideDisplayName: true }},
+          recordings: {{ recordAudioAndVideo: true, suggestRecording: true, showPrejoinWarning: true, showRecordingLink: true }},
+          fileRecordingsEnabled: true,
+          fileRecordingsServiceEnabled: true,
+          localRecording: {{ disable: false, notifyAllParticipants: true }},
+          recordingLimit: {{ limit: 10 }},
+          disableThirdPartyRequests: true
+        }},
+        interfaceConfigOverwrite: {{
+          TILE_VIEW_MAX_COLUMNS: 4,
+          VIDEO_LAYOUT_FIT: 'both',
+          SHOW_JITSI_WATERMARK: false,
+          SHOW_WATERMARK_FOR_GUESTS: false
+        }}
+      }};
+      const api = new JitsiMeetExternalAPI(domain, options);
+      let timerHandle = null;
+      let recordingStarted = false;
+
+      function setStatus(text) {{ document.getElementById('gdStatus').innerText = text; }}
+
+      function startTenMinuteTimer() {{
+        if (timerHandle) return;
+        let startMs = startedAtText ? Date.parse(startedAtText.replace(' ', 'T')) : Date.now();
+        timerHandle = setInterval(() => {{
+          const elapsed = Math.floor((Date.now() - startMs) / 1000);
+          const remaining = Math.max(0, 600 - elapsed);
+          const m = String(Math.floor(remaining / 60)).padStart(2,'0');
+          const sec = String(remaining % 60).padStart(2,'0');
+          document.getElementById('gdTimer').innerText = m + ':' + sec;
+          if (remaining === 0) {{
+            clearInterval(timerHandle);
+            try {{ if (recordingStarted) api.executeCommand('stopRecording', 'file', false); }} catch(e) {{}}
+            setStatus('10-minute limit reached. The recording has been stopped; please conclude the GD and leave the room.');
+          }}
+        }}, 1000);
+      }}
+
+      api.addEventListener('videoConferenceJoined', () => {{
+        setStatus('Joined as ' + displayName + '. Camera requested at 1080p.');
+        try {{ api.executeCommand('displayName', displayName); api.executeCommand('setVideoQuality', 1080); }} catch(e) {{}}
+        startTenMinuteTimer();
+        if (autoRecord) {{
+          setTimeout(() => {{
+            try {{
+              api.executeCommand('startRecording', {{ mode: 'file', shouldShare: false }});
+              recordingStarted = true;
+              setStatus('GD recording started automatically by the mentor.');
+            }} catch(e) {{
+              setStatus('Recording could not be started. This requires a Jitsi recording service/Jibri on the meeting deployment.');
+            }}
+          }}, 2500);
+        }}
+      }});
+      api.addEventListener('recordingLinkAvailable', (event) => {{
+        const link = event && event.url ? event.url : '';
+        if (link) document.getElementById('gdStatus').innerHTML = 'Recording available: <a href="' + link + '" target="_blank" style="color:#93C5FD">Open recording</a>';
+      }});
+      api.addEventListener('videoConferenceLeft', () => {{ setStatus('You have left the GD room.'); }});
+    </script>
+    """
+    components.html(html, height=760, scrolling=False)
+
+
+def get_gd_ai_guidance(topic, student_name):
+    prompt = f"""
+You are an MBA Group Discussion coach at IPER Bhopal. Student name: {student_name}.
+The student selected this GD topic: {topic}
+Provide guidance, NOT a memorised speech. Cover exactly:
+1. Topic interpretation
+2. Arguments supporting the proposition
+3. Arguments opposing the proposition
+4. Business/economic perspective
+5. Social perspective
+6. Technology/future perspective
+7. Indian context
+8. Stakeholder perspectives
+9. Three smart points a student could raise
+10. Three questions a student could ask another participant
+11. A balanced way to conclude
+Use concise bullets and encourage listening and building on others' points.
+"""
+    return get_groq_response(prompt)
+
+
+def generate_gd_feedback_ai(student_name, topic, voice, perspective, participation, camera, strengths, improvements):
+    prompt = f"""
+You are an MBA placement mentor at IPER Bhopal. Provide concise, constructive GD feedback for {student_name}.
+Topic: {topic}
+Self-ratings (1-10): Voice/Verbal Delivery={voice}, Perspective/Ideas={perspective}, Participation/Team Contribution={participation}, Camera Clarity/Visual Presence={camera}
+Student strength reflection: {strengths}
+Student improvement reflection: {improvements}
+Return exactly four labelled sections: Voice, Perspective, Participation, Camera Clarity, followed by one Overall Next-Step paragraph. Do not invent facts about what the student actually said; base the guidance only on the supplied ratings and reflections.
+"""
+    return get_groq_response(prompt)
+
 def render_authentication_panel():
     st.markdown(
         """
@@ -611,352 +1045,6 @@ def render_authentication_panel():
 
 init_database()
 
-# ------------------------------------------------------------------------------
-# 5B. GROUP DISCUSSION DATABASE & CONTENT
-# ------------------------------------------------------------------------------
-def init_gd_database():
-    conn = get_db_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS gd_rooms (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            room_code TEXT NOT NULL UNIQUE,
-            topic TEXT NOT NULL,
-            created_by TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Waiting',
-            started_at TEXT,
-            ended_at TEXT,
-            max_participants INTEGER NOT NULL DEFAULT 6
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS gd_participants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            room_id INTEGER NOT NULL,
-            student_id INTEGER NOT NULL,
-            joined_at TEXT NOT NULL,
-            left_at TEXT,
-            UNIQUE(room_id, student_id),
-            FOREIGN KEY(room_id) REFERENCES gd_rooms(id),
-            FOREIGN KEY(student_id) REFERENCES students(id)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS gd_feedback (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            room_id INTEGER NOT NULL,
-            student_id INTEGER NOT NULL,
-            self_rating INTEGER NOT NULL,
-            confidence_rating INTEGER NOT NULL,
-            listening_rating INTEGER NOT NULL,
-            teamwork_rating INTEGER NOT NULL,
-            key_strength TEXT,
-            improvement_area TEXT,
-            submitted_at TEXT NOT NULL,
-            UNIQUE(room_id, student_id),
-            FOREIGN KEY(room_id) REFERENCES gd_rooms(id),
-            FOREIGN KEY(student_id) REFERENCES students(id)
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-
-def generate_gd_room_code():
-    conn = get_db_connection()
-    try:
-        for _ in range(20):
-            code = secrets.token_hex(3).upper()
-            exists = conn.execute("SELECT 1 FROM gd_rooms WHERE room_code = ?", (code,)).fetchone()
-            if not exists:
-                return code
-        raise RuntimeError("Could not generate a unique GD room code.")
-    finally:
-        conn.close()
-
-
-def create_gd_room(topic, created_by):
-    code = generate_gd_room_code()
-    conn = get_db_connection()
-    conn.execute(
-        "INSERT INTO gd_rooms(room_code, topic, created_by, created_at, status, max_participants) VALUES (?, ?, ?, ?, 'Waiting', 6)",
-        (code, topic, created_by, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    )
-    conn.commit()
-    conn.close()
-    return code
-
-
-def get_gd_room(room_code):
-    conn = get_db_connection()
-    row = conn.execute("SELECT * FROM gd_rooms WHERE room_code = ?", (room_code.strip().upper(),)).fetchone()
-    conn.close()
-    return row
-
-
-def get_gd_participants(room_id):
-    conn = get_db_connection()
-    rows = conn.execute("""
-        SELECT p.*, s.first_name, s.last_name, s.scholar_id, s.email
-        FROM gd_participants p
-        JOIN students s ON s.id = p.student_id
-        WHERE p.room_id = ?
-        ORDER BY p.joined_at
-    """, (room_id,)).fetchall()
-    conn.close()
-    return rows
-
-
-def join_gd_room(room_code, student_id):
-    room = get_gd_room(room_code)
-    if not room:
-        return False, "Invalid GD room code."
-    if room["status"] == "Finished":
-        return False, "This GD has already been finished."
-
-    conn = get_db_connection()
-    existing = conn.execute(
-        "SELECT id FROM gd_participants WHERE room_id = ? AND student_id = ?",
-        (room["id"], student_id)
-    ).fetchone()
-    if existing:
-        conn.close()
-        return True, "You are already registered in this GD room."
-
-    count = conn.execute(
-        "SELECT COUNT(*) AS c FROM gd_participants WHERE room_id = ?", (room["id"],)
-    ).fetchone()["c"]
-    if count >= room["max_participants"]:
-        conn.close()
-        return False, "This GD room is full. Maximum capacity is 6 students."
-    if room["status"] == "Started":
-        conn.close()
-        return False, "The GD has already started. New participants cannot join."
-
-    conn.execute(
-        "INSERT INTO gd_participants(room_id, student_id, joined_at) VALUES (?, ?, ?)",
-        (room["id"], student_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    )
-    conn.commit()
-    conn.close()
-    return True, "You have joined the GD room."
-
-
-def start_gd_room(room_id):
-    conn = get_db_connection()
-    conn.execute(
-        "UPDATE gd_rooms SET status='Started', started_at=? WHERE id=? AND status='Waiting'",
-        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), room_id)
-    )
-    conn.commit()
-    conn.close()
-
-
-def finish_gd_room(room_id):
-    conn = get_db_connection()
-    conn.execute(
-        "UPDATE gd_rooms SET status='Finished', ended_at=? WHERE id=? AND status != 'Finished'",
-        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), room_id)
-    )
-    conn.commit()
-    conn.close()
-
-
-def save_gd_feedback(room_id, student_id, self_rating, confidence_rating, listening_rating, teamwork_rating, key_strength, improvement_area):
-    conn = get_db_connection()
-    conn.execute("""
-        INSERT INTO gd_feedback(
-            room_id, student_id, self_rating, confidence_rating, listening_rating,
-            teamwork_rating, key_strength, improvement_area, submitted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(room_id, student_id) DO UPDATE SET
-            self_rating=excluded.self_rating,
-            confidence_rating=excluded.confidence_rating,
-            listening_rating=excluded.listening_rating,
-            teamwork_rating=excluded.teamwork_rating,
-            key_strength=excluded.key_strength,
-            improvement_area=excluded.improvement_area,
-            submitted_at=excluded.submitted_at
-    """, (room_id, student_id, self_rating, confidence_rating, listening_rating, teamwork_rating, key_strength, improvement_area, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-
-
-GD_DOS = [
-    "Understand the topic quickly and define it before taking a position.",
-    "Speak briefly but add substance, examples, data, or reasoning.",
-    "Listen actively and build on relevant points made by others.",
-    "Use a calm, professional tone and maintain respectful disagreement.",
-    "Try to bring quieter participants into the discussion.",
-    "Use structure: point → reason → example → implication.",
-    "Summarise the group's major arguments when appropriate.",
-    "Focus on the group objective rather than trying to 'win' the discussion.",
-]
-
-GD_DONTS = [
-    "Do not dominate the discussion or interrupt repeatedly.",
-    "Do not attack a person because you disagree with an idea.",
-    "Do not invent statistics or present uncertain claims as facts.",
-    "Do not repeat the same point without adding value.",
-    "Do not stay silent throughout the discussion.",
-    "Do not turn the GD into a one-to-one argument.",
-    "Do not use slang, offensive language, or an aggressive tone.",
-    "Do not rush to conclude without considering other perspectives.",
-]
-
-GD_TOPICS = [
-    "Artificial Intelligence: Job Creator or Job Destroyer?",
-    "Should AI-generated content be regulated?",
-    "Will AI replace entry-level corporate jobs?",
-    "The future of work: Remote, hybrid, or office?",
-    "Four-day work week: Productivity boost or business risk?",
-    "Is work-life balance more important than salary?",
-    "Should companies monitor employees digitally?",
-    "Skill-based hiring versus degree-based hiring",
-    "Is an MBA still worth it in the age of AI?",
-    "Internships: Learning opportunity or cheap labour?",
-    "Social media: Empowerment or addiction?",
-    "Influencer marketing: Trustworthy or manipulative?",
-    "Should social media platforms be responsible for misinformation?",
-    "Short-form content is reducing attention spans",
-    "Personal branding: Essential for careers?",
-    "Data privacy versus personalised digital services",
-    "Should governments regulate big technology companies?",
-    "Digital payments: Is a cashless economy realistic?",
-    "Cybersecurity is everyone's responsibility",
-    "Can India become a global technology leader?",
-    "Startup culture: Innovation versus hype",
-    "Unicorns: Real value or inflated valuations?",
-    "Bootstrapping versus venture capital",
-    "Profit versus purpose in modern business",
-    "Are family businesses better than professionally managed firms?",
-    "Customer experience is more important than product quality",
-    "Brand loyalty is disappearing",
-    "Price wars: Good for consumers, bad for brands?",
-    "Is advertising becoming too intrusive?",
-    "Sustainability as strategy versus sustainability as marketing",
-    "Greenwashing: How should companies respond?",
-    "Should businesses prioritise ESG over short-term profit?",
-    "Electric vehicles: Revolution or transition challenge?",
-    "Renewable energy and India's economic future",
-    "Climate change: Individual responsibility or corporate responsibility?",
-    "Plastic bans: Effective solution or incomplete approach?",
-    "Sustainable fashion: Trend or necessity?",
-    "Fast fashion versus ethical fashion",
-    "Can economic growth and environmental protection coexist?",
-    "Water scarcity and India's future",
-    "Is urbanisation helping or hurting India?",
-    "Smart cities: Technology or basic infrastructure first?",
-    "Public transport versus private vehicles",
-    "Should cities restrict private car ownership?",
-    "Tourism: Economic opportunity or environmental burden?",
-    "Can India become a global tourism hub?",
-    "Workplace diversity improves business performance",
-    "Gender diversity: Business necessity or social responsibility?",
-    "Should companies publish salary ranges?",
-    "Equal pay: Policy versus implementation",
-    "Mental well-being at work: Employer responsibility?",
-    "Employee loyalty in the gig economy",
-    "Gig work: Freedom or insecurity?",
-    "Should gig workers receive employee benefits?",
-    "Leadership: Born or developed?",
-    "Is empathy a leadership strength?",
-    "Should leaders be transparent about business failures?",
-    "Autocratic versus democratic leadership",
-    "Can a good manager always be a good leader?",
-    "Team performance versus individual performance",
-    "Competition within teams: Healthy or harmful?",
-    "Conflict at work: Problem or opportunity?",
-    "Communication skills versus technical skills",
-    "Can communication skills be taught?",
-    "Is emotional intelligence more important than IQ at work?",
-    "Should companies hire for attitude and train for skills?",
-    "Experience versus fresh ideas in hiring",
-    "Campus placements: Skills or academic scores?",
-    "Should college attendance be compulsory?",
-    "Online education versus classroom education",
-    "AI in education: Personalised learning or dependency?",
-    "Should students be allowed to use AI for assignments?",
-    "Examinations versus continuous assessment",
-    "Vocational education versus traditional degrees",
-    "Financial literacy should be compulsory in college",
-    "Is entrepreneurship a better career than employment?",
-    "Government jobs versus private sector careers",
-    "Should students take a gap year before an MBA?",
-    "Is salary the best measure of career success?",
-    "India's demographic dividend: Opportunity or challenge?",
-    "Can India become a developed economy by 2047?",
-    "Make in India: Has it changed India's manufacturing story?",
-    "Startup India and the future of entrepreneurship",
-    "Atmanirbhar Bharat: Self-reliance or global integration?",
-    "India versus China as a manufacturing destination",
-    "MSMEs: Backbone of India's economy?",
-    "Formalisation of the Indian economy: Benefits and challenges",
-    "Inflation: Who should bear the burden?",
-    "Cashless economy: Inclusion versus exclusion",
-    "Universal basic income: Practical policy or expensive idea?",
-    "Should governments subsidise essential goods?",
-    "Public-private partnerships: Solution or compromise?",
-    "Privatisation: Efficiency versus public interest",
-    "Is economic inequality India's biggest challenge?",
-    "Consumerism: Growth engine or social problem?",
-    "Online shopping versus local retailers",
-    "Quick commerce: Convenience versus sustainability",
-    "E-commerce will replace traditional retail",
-    "Cash on delivery versus digital payments",
-    "Should product reviews be regulated?",
-    "Customer data is the new currency",
-    "Are loyalty programmes still effective?",
-    "The future of Indian banking is digital",
-    "FinTech versus traditional banking",
-    "Should cryptocurrencies be widely adopted?",
-    "Financial inclusion through digital banking",
-    "Social responsibility versus shareholder responsibility",
-    "Can business ethics coexist with aggressive targets?",
-    "Whistleblowing: Loyalty versus integrity",
-    "Corporate governance failures: Who is responsible?",
-    "Transparency builds stronger brands",
-    "Is nationalism good for business?",
-    "Globalisation versus localisation",
-    "Geopolitics and its impact on Indian businesses",
-    "Should companies diversify supply chains even at higher cost?",
-    "India's role in the global economy",
-    "Sports as a business: Opportunity versus commercialisation",
-    "Women in sports and equal opportunities",
-    "Is celebrity endorsement still effective?",
-    "News media: Business model versus public service",
-    "Freedom of expression versus responsible communication",
-]
-
-# Keep exactly 100+ topics available even if the list is later edited.
-GD_TOPICS = GD_TOPICS[:120]
-
-
-def generate_gd_perspectives(topic):
-    prompt = f"""
-Act as a neutral MBA Group Discussion mentor at IPER Bhopal.
-The student is preparing for a GD on this topic:
-
-{topic}
-
-Provide guidance only, not a scripted speech. Give: 
-1. What the topic means / key context.
-2. 5 strong arguments supporting one side.
-3. 5 strong counterarguments / opposing perspectives.
-4. Economic/business perspective.
-5. Social perspective.
-6. Technology/future perspective where relevant.
-7. Indian context and examples where appropriate.
-8. Stakeholder perspectives.
-9. 5 questions a participant can use to deepen the discussion.
-10. A balanced 4-5 line conclusion.
-Avoid fabricated statistics. Clearly label examples as examples when exact data is not certain.
-"""
-    return get_groq_response(prompt)
-
-
-init_gd_database()
-
 FFMPEG_PATH = shutil.which("ffmpeg")
 
 if "authenticated" not in st.session_state:
@@ -993,8 +1081,8 @@ selected_nav = st.sidebar.radio(
         "Resume Checker & Job Matcher", 
         "Interview Preparation Guide", 
         "Interview Practice Room", 
-        "Group Discussion",
-        "Mentor Console",
+        "Group Discussion Hub",
+        "Mentor GD Console",
         "Performance Dashboard"
     ]
 )
@@ -1384,157 +1472,177 @@ elif selected_nav == "Interview Practice Room":
                         st.warning("The AI response was not returned as valid JSON. The raw feedback is shown below.")
                         st.markdown(raw_eval)
 
-# SECTION 4: GROUP DISCUSSION
-elif selected_nav == "Group Discussion":
-    st.title("Group Discussion (GD) Hub")
-    st.caption(f"Build GD knowledge, explore perspectives, and practise with a mentor-generated virtual GD room, {st.session_state.get('first_name', 'Student') }.")
+# SECTION 4: GROUP DISCUSSION HUB
+elif selected_nav == "Group Discussion Hub":
+    st.title("Group Discussion Hub")
+    st.caption("Prepare with 100+ topics, then join a mentor-created virtual GD room with up to 7 students for a maximum of 10 minutes.")
 
-    gd_prep_tab, gd_practice_tab = st.tabs(["📚 GD Preparation", "🎥 GD Practice Room"])
+    gd_prep_tab, gd_practice_tab, gd_feedback_tab = st.tabs(["📚 GD Preparation", "🎥 GD Practice", "📝 My GD Feedback"])
 
     with gd_prep_tab:
-        st.subheader("GD Preparation")
         prep_col1, prep_col2 = st.columns(2)
         with prep_col1:
-            st.markdown("### Do's")
+            st.markdown("### ✅ Do's")
             for item in GD_DOS:
                 st.markdown(f"- {item}")
         with prep_col2:
-            st.markdown("### Don'ts")
+            st.markdown("### ❌ Don'ts")
             for item in GD_DONTS:
                 st.markdown(f"- {item}")
 
         st.markdown("---")
-        st.subheader(f"GD Topic Bank — {len(GD_TOPICS)} Topics")
-        topic = st.selectbox("Select a topic for AI-guided perspectives:", GD_TOPICS)
-        if st.button("Explore All Perspectives with AI", use_container_width=True):
-            with st.spinner("Preparing balanced perspectives for your GD topic..."):
-                perspective = generate_gd_perspectives(topic)
-            st.markdown(perspective)
-            st.info("Use this as preparation guidance. Do not memorise it word-for-word; build your own points and respond to what others say.")
+        st.markdown("### 100+ GD Topics")
+        topic = st.selectbox("Select a GD topic for AI perspective guidance:", GD_TOPICS)
+        if st.button("Get AI Perspective Guidance", use_container_width=True):
+            with st.spinner("Preparing balanced perspectives..."):
+                st.markdown(get_gd_ai_guidance(topic, st.session_state.get("first_name", "Student")))
 
     with gd_practice_tab:
-        st.subheader("Virtual GD Practice")
-        st.write("Your mentor creates a room code. A maximum of **6 students** can register in each GD room using their IPER student accounts.")
+        st.markdown("### Join Your Mentor's Virtual GD")
+        st.info("Your mentor creates one of the 7 GD rooms and shares the 6-character room code with you. Each room supports up to 7 students.")
 
-        if "gd_room_code" not in st.session_state:
-            st.session_state["gd_room_code"] = ""
+        rooms = get_gd_rooms()
+        room_options = [r for r in rooms if r.get("code")]
+        if room_options:
+            room_labels = [f"Room {r['slot']} — {r['topic']} — {r['status']}" for r in room_options]
+            selected_label = st.selectbox("Select GD Room", room_labels)
+            selected_room = room_options[room_labels.index(selected_label)]
 
-        join_col1, join_col2 = st.columns([2, 1])
-        with join_col1:
-            room_code_input = st.text_input("Enter Mentor-Generated GD Code", value=st.session_state.get("gd_room_code", ""), max_chars=6, placeholder="e.g. A4F91C")
-        with join_col2:
-            st.write("")
-            st.write("")
-            if st.button("Join GD Room", use_container_width=True):
-                ok, message = join_gd_room(room_code_input, st.session_state["student_id"])
+            join_code = st.text_input("Enter GD Room Code", max_chars=6, placeholder="e.g. A4F91C").strip().upper()
+            if st.button("Join Virtual GD", use_container_width=True):
+                ok, message = join_gd_room(selected_room["slot"], join_code, {
+                    "scholar_id": st.session_state["scholar_id"],
+                    "first_name": st.session_state["first_name"],
+                    "last_name": st.session_state["last_name"],
+                    "email": st.session_state["student_email"]
+                })
                 if ok:
-                    st.session_state["gd_room_code"] = room_code_input.strip().upper()
+                    st.session_state["active_gd_slot"] = selected_room["slot"]
+                    st.session_state["active_gd_code"] = join_code
                     st.success(message)
+                    st.rerun()
                 else:
                     st.error(message)
 
-        active_code = st.session_state.get("gd_room_code", "").strip().upper()
-        if active_code:
-            room = get_gd_room(active_code)
-            if room:
-                participants = get_gd_participants(room["id"])
-                st.markdown("---")
-                room_col1, room_col2, room_col3 = st.columns(3)
-                room_col1.metric("Room Code", room["room_code"])
-                room_col2.metric("Participants", f"{len(participants)} / 6")
-                room_col3.metric("Status", room["status"])
+        active_slot = st.session_state.get("active_gd_slot")
+        active_code = st.session_state.get("active_gd_code")
+        if active_slot and active_code:
+            active_room = next((r for r in get_gd_rooms() if r["slot"] == active_slot and r.get("code") == active_code), None)
+            if active_room:
+                participants = get_gd_participants(active_slot)
+                st.markdown(f"### Room {active_slot}: {active_room['topic']}")
+                st.write(f"**Room Code:** `{active_code}` | **Participants:** {len(participants)}/{GD_MAX_PARTICIPANTS} | **Status:** {active_room['status']}")
+                st.markdown("**Joined students:** " + ", ".join([f"{p['first_name']} {p['last_name']} ({p['scholar_id']})" for p in participants]))
+                render_jitsi_gd_room(active_slot, active_code, {
+                    "first_name": st.session_state["first_name"],
+                    "last_name": st.session_state["last_name"],
+                    "scholar_id": st.session_state["scholar_id"],
+                    "email": st.session_state["student_email"]
+                }, started_at=active_room.get("started_at"))
+                st.warning("GD recording is designed for a maximum of 10 minutes. 1080p is requested; actual quality depends on each student's camera, browser and network bandwidth.")
+                if st.button("Leave GD Room"):
+                    leave_gd_room(active_slot, st.session_state["scholar_id"])
+                    st.session_state.pop("active_gd_slot", None)
+                    st.session_state.pop("active_gd_code", None)
+                    st.rerun()
+        else:
+            st.info("Join a room above to enter the virtual GD.")
 
-                st.markdown(f"### Topic: {room['topic']}")
-                st.markdown("**Students in the room**")
-                for p_row in participants:
-                    st.write(f"• {p_row['first_name']} {p_row['last_name']} — Scholar ID: `{p_row['scholar_id']}`")
+    with gd_feedback_tab:
+        st.markdown("### Self-Feedback After Your GD")
+        st.caption("Rate your own performance on voice, perspective, participation and camera clarity.")
+        feedback_rooms = get_gd_rooms()
+        ended = [r for r in feedback_rooms if r.get("status") == "Ended"]
+        if ended:
+            feedback_slot = st.selectbox("Select completed GD room", [f"Room {r['slot']} — {r['topic']}" for r in ended])
+            feedback_room = ended[[f"Room {r['slot']} — {r['topic']}" for r in ended].index(feedback_slot)]
+            with st.form(f"gd_feedback_{feedback_room['slot']}"):
+                voice = st.slider("Voice / Verbal Delivery", 1, 10, 7)
+                perspective = st.slider("Perspective / Quality of Ideas", 1, 10, 7)
+                participation = st.slider("Participation / Listening / Team Contribution", 1, 10, 7)
+                camera = st.slider("Camera Clarity / Visual Presence", 1, 10, 7)
+                strengths = st.text_area("What was your biggest strength?")
+                improvements = st.text_area("What will you improve in your next GD?")
+                submitted = st.form_submit_button("Save GD Feedback", use_container_width=True)
+                if submitted:
+                    save_gd_feedback(feedback_room["slot"], {
+                        "scholar_id": st.session_state["scholar_id"]
+                    }, voice, perspective, participation, camera, strengths, improvements)
+                    st.success("Your GD feedback has been saved to your profile.")
+                    with st.spinner("Generating personalized GD coaching feedback..."):
+                        st.markdown("### AI GD Coaching Feedback")
+                        st.markdown(generate_gd_feedback_ai(
+                            st.session_state.get("first_name", "Student"),
+                            feedback_room["topic"], voice, perspective, participation, camera,
+                            strengths, improvements
+                        ))
+        else:
+            st.info("Your mentor has not ended a GD room yet.")
 
-                if room["status"] == "Waiting":
-                    if any(p_row["student_id"] == st.session_state["student_id"] for p_row in participants):
-                        if st.button("Start GD", use_container_width=True):
-                            start_gd_room(room["id"])
-                            st.rerun()
-                        st.info("The GD can start when the participants are ready. Maximum capacity is 6 students.")
-                    else:
-                        st.warning("Join this room before trying to start the GD.")
-                elif room["status"] == "Started":
-                    st.success("GD is live. Join the virtual meeting below and use your real name + Scholar ID when prompted by the meeting room.")
-                    jitsi_url = f"https://meet.jit.si/IPER-GD-{room['room_code']}"
-                    st.markdown(f"**Virtual GD link:** {jitsi_url}")
-                    components.iframe(jitsi_url, height=650, scrolling=True)
-                    if st.button("Finish GD", use_container_width=True):
-                        finish_gd_room(room["id"])
+        previous_feedback = get_student_gd_feedback(st.session_state["scholar_id"])
+        if previous_feedback:
+            st.markdown("### Previous GD Feedback")
+            for fb in previous_feedback[:10]:
+                st.markdown(f"**{fb['created_at']} — Room {fb['slot']}**")
+                st.write(f"Voice: {fb['voice_score']}/10 | Perspective: {fb['perspective_score']}/10 | Participation: {fb['participation_score']}/10 | Camera: {fb['camera_clarity_score']}/10")
+                if fb.get("strengths"): st.write(f"**Strength:** {fb['strengths']}")
+                if fb.get("improvements"): st.write(f"**Improve:** {fb['improvements']}")
+
+# SECTION 5: MENTOR GD CONSOLE
+elif selected_nav == "Mentor GD Console":
+    st.title("Mentor GD Console")
+    st.caption("Create and manage 7 independent virtual GD rooms. Each room supports up to 7 students.")
+
+    mentor_key = st.text_input("Mentor Access Key", type="password")
+    configured_key = st.secrets.get("MENTOR_ACCESS_KEY", os.getenv("MENTOR_ACCESS_KEY", ""))
+    if not configured_key:
+        st.warning("MENTOR_ACCESS_KEY is not configured in Streamlit Secrets/environment variables.")
+    elif mentor_key == configured_key:
+        rooms = get_gd_rooms()
+        st.markdown("### Seven GD Rooms")
+        for room in rooms:
+            with st.container(border=True):
+                st.markdown(f"#### Room {room['slot']}")
+                st.write(f"Topic: **{room['topic']}** | Status: **{room['status']}** | Code: `{room['code'] or 'Not allocated'}`")
+                participants = get_gd_participants(room['slot'])
+                st.write(f"Participants: {len(participants)}/{GD_MAX_PARTICIPANTS}")
+                if participants:
+                    st.write(", ".join([f"{p['first_name']} {p['last_name']} ({p['scholar_id']})" for p in participants]))
+
+                topic_value = st.text_input(f"Topic for Room {room['slot']}", value=room['topic'] if room['topic'] != 'Not allocated' else GD_TOPICS[room['slot']-1], key=f"mentor_topic_{room['slot']}")
+                b1, b2, b3 = st.columns(3)
+                with b1:
+                    if st.button("Generate / Reset Code", key=f"reset_gd_{room['slot']}"):
+                        new_code = reset_gd_slot(room['slot'], topic_value.strip() or GD_TOPICS[room['slot']-1])
+                        st.success(f"Room {room['slot']} code: {new_code}")
                         st.rerun()
-                else:
-                    st.info("This GD has finished. Please submit your self-feedback below.")
+                with b2:
+                    if st.button("Start GD", key=f"start_gd_{room['slot']}"):
+                        set_gd_status(room['slot'], "Active")
+                        st.success(f"Room {room['slot']} is now Active.")
+                        st.rerun()
+                with b3:
+                    if st.button("End GD", key=f"end_gd_{room['slot']}"):
+                        set_gd_status(room['slot'], "Ended", "Ended by mentor")
+                        st.success(f"Room {room['slot']} ended.")
+                        st.rerun()
 
-                if room["status"] == "Finished":
-                    st.markdown("---")
-                    st.subheader("Your GD Self-Feedback")
-                    st.caption("Reflect on your own performance. Your feedback is saved against this GD room.")
-                    with st.form(f"gd_feedback_form_{room['id']}"):
-                        self_rating = st.slider("Overall performance", 1, 5, 3)
-                        confidence_rating = st.slider("Confidence", 1, 5, 3)
-                        listening_rating = st.slider("Listening & building on others' ideas", 1, 5, 3)
-                        teamwork_rating = st.slider("Teamwork & respectful participation", 1, 5, 3)
-                        key_strength = st.text_area("What was your biggest strength in this GD?", max_chars=500)
-                        improvement_area = st.text_area("What will you improve in your next GD?", max_chars=500)
-                        submitted = st.form_submit_button("Save My GD Feedback", use_container_width=True)
-                    if submitted:
-                        save_gd_feedback(room["id"], st.session_state["student_id"], self_rating, confidence_rating, listening_rating, teamwork_rating, key_strength, improvement_area)
-                        st.success("Your GD feedback has been saved successfully.")
-            else:
-                st.error("That GD room no longer exists. Please ask your mentor for a new code.")
+        st.markdown("---")
+        current_rooms = get_gd_rooms()
+        available_for_mentor = [r for r in current_rooms if r.get("code") and r.get("status") in ("Open", "Active")]
+        if available_for_mentor:
+            selected_mentor_label = st.selectbox("Open a GD room as mentor / recording host", [f"Room {r['slot']} — {r['topic']} — {r['status']}" for r in available_for_mentor])
+            selected_mentor_room = available_for_mentor[[f"Room {r['slot']} — {r['topic']} — {r['status']}" for r in available_for_mentor].index(selected_mentor_label)]
+            st.info("Join this room as the recording host. The application requests 1080p and attempts to start file recording automatically when the mentor joins. Full-group recording requires a Jitsi deployment with a recording service/Jibri.")
+            render_jitsi_gd_room(selected_mentor_room['slot'], selected_mentor_room['code'], {
+                "first_name": "IPER",
+                "last_name": "Mentor",
+                "scholar_id": "MENTOR",
+                "email": "mentor@iper.ac.in"
+            }, is_mentor=True, started_at=selected_mentor_room.get("started_at"))
 
-# SECTION 5: MENTOR CONSOLE
-elif selected_nav == "Mentor Console":
-    st.title("Mentor Console")
-    st.caption("Create and manage mentor-generated GD rooms for up to 6 IPER students.")
-
-    mentor_key = st.secrets.get("MENTOR_ACCESS_KEY", os.getenv("MENTOR_ACCESS_KEY", ""))
-    if not mentor_key:
-        st.warning("Mentor access is not configured. Add `MENTOR_ACCESS_KEY` to Streamlit Secrets or the deployment environment.")
-    else:
-        entered_key = st.text_input("Mentor Access Key", type="password")
-        if entered_key == mentor_key:
-            st.success("Mentor access verified.")
-            mentor_topic = st.selectbox("Select GD Topic", GD_TOPICS + ["Custom Topic"])
-            if mentor_topic == "Custom Topic":
-                mentor_topic = st.text_input("Enter Custom GD Topic")
-
-            if st.button("Generate GD Room Code", use_container_width=True):
-                if not mentor_topic.strip():
-                    st.error("Please select or enter a GD topic.")
-                else:
-                    code = create_gd_room(mentor_topic.strip(), "Mentor")
-                    st.session_state["mentor_last_code"] = code
-                    st.success(f"GD room created. Share this code with up to 6 students: {code}")
-
-            if st.session_state.get("mentor_last_code"):
-                code = st.session_state["mentor_last_code"]
-                room = get_gd_room(code)
-                if room:
-                    st.markdown("---")
-                    st.subheader(f"Active Room: {code}")
-                    st.write(f"**Topic:** {room['topic']}")
-                    participants = get_gd_participants(room["id"])
-                    st.metric("Registered Students", f"{len(participants)} / 6")
-                    for p_row in participants:
-                        st.write(f"• {p_row['first_name']} {p_row['last_name']} — `{p_row['scholar_id']}`")
-
-                    if room["status"] == "Waiting":
-                        if st.button("Start GD for This Room", use_container_width=True):
-                            start_gd_room(room["id"])
-                            st.rerun()
-                    elif room["status"] == "Started":
-                        st.success("GD is currently live.")
-                        if st.button("End GD", use_container_width=True):
-                            finish_gd_room(room["id"])
-                            st.rerun()
-                    else:
-                        st.info("GD finished. Students can now submit their self-feedback.")
-        elif entered_key:
-            st.error("Invalid mentor access key.")
+    elif mentor_key:
+        st.error("Invalid mentor access key.")
 
 # SECTION 6: PERFORMANCE DASHBOARD
 elif selected_nav == "Performance Dashboard":
