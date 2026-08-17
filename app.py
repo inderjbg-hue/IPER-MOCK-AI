@@ -131,6 +131,8 @@ def load_speech_model():
 
 whisper_model = load_speech_model()
 
+GROQ_MODEL = "openai/gpt-oss-120b"
+
 GROQ_API_KEY = None
 if "GROQ_API_KEY" in st.secrets:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
@@ -195,7 +197,7 @@ def get_groq_response(prompt):
                 {"role": "system", "content": STRICT_MENTOR_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.3-70b-versatile",
+            model=GROQ_MODEL,
             temperature=0.2
         )
         return response.choices[0].message.content
@@ -369,23 +371,15 @@ import sqlite3
 import hashlib
 import secrets
 import shutil
-import base64
-import hmac
 from datetime import datetime
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "students.db")
 ALLOWED_EMAIL_DOMAIN = "@iper.ac.in"
-GD_ENGINE_URL = os.getenv("GD_ENGINE_URL", st.secrets.get("GD_ENGINE_URL", "http://localhost:8000"))
-GD_ENGINE_SECRET = os.getenv("GD_ENGINE_SECRET", st.secrets.get("GD_ENGINE_SECRET", "CHANGE_THIS_SECRET"))
 
 
 def is_valid_iper_email(email):
     email = email.strip().lower()
     return bool(re.fullmatch(r"[A-Za-z0-9._%+-]+@iper\.ac\.in", email))
-
-def generate_portal_session_key():
-    """Create a fresh non-reusable key for every successful portal login."""
-    return secrets.token_urlsafe(18)
 
 
 def get_db_connection():
@@ -429,14 +423,9 @@ def init_database():
             created_at TEXT NOT NULL,
             started_at TEXT,
             ended_at TEXT,
-            recording_status TEXT DEFAULT 'Not Started',
-            host_scholar_id TEXT
+            recording_status TEXT DEFAULT 'Not Started'
         )
     """)
-    # Safe migration for an older students.db created by the previous version.
-    room_columns = {row[1] for row in conn.execute("PRAGMA table_info(gd_rooms)").fetchall()}
-    if "host_scholar_id" not in room_columns:
-        conn.execute("ALTER TABLE gd_rooms ADD COLUMN host_scholar_id TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS gd_participants (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -465,22 +454,10 @@ def init_database():
             created_at TEXT NOT NULL
         )
     """)
-    conn.execute("INSERT OR IGNORE INTO gd_rooms (slot, code, topic, status, created_at) VALUES (?, NULL, ?, 'Open', ?)",
-                 (GD_SLOT, 'Student GD Practice', datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    for slot in range(1, 8):
+        conn.execute("INSERT OR IGNORE INTO gd_rooms (slot, code, topic, status, created_at) VALUES (?, NULL, ?, 'Open', ?)",
+                     (slot, 'Not allocated', datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
-    conn.close()
-    ensure_single_gd_room()
-
-
-def ensure_single_gd_room():
-    """Ensure the single student-created GD room always has a shareable code."""
-    conn = get_db_connection()
-    row = conn.execute("SELECT code, status FROM gd_rooms WHERE slot=?", (GD_SLOT,)).fetchone()
-    if row and not row["code"]:
-        code = generate_gd_code() if "generate_gd_code" in globals() else None
-        if code:
-            conn.execute("UPDATE gd_rooms SET code=? WHERE slot=?", (code, GD_SLOT))
-            conn.commit()
     conn.close()
 
 
@@ -595,8 +572,7 @@ def save_student_attempt(student_id, domain, score, mode, question):
 
 GD_MAX_PARTICIPANTS = 7
 GD_MAX_MINUTES = 10
-GD_ROOM_COUNT = 1
-GD_SLOT = 1
+GD_ROOM_COUNT = 7
 GD_DOMAIN = os.getenv("JITSI_DOMAIN", st.secrets.get("JITSI_DOMAIN", "meet.jit.si"))
 
 GD_TOPICS = [
@@ -752,7 +728,7 @@ def reset_gd_slot(slot, topic):
     conn.execute("DELETE FROM gd_participants WHERE slot = ?", (slot,))
     conn.execute("""
         UPDATE gd_rooms
-        SET code=?, topic=?, status='Open', created_at=?, started_at=NULL, ended_at=NULL, recording_status='Not Started', host_scholar_id=NULL
+        SET code=?, topic=?, status='Open', created_at=?, started_at=NULL, ended_at=NULL, recording_status='Not Started'
         WHERE slot=?
     """, (code, topic, now, slot))
     conn.commit()
@@ -802,14 +778,8 @@ def join_gd_room(slot, code, student):
         else:
             conn.execute("INSERT INTO gd_participants(slot, scholar_id, first_name, last_name, joined_at, active) VALUES (?, ?, ?, ?, ?, 1)",
                          (slot, student["scholar_id"], student["first_name"], student["last_name"], now))
-        # The first student becomes the GD host/recording starter.
-        # The actual 10-minute session starts only when the host presses Start GD
-        # inside the inbuilt WebRTC room.
-        if not room["host_scholar_id"]:
-            conn.execute("UPDATE gd_rooms SET host_scholar_id=?, status='Open', started_at=NULL WHERE slot=?",
-                         (student["scholar_id"], slot))
         conn.commit()
-        return True, "You have joined the GD room. The host will start the 10-minute session when everyone is ready."
+        return True, "You have joined the GD room."
     finally:
         conn.close()
 
@@ -858,34 +828,106 @@ def get_student_gd_feedback(scholar_id):
     return [dict(r) for r in rows]
 
 
-def create_gd_engine_token(room_code, student, expires_seconds=20 * 60):
-    payload = {
-        "room": room_code.upper(),
-        "scholar_id": student["scholar_id"],
-        "display_name": f"{student['first_name']} {student['last_name']} ({student['scholar_id']})",
-        "email": student.get("email", ""),
-        "exp": int(time.time()) + expires_seconds,
-    }
-    raw = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
-    signature = hmac.new(GD_ENGINE_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
-    return f"{raw}.{signature}"
+def render_jitsi_gd_room(slot, room_code, student, is_mentor=False, started_at=None):
+    room_name = f"IPER-GD-{slot}-{room_code}"
+    display_name = f"{student['first_name']} {student['last_name']} ({student['scholar_id']})"
+    role_label = "Mentor / Recording Host" if is_mentor else "Student"
+    safe_room = json.dumps(room_name)
+    safe_name = json.dumps(display_name)
+    safe_email = json.dumps(student.get("email", ""))
+    safe_started = json.dumps(started_at or "")
+    auto_record = "true" if is_mentor else "false"
 
-
-def render_inbuilt_gd_room(slot, room_code, student, is_host=False):
-    """Render the IPER-owned WebRTC room. No Google Meet/Jitsi/Zoom dependency."""
-    token = create_gd_engine_token(room_code, student)
-    room_url = f"{GD_ENGINE_URL.rstrip('/')}/room?room={room_code.upper()}&token={token}"
-    safe_url = json.dumps(room_url)
-    role = "Student Host / Recording Starter" if is_host else "Student Participant"
     html = f"""
     <div style="font-family:Inter,Arial,sans-serif;border:1px solid #CBD5E1;border-radius:10px;overflow:hidden;background:#0F172A;">
       <div style="padding:10px 14px;color:white;background:#0F172A;display:flex;justify-content:space-between;align-items:center;">
-        <div><b>IPER Inbuilt Virtual GD Room</b><br><span style="font-size:12px;opacity:.85">{role} • maximum 7 students • 1080p preferred • maximum 10 minutes</span></div>
+        <div><b>IPER Virtual GD Room {slot}</b><br><span style="font-size:12px;opacity:.85">{role_label} • up to 7 students • 1080p preferred • hard 10-minute session</span></div>
+        <div id="gdTimer" style="font-weight:800;font-size:18px">10:00</div>
       </div>
-      <iframe src={safe_url} allow="camera; microphone; autoplay; display-capture" style="width:100%;height:780px;border:0;background:#020617;"></iframe>
+      <div id="jitsi" style="width:100%;height:680px;background:#111827"></div>
+      <div id="gdStatus" style="padding:9px 14px;color:white;background:#1E293B;font-size:13px">Connecting to the GD room...</div>
     </div>
+    <script src="https://meet.jit.si/external_api.js"></script>
+    <script>
+      const domain = {json.dumps(GD_DOMAIN)};
+      const roomName = {safe_room};
+      const displayName = {safe_name};
+      const email = {safe_email};
+      const autoRecord = {auto_record};
+      const startedAtText = {safe_started};
+      const options = {{
+        roomName: roomName,
+        width: '100%',
+        height: 680,
+        parentNode: document.querySelector('#jitsi'),
+        userInfo: {{ displayName: displayName, email: email }},
+        configOverwrite: {{
+          resolution: 1080,
+          maxFullResolutionParticipants: 7,
+          constraints: {{ video: {{ height: {{ ideal: 1080, max: 1080, min: 240 }} }} }},
+          prejoinConfig: {{ enabled: true, hideDisplayName: true }},
+          recordings: {{ recordAudioAndVideo: true, suggestRecording: true, showPrejoinWarning: true, showRecordingLink: true }},
+          fileRecordingsEnabled: true,
+          fileRecordingsServiceEnabled: true,
+          localRecording: {{ disable: false, notifyAllParticipants: true }},
+          recordingLimit: {{ limit: 10 }},
+          disableThirdPartyRequests: true
+        }},
+        interfaceConfigOverwrite: {{
+          TILE_VIEW_MAX_COLUMNS: 4,
+          VIDEO_LAYOUT_FIT: 'both',
+          SHOW_JITSI_WATERMARK: false,
+          SHOW_WATERMARK_FOR_GUESTS: false
+        }}
+      }};
+      const api = new JitsiMeetExternalAPI(domain, options);
+      let timerHandle = null;
+      let recordingStarted = false;
+
+      function setStatus(text) {{ document.getElementById('gdStatus').innerText = text; }}
+
+      function startTenMinuteTimer() {{
+        if (timerHandle) return;
+        let startMs = startedAtText ? Date.parse(startedAtText.replace(' ', 'T')) : Date.now();
+        timerHandle = setInterval(() => {{
+          const elapsed = Math.floor((Date.now() - startMs) / 1000);
+          const remaining = Math.max(0, 600 - elapsed);
+          const m = String(Math.floor(remaining / 60)).padStart(2,'0');
+          const sec = String(remaining % 60).padStart(2,'0');
+          document.getElementById('gdTimer').innerText = m + ':' + sec;
+          if (remaining === 0) {{
+            clearInterval(timerHandle);
+            try {{ if (recordingStarted) api.executeCommand('stopRecording', 'file', false); }} catch(e) {{}}
+            setStatus('10-minute limit reached. The recording has been stopped; please conclude the GD and leave the room.');
+          }}
+        }}, 1000);
+      }}
+
+      api.addEventListener('videoConferenceJoined', () => {{
+        setStatus('Joined as ' + displayName + '. Camera requested at 1080p.');
+        try {{ api.executeCommand('displayName', displayName); api.executeCommand('setVideoQuality', 1080); }} catch(e) {{}}
+        startTenMinuteTimer();
+        if (autoRecord) {{
+          setTimeout(() => {{
+            try {{
+              api.executeCommand('startRecording', {{ mode: 'file', shouldShare: false }});
+              recordingStarted = true;
+              setStatus('GD recording started automatically by the mentor.');
+            }} catch(e) {{
+              setStatus('Recording could not be started. This requires a Jitsi recording service/Jibri on the meeting deployment.');
+            }}
+          }}, 2500);
+        }}
+      }});
+      api.addEventListener('recordingLinkAvailable', (event) => {{
+        const link = event && event.url ? event.url : '';
+        if (link) document.getElementById('gdStatus').innerHTML = 'Recording available: <a href="' + link + '" target="_blank" style="color:#93C5FD">Open recording</a>';
+      }});
+      api.addEventListener('videoConferenceLeft', () => {{ setStatus('You have left the GD room.'); }});
+    </script>
     """
-    components.html(html, height=820, scrolling=False)
+    components.html(html, height=760, scrolling=False)
+
 
 def get_gd_ai_guidance(topic, student_name):
     prompt = f"""
@@ -955,7 +997,6 @@ def render_authentication_panel():
                     st.session_state["last_name"] = student["last_name"]
                     st.session_state["scholar_id"] = student["scholar_id"]
                     st.session_state["candidate_name"] = student["first_name"]
-                    st.session_state["portal_access_key"] = generate_portal_session_key()
                     st.session_state["history"] = load_student_attempts(student["id"])
                     st.session_state["resume_details"] = None
                     st.success(f"Welcome back, {student['first_name']}!")
@@ -1032,9 +1073,6 @@ st.sidebar.markdown("## IPER Student Portal")
 st.sidebar.markdown(f"### Welcome, {st.session_state.get('first_name', 'Student')} 👋")
 st.sidebar.caption(f"Scholar ID: {st.session_state.get('scholar_id', 'N/A')}")
 st.sidebar.markdown("Career Readiness & Interview Hub")
-st.sidebar.markdown("**New Portal Session Key**")
-st.sidebar.code(st.session_state.get("portal_access_key", "N/A"), language=None)
-st.sidebar.caption("This key is regenerated on every login. Do not share it; it identifies your current portal session.")
 if not FFMPEG_PATH:
     st.sidebar.warning("FFmpeg is not installed. Audio/video transcription will not work until FFmpeg is added to the deployment environment.")
 st.sidebar.markdown("---")
@@ -1046,12 +1084,13 @@ selected_nav = st.sidebar.radio(
         "Interview Preparation Guide", 
         "Interview Practice Room", 
         "Group Discussion Hub",
+        "Mentor GD Console",
         "Performance Dashboard"
     ]
 )
 
 if st.sidebar.button("Log Out", use_container_width=True):
-    for key in ["authenticated", "student_id", "student_email", "first_name", "last_name", "scholar_id", "candidate_name", "resume_details", "current_question", "portal_access_key", "active_gd_slot", "active_gd_code"]:
+    for key in ["authenticated", "student_id", "student_email", "first_name", "last_name", "scholar_id", "candidate_name", "resume_details", "current_question"]:
         st.session_state.pop(key, None)
     st.session_state["history"] = []
     st.rerun()
@@ -1438,7 +1477,7 @@ elif selected_nav == "Interview Practice Room":
 # SECTION 4: GROUP DISCUSSION HUB
 elif selected_nav == "Group Discussion Hub":
     st.title("Group Discussion Hub")
-    st.caption("One shared virtual GD room • maximum 7 students • maximum 10 minutes • 1080p preferred")
+    st.caption("Prepare with 100+ topics, then join a mentor-created virtual GD room with up to 7 students for a maximum of 10 minutes.")
 
     gd_prep_tab, gd_practice_tab, gd_feedback_tab = st.tabs(["📚 GD Preparation", "🎥 GD Practice", "📝 My GD Feedback"])
 
@@ -1461,89 +1500,65 @@ elif selected_nav == "Group Discussion Hub":
                 st.markdown(get_gd_ai_guidance(topic, st.session_state.get("first_name", "Student")))
 
     with gd_practice_tab:
-        room = get_gd_rooms()[0]
-        st.markdown("### 🎥 One Virtual GD Room — 7 Video Participants")
-        st.info("Any logged-in IPER student can open the room. The first student becomes the room host and can share the GD Room Code with up to 6 other logged-in students.")
+        st.markdown("### Join Your Mentor's Virtual GD")
+        st.info("Your mentor creates one of the 7 GD rooms and shares the 6-character room code with you. Each room supports up to 7 students.")
 
-        st.markdown("#### 🔑 GD Room Access Code")
-        st.code(room["code"], language=None)
-        st.caption("Share ONLY this GD Room Access Code with your six peers. Each participant must still sign in with their own @iper.ac.in student account so the room displays their profile name and Scholar ID.")
+        rooms = get_gd_rooms()
+        room_options = [r for r in rooms if r.get("code")]
+        if room_options:
+            room_labels = [f"Room {r['slot']} — {r['topic']} — {r['status']}" for r in room_options]
+            selected_label = st.selectbox("Select GD Room", room_labels)
+            selected_room = room_options[room_labels.index(selected_label)]
 
-        if room.get("status") == "Ended":
-            st.warning("The previous GD has ended. Start a fresh session to generate a new room code.")
-            if st.button("Create New GD Session", use_container_width=True):
-                new_code = reset_gd_slot(GD_SLOT, room.get("topic") or "Student GD Practice")
-                st.session_state.pop("active_gd_slot", None)
-                st.session_state.pop("active_gd_code", None)
-                st.success(f"New GD Room Code: {new_code}")
-                st.rerun()
+            join_code = st.text_input("Enter GD Room Code", max_chars=6, placeholder="e.g. A4F91C").strip().upper()
+            if st.button("Join Virtual GD", use_container_width=True):
+                ok, message = join_gd_room(selected_room["slot"], join_code, {
+                    "scholar_id": st.session_state["scholar_id"],
+                    "first_name": st.session_state["first_name"],
+                    "last_name": st.session_state["last_name"],
+                    "email": st.session_state["student_email"]
+                })
+                if ok:
+                    st.session_state["active_gd_slot"] = selected_room["slot"]
+                    st.session_state["active_gd_code"] = join_code
+                    st.success(message)
+                    st.rerun()
+                else:
+                    st.error(message)
 
-        topic_for_room = st.selectbox("GD Topic for this session", GD_TOPICS, index=GD_TOPICS.index(room["topic"]) if room.get("topic") in GD_TOPICS else 0)
-        if room.get("status") == "Open" and st.button("Update Topic Before Starting", use_container_width=True):
-            conn = get_db_connection()
-            conn.execute("UPDATE gd_rooms SET topic=? WHERE slot=? AND status='Open'", (topic_for_room, GD_SLOT))
-            conn.commit()
-            conn.close()
-            st.success("GD topic updated.")
-            st.rerun()
-
-        participants = get_gd_participants(GD_SLOT)
-        st.write(f"**Participants:** {len(participants)}/{GD_MAX_PARTICIPANTS} | **Status:** {room['status']}")
-        if participants:
-            st.markdown("**Joined students:** " + " • ".join([f"{p['first_name']} {p['last_name']} ({p['scholar_id']})" for p in participants]))
-
-        join_code = st.text_input("Enter the shared GD Room Code", value=room["code"], max_chars=6, placeholder="e.g. A4F91C").strip().upper()
-        if st.button("Join Virtual GD Room", use_container_width=True):
-            ok, message = join_gd_room(GD_SLOT, join_code, {
-                "scholar_id": st.session_state["scholar_id"],
-                "first_name": st.session_state["first_name"],
-                "last_name": st.session_state["last_name"],
-                "email": st.session_state["student_email"]
-            })
-            if ok:
-                st.session_state["active_gd_slot"] = GD_SLOT
-                st.session_state["active_gd_code"] = join_code
-                st.success(message)
-                st.rerun()
-            else:
-                st.error(message)
-
+        active_slot = st.session_state.get("active_gd_slot")
         active_code = st.session_state.get("active_gd_code")
-        active_room = next((r for r in get_gd_rooms() if r["slot"] == GD_SLOT and r.get("code") == active_code), None) if active_code else None
-        if active_room:
-            participants = get_gd_participants(GD_SLOT)
-            is_host = active_room.get("host_scholar_id") == st.session_state["scholar_id"]
-            st.markdown("---")
-            st.markdown(f"### Live GD: {active_room['topic']}")
-            st.write(f"**Room Code:** `{active_room['code']}` | **Participants:** {len(participants)}/{GD_MAX_PARTICIPANTS} | **Your role:** {'Host / Recording Starter' if is_host else 'Participant'}")
-            render_inbuilt_gd_room(GD_SLOT, active_room["code"], {
-                "first_name": st.session_state["first_name"],
-                "last_name": st.session_state["last_name"],
-                "scholar_id": st.session_state["scholar_id"],
-                "email": st.session_state["student_email"]
-            }, is_host=is_host)
-            st.warning("The room is limited by the application to 7 registered students. The GD clock starts when the host presses Start GD and is capped at 10 minutes. 1080p is requested; actual camera quality depends on each device, browser, network and server capacity.")
-            if is_host and active_room.get("status") == "Active":
-                if st.button("End GD Session", type="primary", use_container_width=True):
-                    set_gd_status(GD_SLOT, "Ended", "Ended by student host")
-                    st.success("GD session ended. Students can now submit their feedback.")
+        if active_slot and active_code:
+            active_room = next((r for r in get_gd_rooms() if r["slot"] == active_slot and r.get("code") == active_code), None)
+            if active_room:
+                participants = get_gd_participants(active_slot)
+                st.markdown(f"### Room {active_slot}: {active_room['topic']}")
+                st.write(f"**Room Code:** `{active_code}` | **Participants:** {len(participants)}/{GD_MAX_PARTICIPANTS} | **Status:** {active_room['status']}")
+                st.markdown("**Joined students:** " + ", ".join([f"{p['first_name']} {p['last_name']} ({p['scholar_id']})" for p in participants]))
+                render_jitsi_gd_room(active_slot, active_code, {
+                    "first_name": st.session_state["first_name"],
+                    "last_name": st.session_state["last_name"],
+                    "scholar_id": st.session_state["scholar_id"],
+                    "email": st.session_state["student_email"]
+                }, started_at=active_room.get("started_at"))
+                st.warning("GD recording is designed for a maximum of 10 minutes. 1080p is requested; actual quality depends on each student's camera, browser and network bandwidth.")
+                if st.button("Leave GD Room"):
+                    leave_gd_room(active_slot, st.session_state["scholar_id"])
                     st.session_state.pop("active_gd_slot", None)
                     st.session_state.pop("active_gd_code", None)
                     st.rerun()
-            if st.button("Leave GD Room", use_container_width=True):
-                leave_gd_room(GD_SLOT, st.session_state["scholar_id"])
-                st.session_state.pop("active_gd_slot", None)
-                st.session_state.pop("active_gd_code", None)
-                st.rerun()
+        else:
+            st.info("Join a room above to enter the virtual GD.")
 
     with gd_feedback_tab:
         st.markdown("### Self-Feedback After Your GD")
         st.caption("Rate your own performance on voice, perspective, participation and camera clarity.")
-        feedback_rooms = [r for r in get_gd_rooms() if r.get("status") == "Ended"]
-        if feedback_rooms:
-            feedback_room = feedback_rooms[0]
-            st.info(f"Completed GD: **{feedback_room['topic']}** | Room Code: `{feedback_room['code']}`")
-            with st.form("gd_feedback_single_room"):
+        feedback_rooms = get_gd_rooms()
+        ended = [r for r in feedback_rooms if r.get("status") == "Ended"]
+        if ended:
+            feedback_slot = st.selectbox("Select completed GD room", [f"Room {r['slot']} — {r['topic']}" for r in ended])
+            feedback_room = ended[[f"Room {r['slot']} — {r['topic']}" for r in ended].index(feedback_slot)]
+            with st.form(f"gd_feedback_{feedback_room['slot']}"):
                 voice = st.slider("Voice / Verbal Delivery", 1, 10, 7)
                 perspective = st.slider("Perspective / Quality of Ideas", 1, 10, 7)
                 participation = st.slider("Participation / Listening / Team Contribution", 1, 10, 7)
@@ -1552,22 +1567,84 @@ elif selected_nav == "Group Discussion Hub":
                 improvements = st.text_area("What will you improve in your next GD?")
                 submitted = st.form_submit_button("Save GD Feedback", use_container_width=True)
                 if submitted:
-                    save_gd_feedback(GD_SLOT, {"scholar_id": st.session_state["scholar_id"]}, voice, perspective, participation, camera, strengths, improvements)
+                    save_gd_feedback(feedback_room["slot"], {
+                        "scholar_id": st.session_state["scholar_id"]
+                    }, voice, perspective, participation, camera, strengths, improvements)
                     st.success("Your GD feedback has been saved to your profile.")
                     with st.spinner("Generating personalized GD coaching feedback..."):
                         st.markdown("### AI GD Coaching Feedback")
-                        st.markdown(generate_gd_feedback_ai(st.session_state.get("first_name", "Student"), feedback_room["topic"], voice, perspective, participation, camera, strengths, improvements))
+                        st.markdown(generate_gd_feedback_ai(
+                            st.session_state.get("first_name", "Student"),
+                            feedback_room["topic"], voice, perspective, participation, camera,
+                            strengths, improvements
+                        ))
         else:
-            st.info("Complete the shared GD session first. The feedback tab will open after the host ends it.")
+            st.info("Your mentor has not ended a GD room yet.")
 
         previous_feedback = get_student_gd_feedback(st.session_state["scholar_id"])
         if previous_feedback:
             st.markdown("### Previous GD Feedback")
             for fb in previous_feedback[:10]:
-                st.markdown(f"**{fb['created_at']} — Shared GD Room**")
+                st.markdown(f"**{fb['created_at']} — Room {fb['slot']}**")
                 st.write(f"Voice: {fb['voice_score']}/10 | Perspective: {fb['perspective_score']}/10 | Participation: {fb['participation_score']}/10 | Camera: {fb['camera_clarity_score']}/10")
                 if fb.get("strengths"): st.write(f"**Strength:** {fb['strengths']}")
                 if fb.get("improvements"): st.write(f"**Improve:** {fb['improvements']}")
+
+# SECTION 5: MENTOR GD CONSOLE
+elif selected_nav == "Mentor GD Console":
+    st.title("Mentor GD Console")
+    st.caption("Create and manage 7 independent virtual GD rooms. Each room supports up to 7 students.")
+
+    mentor_key = st.text_input("Mentor Access Key", type="password")
+    configured_key = st.secrets.get("MENTOR_ACCESS_KEY", os.getenv("MENTOR_ACCESS_KEY", ""))
+    if not configured_key:
+        st.warning("MENTOR_ACCESS_KEY is not configured in Streamlit Secrets/environment variables.")
+    elif mentor_key == configured_key:
+        rooms = get_gd_rooms()
+        st.markdown("### Seven GD Rooms")
+        for room in rooms:
+            with st.container(border=True):
+                st.markdown(f"#### Room {room['slot']}")
+                st.write(f"Topic: **{room['topic']}** | Status: **{room['status']}** | Code: `{room['code'] or 'Not allocated'}`")
+                participants = get_gd_participants(room['slot'])
+                st.write(f"Participants: {len(participants)}/{GD_MAX_PARTICIPANTS}")
+                if participants:
+                    st.write(", ".join([f"{p['first_name']} {p['last_name']} ({p['scholar_id']})" for p in participants]))
+
+                topic_value = st.text_input(f"Topic for Room {room['slot']}", value=room['topic'] if room['topic'] != 'Not allocated' else GD_TOPICS[room['slot']-1], key=f"mentor_topic_{room['slot']}")
+                b1, b2, b3 = st.columns(3)
+                with b1:
+                    if st.button("Generate / Reset Code", key=f"reset_gd_{room['slot']}"):
+                        new_code = reset_gd_slot(room['slot'], topic_value.strip() or GD_TOPICS[room['slot']-1])
+                        st.success(f"Room {room['slot']} code: {new_code}")
+                        st.rerun()
+                with b2:
+                    if st.button("Start GD", key=f"start_gd_{room['slot']}"):
+                        set_gd_status(room['slot'], "Active")
+                        st.success(f"Room {room['slot']} is now Active.")
+                        st.rerun()
+                with b3:
+                    if st.button("End GD", key=f"end_gd_{room['slot']}"):
+                        set_gd_status(room['slot'], "Ended", "Ended by mentor")
+                        st.success(f"Room {room['slot']} ended.")
+                        st.rerun()
+
+        st.markdown("---")
+        current_rooms = get_gd_rooms()
+        available_for_mentor = [r for r in current_rooms if r.get("code") and r.get("status") in ("Open", "Active")]
+        if available_for_mentor:
+            selected_mentor_label = st.selectbox("Open a GD room as mentor / recording host", [f"Room {r['slot']} — {r['topic']} — {r['status']}" for r in available_for_mentor])
+            selected_mentor_room = available_for_mentor[[f"Room {r['slot']} — {r['topic']} — {r['status']}" for r in available_for_mentor].index(selected_mentor_label)]
+            st.info("Join this room as the recording host. The application requests 1080p and attempts to start file recording automatically when the mentor joins. Full-group recording requires a Jitsi deployment with a recording service/Jibri.")
+            render_jitsi_gd_room(selected_mentor_room['slot'], selected_mentor_room['code'], {
+                "first_name": "IPER",
+                "last_name": "Mentor",
+                "scholar_id": "MENTOR",
+                "email": "mentor@iper.ac.in"
+            }, is_mentor=True, started_at=selected_mentor_room.get("started_at"))
+
+    elif mentor_key:
+        st.error("Invalid mentor access key.")
 
 # SECTION 6: PERFORMANCE DASHBOARD
 elif selected_nav == "Performance Dashboard":
