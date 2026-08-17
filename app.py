@@ -386,6 +386,9 @@ import hashlib
 import secrets
 import shutil
 from datetime import datetime
+import base64
+import hmac
+import urllib.parse
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "students.db")
 ALLOWED_EMAIL_DOMAIN = "@iper.ac.in"
@@ -595,7 +598,8 @@ def save_student_attempt(student_id, domain, score, mode, question):
 GD_MAX_PARTICIPANTS = 7
 GD_MAX_MINUTES = 10
 GD_ROOM_COUNT = 7
-GD_DOMAIN = os.getenv("JITSI_DOMAIN", st.secrets.get("JITSI_DOMAIN", "meet.jit.si"))
+VIDEO_ENGINE_URL = os.getenv("VIDEO_ENGINE_URL", st.secrets.get("VIDEO_ENGINE_URL", "")).strip().rstrip("/")
+VIDEO_ENGINE_JWT_SECRET = os.getenv("VIDEO_ENGINE_JWT_SECRET", st.secrets.get("VIDEO_ENGINE_JWT_SECRET", "")).strip()
 
 GD_TOPICS = [
     "Artificial Intelligence: Job Creator or Job Killer?",
@@ -919,106 +923,95 @@ def get_student_gd_feedback(scholar_id):
     return [dict(r) for r in rows]
 
 
-def render_jitsi_gd_room(slot, room_code, student, is_host=False, started_at=None):
-    room_name = f"IPER-GD-{slot}-{room_code}"
-    display_name = f"{student['first_name']} {student['last_name']} ({student['scholar_id']})"
-    role_label = "Student Host / Recording Host" if is_host else "Student Participant"
-    safe_room = json.dumps(room_name)
-    safe_name = json.dumps(display_name)
-    safe_email = json.dumps(student.get("email", ""))
-    safe_started = json.dumps(started_at or "")
-    auto_record = "true" if is_host else "false"
+def _base64url_json(value):
+    raw = json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
-    html = f"""
-    <div style="font-family:Inter,Arial,sans-serif;border:1px solid #CBD5E1;border-radius:10px;overflow:hidden;background:#0F172A;">
-      <div style="padding:12px 16px;color:white;background:#0F172A;display:flex;justify-content:space-between;align-items:center;">
-        <div><b>IPER Virtual GD Room</b><br><span style="font-size:12px;opacity:.85">{role_label} • maximum 7 students • 720p recording • maximum 10 minutes</span></div>
-        <div id="gdTimer" style="font-weight:800;font-size:20px">10:00</div>
+
+def create_video_engine_token(student, room_code, expires_minutes=15):
+    """Create a short-lived HS256 JWT without adding another Python dependency."""
+    if not VIDEO_ENGINE_JWT_SECRET:
+        return None
+
+    now = int(time.time())
+    payload = {
+        "studentId": str(student.get("id") or student.get("student_id") or student.get("scholar_id")),
+        "firstName": str(student.get("first_name", "")),
+        "lastName": str(student.get("last_name", "")),
+        "scholarId": str(student.get("scholar_id", "")),
+        "email": str(student.get("email", "")).lower(),
+        "roomId": str(room_code).upper(),
+        "iat": now,
+        "exp": now + (expires_minutes * 60),
+        "iss": "iper-placement-portal"
+    }
+    header = {"alg": "HS256", "typ": "JWT"}
+    encoded_header = _base64url_json(header)
+    encoded_payload = _base64url_json(payload)
+    signing_input = f"{encoded_header}.{encoded_payload}".encode("ascii")
+    signature = hmac.new(
+        VIDEO_ENGINE_JWT_SECRET.encode("utf-8"),
+        signing_input,
+        digestmod="sha256"
+    ).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+    return f"{encoded_header}.{encoded_payload}.{encoded_signature}"
+
+
+def render_inbuilt_gd_room(room_code, student, is_host=False, started_at=None):
+    """Render the IPER-owned WebRTC room hosted by the separate video-engine service."""
+    if not VIDEO_ENGINE_URL:
+        st.error("The IPER Video Engine URL is not configured yet.")
+        st.info("Add VIDEO_ENGINE_URL to Streamlit Secrets after deploying the video_engine service.")
+        return
+
+    if not VIDEO_ENGINE_JWT_SECRET:
+        st.error("The IPER Video Engine security key is not configured yet.")
+        st.info("Add VIDEO_ENGINE_JWT_SECRET to Streamlit Secrets. It must exactly match JWT_SECRET on the video engine service.")
+        return
+
+    token = create_video_engine_token(student, room_code, expires_minutes=15)
+    if not token:
+        st.error("Could not create a secure video-room access token.")
+        return
+
+    query = urllib.parse.urlencode({
+        "room": str(room_code).upper(),
+        "token": token,
+        "firstName": student.get("first_name", ""),
+        "lastName": student.get("last_name", ""),
+        "scholarId": student.get("scholar_id", ""),
+        "email": student.get("email", "")
+    })
+    room_url = f"{VIDEO_ENGINE_URL}/gd_room.html?{query}"
+    display_name = f"{student.get('first_name', '')} {student.get('last_name', '')}".strip()
+    role_label = "Student Host" if is_host else "Student Participant"
+
+    st.markdown(f"""
+    <div style="font-family:Inter,Arial,sans-serif;border:1px solid #CBD5E1;border-radius:12px;overflow:hidden;background:#0F172A;">
+      <div style="padding:13px 16px;color:white;background:#0F172A;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+        <div><b>IPER Virtual GD Room</b><br><span style="font-size:12px;opacity:.85">{role_label} • {display_name} • maximum 7 students • maximum 10 minutes</span></div>
+        <div style="font-size:12px;font-weight:700;color:#93C5FD;">IPER WebRTC</div>
       </div>
-      <div id="jitsi" style="width:100%;height:680px;background:#111827"></div>
-      <div id="gdStatus" style="padding:10px 14px;color:white;background:#1E293B;font-size:13px">Connecting to the student-driven GD room...</div>
     </div>
-    <script src="https://meet.jit.si/external_api.js"></script>
-    <script>
-      const domain = {json.dumps(GD_DOMAIN)};
-      const roomName = {safe_room};
-      const displayName = {safe_name};
-      const email = {safe_email};
-      const autoRecord = {auto_record};
-      const startedAtText = {safe_started};
-      const options = {{
-        roomName: roomName,
-        width: '100%',
-        height: 680,
-        parentNode: document.querySelector('#jitsi'),
-        userInfo: {{ displayName: displayName, email: email }},
-        configOverwrite: {{
-          resolution: 720,
-          maxFullResolutionParticipants: 7,
-          constraints: {{ video: {{ height: {{ ideal: 720, max: 720, min: 240 }} }} }},
-          prejoinConfig: {{ enabled: true, hideDisplayName: true }},
-          recordings: {{ recordAudioAndVideo: true, suggestRecording: false, showPrejoinWarning: true, showRecordingLink: true }},
-          fileRecordingsEnabled: true,
-          fileRecordingsServiceEnabled: true,
-          localRecording: {{ disable: false, notifyAllParticipants: true }},
-          recordingLimit: {{ limit: 10 }},
-          disableThirdPartyRequests: true
-        }},
-        interfaceConfigOverwrite: {{
-          TILE_VIEW_MAX_COLUMNS: 4,
-          VIDEO_LAYOUT_FIT: 'both',
-          SHOW_JITSI_WATERMARK: false,
-          SHOW_WATERMARK_FOR_GUESTS: false
-        }}
-      }};
-      const api = new JitsiMeetExternalAPI(domain, options);
-      let timerHandle = null;
-      let recordingStarted = false;
+    """, unsafe_allow_html=True)
 
-      function setStatus(text) {{ document.getElementById('gdStatus').innerText = text; }}
+    st.link_button("↗ Open IPER Virtual GD Room", room_url, use_container_width=True)
+    st.caption("The secure room opens in a new browser tab so the camera and microphone can be granted directly to the IPER video service. Your name and Scholar ID are taken from your logged-in profile.")
 
-      function startTenMinuteTimer() {{
-        if (timerHandle) return;
-        let startMs = startedAtText ? Date.parse(startedAtText.replace(' ', 'T')) : Date.now();
-        timerHandle = setInterval(() => {{
-          const elapsed = Math.floor((Date.now() - startMs) / 1000);
-          const remaining = Math.max(0, 600 - elapsed);
-          const m = String(Math.floor(remaining / 60)).padStart(2,'0');
-          const sec = String(remaining % 60).padStart(2,'0');
-          document.getElementById('gdTimer').innerText = m + ':' + sec;
-          if (remaining === 0) {{
-            clearInterval(timerHandle);
-            try {{ if (recordingStarted) api.executeCommand('stopRecording', 'file', false); }} catch(e) {{}}
-            setStatus('10-minute limit reached. Recording has been stopped. Please conclude the GD.');
-          }}
-        }}, 1000);
-      }}
-
-      api.addEventListener('videoConferenceJoined', () => {{
-        setStatus('Joined as ' + displayName + '. Camera requested at 720p.');
-        try {{ api.executeCommand('displayName', displayName); api.executeCommand('setVideoQuality', 720); }} catch(e) {{}}
-        if (startedAtText) startTenMinuteTimer();
-        if (autoRecord && startedAtText) {{
-          setTimeout(() => {{
-            try {{
-              api.executeCommand('startRecording', {{ mode: 'file', shouldShare: false }});
-              recordingStarted = true;
-              setStatus('GD recording started. The complete group session is being recorded at 720p.');
-            }} catch(e) {{
-              setStatus('Recording could not be started. The Jitsi recording service must be enabled for downloadable group recordings.');
-            }}
-          }}, 2500);
-        }}
-      }});
-      api.addEventListener('recordingLinkAvailable', (event) => {{
-        const link = event && event.url ? event.url : '';
-        if (link) document.getElementById('gdStatus').innerHTML = 'Recording ready: <a href="' + link + '" target="_blank" rel="noopener" style="color:#93C5FD;font-weight:700">Open / Download 720p Recording</a>';
-      }});
-      api.addEventListener('videoConferenceLeft', () => {{ setStatus('You have left the GD room.'); }});
-    </script>
-    """
-    components.html(html, height=760, scrolling=False)
-
+    # Also provide an embedded view for browsers that allow camera/microphone access
+    # inside the Streamlit component frame.
+    components.html(f"""
+    <div style="width:100%;height:720px;border:1px solid #CBD5E1;border-radius:12px;overflow:hidden;background:#0B1020;">
+      <iframe
+        src="{room_url}"
+        title="IPER Virtual GD Room"
+        allow="camera; microphone; fullscreen; display-capture"
+        style="width:100%;height:100%;border:0;"
+        allowfullscreen>
+      </iframe>
+    </div>
+    """, height=735, scrolling=False)
 
 def get_gd_ai_guidance(topic, student_name):
     prompt = f"""
@@ -1733,13 +1726,13 @@ elif selected_nav == "Group Discussion Hub":
 
             if joined_here and room["status"] == "Active":
                 st.markdown("#### 3. Virtual GD Room")
-                render_jitsi_gd_room(1, active_code, {
+                render_inbuilt_gd_room(active_code, {
                     "first_name": st.session_state["first_name"],
                     "last_name": st.session_state["last_name"],
                     "scholar_id": st.session_state["scholar_id"],
                     "email": st.session_state["student_email"]
                 }, is_host=is_host, started_at=room.get("started_at"))
-                st.warning("The session is limited to 10 minutes. The group recording is requested at 720p. Actual video quality depends on each participant's camera, browser and network.")
+                st.info("The IPER WebRTC room supports up to 7 students and a 10-minute GD. Phase 1 provides live video; server-side 720p recording will be connected in the next video-engine phase.")
 
                 if is_host and st.button("⏹️ End GD Session", use_container_width=True):
                     ok, message = end_student_gd_session(active_code, st.session_state["scholar_id"])
