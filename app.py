@@ -272,7 +272,8 @@ EXHAUSTIVE_QUESTIONS = {
         "12. What makes you a suitable candidate for corporate management roles?",
         "13. How do you adapt when project goals change unexpectedly?",
         "14. Describe your personal leadership and communication style.",
-        "15. What motivates you to perform at your best in a workplace setting?"
+        "15. What motivates you to perform at your best in a workplace setting?",
+        "16. Tell me something about Yourself."
     ],
     "Marketing": [
         "1. Differentiate between push and pull marketing strategies with real examples.",
@@ -363,6 +364,19 @@ EXHAUSTIVE_QUESTIONS = {
 
 SPECIALIZATIONS = ["Marketing", "Finance", "Human Resource (HR)", "Banking and Finance", "Tourism and Services Industry"]
 IPER_RECRUITERS = ["Amul", "Asian Paints", "HDFC Bank", "ICICI Securities", "Deloitte", "Trident Group", "Berger Paints"]
+
+CORE_INTERVIEW_QUESTIONS = [
+    "Tell me something about yourself.", "Walk me through your resume.", "Why did you choose MBA?",
+    "Why did you choose your specialization?", "What have you learned during your MBA?",
+    "Which subject do you like the most and why?", "What did you learn from a curricular activity?",
+    "What did you learn from an extra-curricular activity?", "What did you learn from your internship or live project?",
+    "Why should we hire you?", "What are your strengths?", "What is one area you are working to improve?",
+    "Tell me about a time you worked in a team.", "Tell me about a time you handled a difficult situation.",
+    "Where do you see yourself in five years?", "Why do you want to join our company?",
+    "What do you know about our company?", "What are your career goals after MBA?", "Do you have any questions for us?"
+]
+CURRICULAR_ACTIVITIES = ["Case Study", "Group Project", "Presentation", "Research Project", "Business Simulation", "Internship", "Live Project", "Classroom Activity"]
+EXTRA_CURRICULAR_ACTIVITIES = ["Sports", "Cultural Event", "Club Activity", "Volunteering", "Event Management", "Competition", "Student Leadership", "Community Activity"]
 
 # ------------------------------------------------------------------------------
 # 5. STUDENT AUTHENTICATION & ACCOUNT MANAGEMENT
@@ -950,15 +964,42 @@ Use concise bullets and encourage listening and building on others' points.
     return get_groq_response(prompt)
 
 
-def generate_gd_feedback_ai(student_name, topic, voice, perspective, participation, camera, strengths, improvements):
+def generate_gd_feedback_ai(student_name, topic, voice, perspective, participation, camera, strengths, improvements, evidence=""):
     prompt = f"""
 You are an MBA placement mentor at IPER Bhopal. Provide concise, constructive GD feedback for {student_name}.
 Topic: {topic}
 Self-ratings (1-10): Voice/Verbal Delivery={voice}, Perspective/Ideas={perspective}, Participation/Team Contribution={participation}, Camera Clarity/Visual Presence={camera}
 Student strength reflection: {strengths}
 Student improvement reflection: {improvements}
-Return exactly four labelled sections: Voice, Perspective, Participation, Camera Clarity, followed by one Overall Next-Step paragraph. Do not invent facts about what the student actually said; base the guidance only on the supplied ratings and reflections.
+Concrete evidence supplied by the student: {evidence}
+1. Voice — qualitative observation and one practical improvement.
+2. Perspective — qualitative observation and one improvement.
+3. Participation — qualitative observation and one improvement.
+4. Camera Clarity — qualitative guidance on visual presence and technical clarity.
+5. What You Did Well.
+6. What You Should Improve.
+7. Next GD Action Plan — exactly three actions.
+Do not invent facts. When evidence is limited, clearly say the feedback is based on self-reflection.
 """
+    return get_groq_response(prompt)
+
+def generate_career_objective_and_power_words(resume_details, jd_text, student_name):
+    prompt = f"""You are an MBA placement advisor at IPER Bhopal. Help {student_name} create a truthful, tailored career objective.
+Use only information supported by the resume and job description. Do not invent experience.
+Resume: {json.dumps(resume_details)}
+Job Description: {jd_text}
+Return ONLY valid JSON with keys: CareerObjectives (3 options), PowerWords (5 tailored words/phrases), WhereToUseThem (5 matching usage suggestions). Use simple, professional language for an MBA fresher."""
+    return get_groq_response(prompt)
+
+def generate_certification_advice(resume_details, jd_text, student_name):
+    prompt = f"""You are an MBA placement advisor at IPER Bhopal. Assess whether certifications are genuinely useful for {student_name}'s target role. Do not recommend certificates just for collecting credentials.
+Resume: {json.dumps(resume_details)}
+Job Description: {jd_text}
+Return ONLY valid JSON with keys: Necessity (Essential | Recommended | Optional | Not Required), Reason, RecommendedCourses (up to 3), SkillGap (up to 3), PriorityOrder. Use simple language and focus on practical placement value."""
+    return get_groq_response(prompt)
+
+def generate_learning_story(activity, activity_type, student_name, role, challenge, learning):
+    prompt = f"""You are an MBA placement mentor at IPER Bhopal. Help {student_name} turn an activity into an interview-ready learning story. Activity: {activity}. Type: {activity_type}. Role: {role}. Challenge: {challenge}. Learning: {learning}. Use simple language and do not invent achievements. Return: 1. What interviewer wants to know 2. Simple STAR-style answer 3. Key learning 4. How this helps at work 5. One follow-up question."""
     return get_groq_response(prompt)
 
 def render_authentication_panel():
@@ -1081,6 +1122,7 @@ selected_nav = st.sidebar.radio(
     "MAIN MENU",
     [
         "Resume Checker & Job Matcher", 
+        "Career Development",
         "Interview Preparation Guide", 
         "Interview Practice Room", 
         "Group Discussion Hub",
@@ -1239,44 +1281,87 @@ if selected_nav == "Resume Checker & Job Matcher":
                 except Exception:
                     st.markdown(raw_ats_response)
 
+# SECTION 2: CAREER DEVELOPMENT
+elif selected_nav == "Career Development":
+    st.title("Career Development")
+    st.caption("Build a tailored career objective, find powerful resume words, and understand whether certifications are actually needed.")
+    if not st.session_state.get("resume_details"):
+        st.info("Upload your resume in Resume Checker & Job Matcher first.")
+    career_jd = st.text_area("Target Job Description", height=180, placeholder="Paste the target JD here...")
+    tab1, tab2 = st.tabs(["🎯 Career Objective & Power Words", "📜 Certification Necessity"])
+    with tab1:
+        if st.button("Generate Tailored Career Objective", use_container_width=True):
+            if not st.session_state.get("resume_details") or not career_jd.strip():
+                st.warning("Please upload your resume and paste the target Job Description.")
+            else:
+                with st.spinner("Creating tailored objectives and power words..."):
+                    raw = generate_career_objective_and_power_words(st.session_state["resume_details"], career_jd, st.session_state.get("first_name", "Student"))
+                try:
+                    data=json.loads(raw.replace("```json","").replace("```","").strip())
+                    st.markdown("### Career Objective Options")
+                    for i,x in enumerate(data.get("CareerObjectives",[]),1): st.info(f"**Option {i}:** {x}")
+                    st.markdown("### Powerful Words Tailored to the JD")
+                    for word,use in zip(data.get("PowerWords",[]),data.get("WhereToUseThem",[])): st.markdown(f"- **{word}** — {use}")
+                except Exception: st.markdown(raw)
+    with tab2:
+        if st.button("Assess Certification Necessity", use_container_width=True):
+            if not st.session_state.get("resume_details") or not career_jd.strip():
+                st.warning("Please upload your resume and paste the target Job Description.")
+            else:
+                with st.spinner("Assessing skill gaps and certification value..."):
+                    raw=generate_certification_advice(st.session_state["resume_details"],career_jd,st.session_state.get("first_name","Student"))
+                try:
+                    data=json.loads(raw.replace("```json","").replace("```","").strip())
+                    st.metric("Certification Necessity",data.get("Necessity","Not Required")); st.write(data.get("Reason",""))
+                    st.markdown("### Recommended Courses / Certifications")
+                    for x in data.get("RecommendedCourses",[]): st.markdown(f"- {x}")
+                    st.markdown("### Skill Gaps")
+                    for x in data.get("SkillGap",[]): st.markdown(f"- {x}")
+                    st.markdown("### Priority Order")
+                    for i,x in enumerate(data.get("PriorityOrder",[]),1): st.markdown(f"{i}. {x}")
+                except Exception: st.markdown(raw)
+
 # SECTION 2: INTERVIEW PREPARATION GUIDE
 elif selected_nav == "Interview Preparation Guide":
     st.title("Interview Preparation Guide")
-    st.caption("Select a business domain and question to study key evaluation objectives, effective response frameworks, and model benchmark answers.")
-    
-    prep_category = st.selectbox("Select Study Domain:", ["General and Core Skills"] + SPECIALIZATIONS + ["Company Specific"])
-    
-    selected_question = None
-    if prep_category == "Company Specific":
-        comp_choice = st.selectbox("Select Target Company:", IPER_RECRUITERS)
-        if st.button("Load Top Recruiter Questions"):
-            with st.spinner(f"Retrieving top questions for {comp_choice}..."):
-                q_prompt = f"Generate 5 popular technical and situational interview questions asked by {comp_choice} during campus hiring."
-                st.markdown(get_groq_response(q_prompt))
-    else:
-        q_list = EXHAUSTIVE_QUESTIONS.get(prep_category, ["Describe a key challenge you faced and how you resolved it."])
-        selected_question = st.selectbox(f"Select Question to Study (15+ Available under {prep_category}):", q_list)
-
-    if selected_question:
-        st.markdown("---")
-        st.subheader(f"Study Guide: {selected_question}")
-        
-        if st.button("Generate Complete Answer Framework & Model Answer"):
-            with st.spinner("Preparing answer breakdown..."):
-                study_prompt = f"""
-                Act as a senior MBA Placement Advisor at IPER Bhopal.
-                Analyze this interview question for candidates:
-                
-                Question: "{selected_question}"
-                Domain: "{prep_category}"
-
-                Provide a clean, structured guide containing:
-                1. WHAT INTERVIEWERS LOOK FOR (Key competencies being evaluated).
-                2. HOW TO STRUCTURE YOUR ANSWER (Step-by-step structure like STAR or CAR framework).
-                3. MODEL BENCHMARK ANSWER (A clear, high-scoring sample response).
-                """
-                study_guide = get_groq_response(study_prompt)
-                st.markdown(study_guide)
+    st.caption("Prepare with simple, placement-focused questions, clear answer structures, and practical examples.")
+    tabs=st.tabs(["⭐ Core Placement Questions","📚 Subject & Company Preparation","🎓 What Did I Learn?"])
+    with tabs[0]:
+        st.markdown("### Essential Interview Questions")
+        st.info("Practise these questions in your own words. Do not memorise the model answer.")
+        core_q=st.selectbox("Select a core question",CORE_INTERVIEW_QUESTIONS,key="core_interview_q")
+        if st.button("Prepare This Question",key="prepare_core_q",use_container_width=True):
+            with st.spinner("Preparing a simple interview guide..."):
+                prompt=f"""Act as a supportive MBA placement mentor at IPER Bhopal. Question: {core_q}. Use very simple, natural Indian-English. Avoid jargon and textbook language. Explain: 1) what the interviewer wants to know, 2) a simple answer structure, 3) a short natural sample answer, 4) one mistake to avoid, 5) one follow-up question."""
+                st.markdown(get_groq_response(prompt))
+    with tabs[1]:
+        prep_category=st.selectbox("Select Study Domain:",["General and Core Skills"]+SPECIALIZATIONS+["Company Specific"],key="prep_category_main")
+        if prep_category=="Company Specific":
+            comp_choice=st.selectbox("Select Target Company:",IPER_RECRUITERS,key="prep_company_main")
+            if st.button("Load Top Recruiter Questions",key="load_recruiter_questions"):
+                with st.spinner(f"Retrieving placement-style questions for {comp_choice}..."):
+                    st.markdown(get_groq_response(f"Generate 5 simple, realistic technical and situational interview questions for {comp_choice} during campus hiring. Use clear MBA-student language."))
+        else:
+            q_list=EXHAUSTIVE_QUESTIONS.get(prep_category,["Describe a key challenge you faced and how you resolved it."])
+            selected_question=st.selectbox("Select Question to Study",q_list,key="prep_question_main")
+            st.markdown(f"### Study Guide: {selected_question}")
+            if st.button("Generate Simple Answer Framework & Model Answer",key="generate_simple_guide"):
+                with st.spinner("Preparing a simple answer breakdown..."):
+                    prompt=f"""Act as a senior MBA Placement Advisor at IPER Bhopal. Question: {selected_question}. Domain: {prep_category}. Use simple natural language and avoid unnecessary jargon. Provide: 1) what interviewers look for, 2) simple STAR/CAR structure where appropriate, 3) short natural model answer, 4) one mistake to avoid, 5) one follow-up question."""
+                    st.markdown(get_groq_response(prompt))
+    with tabs[2]:
+        st.markdown("### Turn Activities into Interview Stories")
+        activity_type=st.radio("Activity Type",["Curricular","Extra-Curricular"],horizontal=True)
+        activity_list=CURRICULAR_ACTIVITIES if activity_type=="Curricular" else EXTRA_CURRICULAR_ACTIVITIES
+        activity=st.selectbox("Select Activity",activity_list,key="learning_activity")
+        role=st.text_input("Your role",placeholder="Example: Team leader / participant / coordinator")
+        challenge=st.text_area("What challenge did you face?",height=90,key="learning_challenge")
+        learning=st.text_area("What did you learn?",height=90,key="learning_text")
+        if st.button("Create Interview-Ready Learning Story",key="create_learning_story",use_container_width=True):
+            if not role.strip() or not learning.strip(): st.warning("Please add your role and what you learned.")
+            else:
+                with st.spinner("Converting your experience into a simple interview answer..."):
+                    st.markdown(generate_learning_story(activity,activity_type,st.session_state.get("first_name","Student"),role,challenge,learning))
 
 # SECTION 3: INTERVIEW PRACTICE ROOM
 elif selected_nav == "Interview Practice Room":
@@ -1551,8 +1636,8 @@ elif selected_nav == "Group Discussion Hub":
             st.info("Join a room above to enter the virtual GD.")
 
     with gd_feedback_tab:
-        st.markdown("### Self-Feedback After Your GD")
-        st.caption("Rate your own performance on voice, perspective, participation and camera clarity.")
+        st.markdown("### Qualitative GD Feedback")
+        st.caption("Rate your performance and give concrete examples. The AI coach provides qualitative guidance without inventing observations.")
         feedback_rooms = get_gd_rooms()
         ended = [r for r in feedback_rooms if r.get("status") == "Ended"]
         if ended:
@@ -1563,8 +1648,9 @@ elif selected_nav == "Group Discussion Hub":
                 perspective = st.slider("Perspective / Quality of Ideas", 1, 10, 7)
                 participation = st.slider("Participation / Listening / Team Contribution", 1, 10, 7)
                 camera = st.slider("Camera Clarity / Visual Presence", 1, 10, 7)
-                strengths = st.text_area("What was your biggest strength?")
-                improvements = st.text_area("What will you improve in your next GD?")
+                strengths = st.text_area("What was your biggest strength?", placeholder="Example: I built on another participant's point.")
+                improvements = st.text_area("What will you improve in your next GD?", placeholder="Example: I need to support my points with examples.")
+                evidence = st.text_area("What did you actually do during the GD?", placeholder="Mention 1-3 concrete contributions, questions, or examples you gave.")
                 submitted = st.form_submit_button("Save GD Feedback", use_container_width=True)
                 if submitted:
                     save_gd_feedback(feedback_room["slot"], {
@@ -1576,7 +1662,7 @@ elif selected_nav == "Group Discussion Hub":
                         st.markdown(generate_gd_feedback_ai(
                             st.session_state.get("first_name", "Student"),
                             feedback_room["topic"], voice, perspective, participation, camera,
-                            strengths, improvements
+                            strengths, improvements, evidence
                         ))
         else:
             st.info("Your mentor has not ended a GD room yet.")
