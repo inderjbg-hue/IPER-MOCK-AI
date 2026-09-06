@@ -11,9 +11,9 @@ import docx
 import whisper
 from groq import Groq
 try:
-    from openai import OpenAI as OpenAIClient
+    from openai import OpenAI
 except Exception:
-    OpenAIClient = None
+    OpenAI = None
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -147,10 +147,17 @@ if GROQ_API_KEY and GROQ_API_KEY != "YOUR_GROQ_API_KEY_HERE":
     client = Groq(api_key=GROQ_API_KEY)
 else:
     client = None
-if OPENAI_API_KEY and OpenAIClient:
-    openai_client = OpenAIClient(api_key=OPENAI_API_KEY)
-else:
-    openai_client = None
+
+# OpenAI is optional at startup. It is required only for the uploaded-GD
+# speaker diarization/transcription workflow.
+try:
+    OPENAI_API_KEY = str(st.secrets.get("OPENAI_API_KEY", "") or "").strip()
+except Exception:
+    OPENAI_API_KEY = ""
+if not OPENAI_API_KEY:
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if (OPENAI_API_KEY and OpenAI is not None) else None
 
 if "history" not in st.session_state:
     st.session_state["history"] = []
