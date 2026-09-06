@@ -172,15 +172,122 @@ def extract_text_from_file(file_obj):
     except Exception as e:
         return f"Error extracting content from file: {str(e)}"
 
-def transcribe_indian_english_audio(audio_path):
-    prompt = "This is an official MBA placement interview response in Indian English at IPER Bhopal."
-    result = whisper_model.transcribe(
-        audio_path,
-        language="en",
-        initial_prompt=prompt,
-        temperature=0.0
+def _extract_speech_only_wav(audio_path):
+    """Use aggressive WebRTC VAD to keep likely human-speech frames and reject music/noise."""
+    if not WEBRTCVAD_AVAILABLE:
+        return None, 0.0
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None, 0.0
+
+    pcm_cmd = [
+        ffmpeg, "-y", "-i", str(audio_path),
+        "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"
+    ]
+    result = subprocess.run(pcm_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode != 0 or not result.stdout:
+        return None, 0.0
+
+    raw = result.stdout
+    sample_rate = 16000
+    frame_ms = 30
+    frame_bytes = int(sample_rate * frame_ms / 1000) * 2
+    frame_count = len(raw) // frame_bytes
+    if frame_count < 2:
+        return None, 0.0
+
+    vad = webrtcvad.Vad(3)
+    speech_flags = []
+    for i in range(frame_count):
+        frame = raw[i * frame_bytes:(i + 1) * frame_bytes]
+        try:
+            speech_flags.append(vad.is_speech(frame, sample_rate))
+        except Exception:
+            speech_flags.append(False)
+
+    # Require a meaningful amount of speech before sending audio to Whisper.
+    speech_ratio = sum(speech_flags) / max(1, len(speech_flags))
+    if sum(speech_flags) < 4 or speech_ratio < 0.015:
+        return None, 0.0
+
+    # Add ~300 ms padding around detected speech so words are not clipped.
+    padding_frames = 10
+    expanded = [False] * len(speech_flags)
+    for i, is_speech in enumerate(speech_flags):
+        if is_speech:
+            start = max(0, i - padding_frames)
+            end = min(len(expanded), i + padding_frames + 1)
+            for j in range(start, end):
+                expanded[j] = True
+
+    speech_pcm = b"".join(
+        raw[i * frame_bytes:(i + 1) * frame_bytes]
+        for i, keep in enumerate(expanded) if keep
     )
-    return result.get("text", "").strip()
+    if len(speech_pcm) < frame_bytes * 4:
+        return None, 0.0
+
+    speech_duration = len(speech_pcm) / (sample_rate * 2)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix="_speech.wav")
+    tmp.close()
+    try:
+        with wave.open(tmp.name, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sample_rate)
+            wf.writeframes(speech_pcm)
+        return tmp.name, speech_duration
+    except Exception:
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+        return None, 0.0
+
+
+def transcribe_indian_english_audio(audio_path):
+    """Transcribe human speech only; aggressively suppress music/noise hallucinations."""
+    prompt = "Official MBA placement interview response in Indian English. Transcribe only clearly audible human speech. Do not invent words from music, singing, background conversation, or noise."
+    speech_path, speech_duration = _extract_speech_only_wav(audio_path)
+    target_path = speech_path or audio_path
+    try:
+        result = whisper_model.transcribe(
+            target_path,
+            language="en",
+            initial_prompt=prompt,
+            temperature=0.0,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.72,
+            logprob_threshold=-0.8,
+            compression_ratio_threshold=2.2,
+            fp16=False
+        )
+
+        # Keep only segments that Whisper itself considers speech-like.
+        accepted = []
+        for seg in result.get("segments", []):
+            text = (seg.get("text") or "").strip()
+            no_speech = float(seg.get("no_speech_prob", 1.0) or 1.0)
+            avg_logprob = float(seg.get("avg_logprob", -99.0) or -99.0)
+            if text and no_speech < 0.70 and avg_logprob > -1.05:
+                accepted.append(text)
+
+        transcript = " ".join(accepted).strip()
+        # Guard against common Whisper hallucination loops.
+        if transcript:
+            words = re.findall(r"\b[\w']+\b", transcript.lower())
+            if len(words) >= 8:
+                unique_ratio = len(set(words)) / len(words)
+                if unique_ratio < 0.25:
+                    transcript = ""
+        return transcript, speech_duration
+    finally:
+        if speech_path and os.path.exists(speech_path):
+            try:
+                os.remove(speech_path)
+            except OSError:
+                pass
 
 STRICT_MENTOR_SYSTEM_PROMPT = """
 You are a supportive MBA Placement Director and HR Reviewer at IPER Bhopal.
@@ -483,7 +590,15 @@ import hmac
 import urllib.parse
 import re
 import subprocess
+import wave
 from pathlib import Path
+
+try:
+    import webrtcvad
+    WEBRTCVAD_AVAILABLE = True
+except ImportError:
+    webrtcvad = None
+    WEBRTCVAD_AVAILABLE = False
 
 try:
     import psycopg2
@@ -1749,6 +1864,7 @@ elif selected_nav == "Interview Practice Room":
 
         extracted_transcript = ""
         saved_video_filename = "N/A"
+        st.session_state["speech_detected"] = False
 
         if mode == "Audio Response Mode":
             st.subheader("Record Your Audio Answer")
@@ -1761,7 +1877,9 @@ elif selected_nav == "Interview Practice Room":
                         tmp_path = tmp_file.name
                     try:
                         st.session_state["communication_duration"] = get_media_duration_seconds(tmp_path)
-                        extracted_transcript = transcribe_indian_english_audio(tmp_path)
+                        extracted_transcript, detected_speech_duration = transcribe_indian_english_audio(tmp_path)
+                        if detected_speech_duration > 0:
+                            st.session_state["communication_duration"] = detected_speech_duration
                     except Exception as err:
                         st.error(f"Speech transcription error: {err}")
                         if not FFMPEG_PATH:
@@ -1770,7 +1888,11 @@ elif selected_nav == "Interview Practice Room":
                         if os.path.exists(tmp_path): os.remove(tmp_path)
                 
                 if extracted_transcript:
-                    st.success("Audio recorded and transcribed successfully.")
+                    st.session_state["speech_detected"] = bool(extracted_transcript.strip())
+                    if extracted_transcript:
+                        st.success("Human speech detected and transcribed successfully.")
+                    else:
+                        st.warning("No clear human speech was detected. Background music/noise was ignored, so no AI communication feedback was generated.")
 
         elif mode == "Video Response Mode":
             st.subheader("1. Record & Save Video")
@@ -1808,8 +1930,14 @@ elif selected_nav == "Interview Practice Room":
                     st.video(saved_video_path)
                     st.success(f"Interview video saved as MP4: `{os.path.basename(saved_video_path)}`")
                     with st.spinner("Transcribing video audio track via Whisper..."):
-                        extracted_transcript = transcribe_indian_english_audio(saved_video_path)
-                        st.success("Video audio transcribed successfully.")
+                        extracted_transcript, detected_speech_duration = transcribe_indian_english_audio(saved_video_path)
+                        if detected_speech_duration > 0:
+                            st.session_state["communication_duration"] = detected_speech_duration
+                        st.session_state["speech_detected"] = bool(extracted_transcript.strip())
+                        if extracted_transcript:
+                            st.success("Human speech detected and transcribed successfully.")
+                        else:
+                            st.warning("No clear human speech was detected. Background music/noise was ignored, so no AI communication feedback was generated.")
                 except Exception as err:
                     st.error(f"Video processing error: {err}")
                     if os.path.exists(incoming_path):
@@ -1825,6 +1953,8 @@ elif selected_nav == "Interview Practice Room":
         if st.button("Submit Response for Feedback"):
             if not final_response_text.strip():
                 st.error("Please record your audio/video response or write your transcript text first.")
+            elif mode in ("Audio Response Mode", "Video Response Mode") and not st.session_state.get("speech_detected", False):
+                st.error("No clear human speech was detected in this recording. Background music/noise has been ignored. Please record a spoken answer, or enter the transcript manually if you intentionally want to evaluate typed text.")
             else:
                 with st.spinner("Analyzing your response..."):
                     c_name = st.session_state.get('first_name', 'Student')

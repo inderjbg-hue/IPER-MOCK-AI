@@ -5,3 +5,4 @@ python-docx
 openai-whisper
 groq
 psycopg2-binary
+webrtcvad-wheels
