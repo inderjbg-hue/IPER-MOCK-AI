@@ -1,6 +1,7 @@
-streamlit>=1.40,<2
-pandas>=2.0,<3
-pypdf>=5.0,<7
-python-docx>=1.1,<2
-groq>=0.9,<1
-openai-whisper>=20250625
+streamlit
+pandas
+pypdf
+python-docx
+openai-whisper
+groq
+psycopg2-binary

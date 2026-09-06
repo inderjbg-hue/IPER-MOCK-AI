@@ -205,33 +205,52 @@ def get_groq_response(prompt):
         return f"Execution Error: {str(e)}"
 
 def render_video_recorder_component():
+    """Browser recorder.
+
+    Browsers such as Chrome commonly record WebM, while Safari may support MP4.
+    The application converts any WebM uploaded from this recorder to MP4 server-side,
+    so the saved interview file is always MP4.
+    """
     html_code = """
     <div style="font-family: 'Inter', sans-serif; border: 1px solid #CBD5E1; border-radius: 6px; padding: 15px; background: #FFFFFF;">
         <video id="preview" autoplay playsinline muted style="width: 100%; max-height: 240px; background: #000; border-radius: 4px;"></video>
-        <div style="margin-top: 12px; display: flex; gap: 10px;">
+        <div style="margin-top: 12px; display: flex; gap: 10px; flex-wrap: wrap;">
             <button id="startBtn" onclick="startRec()" style="background: #0F172A; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif;">Start Video Recording</button>
             <button id="stopBtn" onclick="stopRec()" disabled style="background: #475569; color: white; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-family: 'Inter', sans-serif;">Stop & Save</button>
-            <a id="downloadAnchor" style="display:none; background: #0F172A; color: white; text-decoration: none; padding: 8px 14px; border-radius: 4px; font-size: 13px; font-weight: 600; font-family: 'Inter', sans-serif;">Download Video (.webm)</a>
+            <a id="downloadAnchor" style="display:none; background: #0F172A; color: white; text-decoration: none; padding: 8px 14px; border-radius: 4px; font-size: 13px; font-weight: 600; font-family: 'Inter', sans-serif;">Download Recording</a>
         </div>
         <div id="status" style="margin-top: 10px; font-size: 13px; color: #0F172A; font-weight: 500;">Status: Camera Ready</div>
+        <div style="margin-top: 6px; font-size: 12px; color: #64748B;">The portal converts WebM recordings to MP4 automatically when you upload them below.</div>
     </div>
     <script>
-        let recorder, chunks = [], streamRef;
+        let recorder, chunks = [], streamRef, selectedMime = 'video/webm';
         async function startRec() {
             try {
                 chunks = [];
                 document.getElementById('downloadAnchor').style.display = 'none';
                 streamRef = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 document.getElementById('preview').srcObject = streamRef;
-                let options = { mimeType: 'video/webm;codecs=vp9,opus' };
-                if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/webm' };
-                recorder = new MediaRecorder(streamRef, options);
+
+                const mimeCandidates = [
+                    'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+                    'video/mp4',
+                    'video/webm;codecs=vp9,opus',
+                    'video/webm;codecs=vp8,opus',
+                    'video/webm'
+                ];
+                selectedMime = mimeCandidates.find(m => MediaRecorder.isTypeSupported(m)) || '';
+                if (!selectedMime) throw new Error('This browser does not support video recording.');
+
+                recorder = new MediaRecorder(streamRef, { mimeType: selectedMime });
                 recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
                 recorder.onstop = () => {
-                    const blob = new Blob(chunks, { type: 'video/webm' });
+                    const isMp4 = selectedMime.toLowerCase().includes('mp4');
+                    const extension = isMp4 ? 'mp4' : 'webm';
+                    const blob = new Blob(chunks, { type: selectedMime.split(';')[0] });
                     const downloadBtn = document.getElementById('downloadAnchor');
                     downloadBtn.href = URL.createObjectURL(blob);
-                    downloadBtn.download = 'iper_interview_' + Date.now() + '.webm';
+                    downloadBtn.download = 'iper_interview_' + Date.now() + '.' + extension;
+                    downloadBtn.textContent = isMp4 ? 'Download MP4 Recording' : 'Download Recording (WebM → MP4 in Portal)';
                     downloadBtn.style.display = 'inline-block';
                 };
                 recorder.start(1000);
@@ -240,6 +259,7 @@ def render_video_recorder_component():
                 document.getElementById('status').innerText = 'Status: Recording in Progress...';
             } catch (err) {
                 document.getElementById('status').innerText = 'Camera Error: ' + err.message;
+                if (streamRef) streamRef.getTracks().forEach(track => track.stop());
             }
         }
         function stopRec() {
@@ -247,11 +267,77 @@ def render_video_recorder_component():
             if(streamRef) streamRef.getTracks().forEach(track => track.stop());
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
-            document.getElementById('status').innerText = 'Status: Recording completed. Download file below.';
+            document.getElementById('status').innerText = 'Status: Recording completed.';
         }
     </script>
     """
-    components.html(html_code, height=340)
+    components.html(html_code, height=365)
+
+
+def convert_video_to_mp4(input_path):
+    """Convert a video to browser-compatible H.264/AAC MP4 using FFmpeg."""
+    input_path = str(input_path)
+    output_path = str(Path(input_path).with_suffix('.mp4'))
+    ffmpeg = shutil.which('ffmpeg')
+    if not ffmpeg:
+        raise RuntimeError('FFmpeg is not installed. Add ffmpeg to packages.txt and redeploy.')
+    if os.path.abspath(input_path) == os.path.abspath(output_path):
+        return output_path
+    cmd = [
+        ffmpeg, '-y', '-i', input_path,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+        '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k',
+        '-movflags', '+faststart', output_path
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0 or not os.path.exists(output_path):
+        raise RuntimeError('FFmpeg could not convert the recording to MP4.')
+    return output_path
+
+
+def get_media_duration_seconds(media_path):
+    """Return media duration in seconds using ffprobe/ffmpeg."""
+    ffprobe = shutil.which('ffprobe')
+    if not ffprobe:
+        return 0.0
+    result = subprocess.run(
+        [ffprobe, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', str(media_path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    try:
+        return max(0.0, float(result.stdout.strip()))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def communication_metrics(transcript, duration_seconds=0.0):
+    """Deterministic speech metrics plus filler-word detection for AI feedback."""
+    text = (transcript or '').strip()
+    words = re.findall(r"\b[\w']+\b", text.lower())
+    word_count = len(words)
+    duration = float(duration_seconds or 0)
+    wpm = round((word_count / duration) * 60, 1) if duration > 0 else 0.0
+
+    filler_patterns = {
+        'um': r'\bum\b', 'uh': r'\buh\b', 'er': r'\ber\b',
+        'you know': r'\byou know\b', 'like': r'\blike\b',
+        'basically': r'\bbasically\b', 'actually': r'\bactually\b',
+        'I mean': r'\bi mean\b', 'kind of': r'\bkind of\b',
+        'sort of': r'\bsort of\b', 'right': r'\bright\b'
+    }
+    filler_counts = {name: len(re.findall(pattern, text, flags=re.I)) for name, pattern in filler_patterns.items()}
+    filler_counts = {k: v for k, v in filler_counts.items() if v > 0}
+    filler_total = sum(filler_counts.values())
+    filler_rate = round((filler_total / word_count) * 100, 1) if word_count else 0.0
+    return {
+        'word_count': word_count,
+        'duration_seconds': round(duration, 1),
+        'duration_minutes': round(duration / 60, 2),
+        'wpm': wpm,
+        'filler_total': filler_total,
+        'filler_rate': filler_rate,
+        'filler_counts': filler_counts
+    }
 
 # ------------------------------------------------------------------------------
 # 4. QUESTION REPOSITORY
@@ -396,6 +482,8 @@ import base64
 import hmac
 import urllib.parse
 import re
+import subprocess
+from pathlib import Path
 
 try:
     import psycopg2
@@ -766,6 +854,141 @@ def migrate_local_sqlite_to_postgres():
         local.close()
         remote.close()
 
+
+
+GD_TOPICS = [
+    "Artificial Intelligence: Job Creator or Job Killer?",
+    "Should college education be skill-based rather than degree-based?",
+    "Work From Home vs Work From Office",
+    "Is Social Media a Boon or a Curse?",
+    "Should AI be regulated?",
+    "Digital Payments and the Future of Cash",
+    "Startup Culture vs Stable Corporate Jobs",
+    "Is India ready for a cashless economy?",
+    "Sustainability vs Profitability",
+    "Can India become a global manufacturing hub?",
+    "Online Education vs Classroom Education",
+    "Is influencer marketing trustworthy?",
+    "Electric Vehicles: Future or Fad?",
+    "Should internships be mandatory for every student?",
+    "Data Privacy in the Digital Age",
+    "Is competition good for students?",
+    "Work-Life Balance vs Career Growth",
+    "Should companies hire for skills rather than degrees?",
+    "Is failure necessary for success?",
+    "Leadership: Born or Made?",
+    "Is customer experience more important than product quality?",
+    "Can technology replace human creativity?",
+    "Should college attendance be compulsory?",
+    "Are advertisements influencing consumers too much?",
+    "Ethical Issues in Artificial Intelligence",
+    "Should businesses take political stands?",
+    "Is entrepreneurship for everyone?",
+    "Green Marketing: Genuine Need or Branding Strategy?",
+    "Should companies adopt a four-day work week?",
+    "Gig Economy: Opportunity or Exploitation?",
+    "Is remote work reducing organizational culture?",
+    "Should employees be allowed to work anywhere?",
+    "Can India lead the global AI revolution?",
+    "Technology and Human Relationships",
+    "Should social media platforms be responsible for misinformation?",
+    "Is economic growth possible without environmental damage?",
+    "Brand Loyalty in the Age of Online Shopping",
+    "Should financial literacy be compulsory in colleges?",
+    "Is cryptocurrency the future of money?",
+    "Digital Banking vs Traditional Banking",
+    "Should companies monitor employee productivity digitally?",
+    "Is diversity important for business success?",
+    "Can India achieve sustainable development?",
+    "Should exams be replaced by continuous assessment?",
+    "The Future of the Indian Retail Industry",
+    "Does advertising create artificial needs?",
+    "Should businesses prioritize local suppliers?",
+    "Is globalization good for developing countries?",
+    "Should college students be allowed to use AI for assignments?",
+    "AI in Recruitment: Fairness vs Efficiency",
+    "Can emotional intelligence be more important than IQ at work?",
+    "Should companies disclose their salary ranges?",
+    "Performance Pay vs Fixed Salary",
+    "Is job security becoming less important?",
+    "Should organizations prioritize employee wellbeing?",
+    "Is customer data the new oil?",
+    "Can digital marketing replace traditional marketing?",
+    "Are discounts destroying brand value?",
+    "Should luxury brands embrace mass-market collaborations?",
+    "India's youth and entrepreneurship",
+    "Is a high salary the best measure of career success?",
+    "Should students pursue passion or job security?",
+    "Is networking more important than academic performance?",
+    "Should companies invest more in employee training?",
+    "Can automation improve workplace productivity?",
+    "Should managers use AI to evaluate employees?",
+    "Is hybrid work the best future of work?",
+    "Should companies have unlimited leave policies?",
+    "Is employee loyalty still relevant?",
+    "Can small businesses compete with e-commerce giants?",
+    "Is quick commerce changing consumer behavior permanently?",
+    "Should India prioritize domestic consumption?",
+    "Tourism as a driver of economic development",
+    "Is sustainable tourism practical?",
+    "Should public transport be free in major cities?",
+    "Electric public transport and urban mobility",
+    "Should cities discourage private vehicles?",
+    "Is population growth an economic advantage or challenge?",
+    "Should businesses be responsible for social development?",
+    "Corporate Social Responsibility: Responsibility or Marketing?",
+    "Should profit be the primary goal of business?",
+    "Can ethical business practices create competitive advantage?",
+    "Is brand reputation more valuable than short-term sales?",
+    "Should CEOs be active on social media?",
+    "The impact of short-form video on attention spans",
+    "Is digital detox necessary?",
+    "Should children have restricted social media access?",
+    "Online privacy vs national security",
+    "Should AI-generated content be labelled?",
+    "Is misinformation a bigger threat than fake news?",
+    "Should voting be compulsory?",
+    "Youth participation in nation building",
+    "Can sports create stronger communities?",
+    "Should colleges focus more on employability?",
+    "Is academic pressure helping or harming students?",
+    "Mental resilience in professional life",
+    "Should companies value soft skills equally with technical skills?",
+    "The importance of communication skills in management",
+    "Is multitasking reducing productivity?",
+    "Should employees be allowed to disconnect after work?",
+    "Leadership lessons from Indian businesses",
+    "Future of management education in India",
+    "Can India become a knowledge economy?",
+    "The role of women in India's workforce",
+    "Should organizations prioritize gender diversity?",
+    "Is meritocracy possible without equal opportunity?",
+    "Should companies recruit directly from colleges?",
+    "Campus placements vs independent job search",
+    "Are internships becoming more important than degrees?",
+]
+
+GD_DOS = [
+    "Understand the topic before speaking.",
+    "Open with a clear and relevant point when appropriate.",
+    "Listen actively and build on other participants' ideas.",
+    "Use facts, examples and business or real-world context.",
+    "Keep your contribution concise and structured.",
+    "Invite quieter members into the discussion.",
+    "Disagree with ideas respectfully, not with people.",
+    "Help the group move toward a balanced conclusion."
+]
+
+GD_DONTS = [
+    "Do not interrupt repeatedly.",
+    "Do not dominate the discussion.",
+    "Do not attack or ridicule another participant.",
+    "Do not invent statistics to sound convincing.",
+    "Do not repeat the same point without adding value.",
+    "Do not turn the GD into a one-to-one argument.",
+    "Do not stay silent for the entire discussion.",
+    "Do not force a conclusion without listening to the group."
+]
 
 
 def generate_gd_code():
@@ -1533,6 +1756,7 @@ elif selected_nav == "Interview Practice Room":
                         tmp_file.write(audio_data.getvalue())
                         tmp_path = tmp_file.name
                     try:
+                        st.session_state["communication_duration"] = get_media_duration_seconds(tmp_path)
                         extracted_transcript = transcribe_indian_english_audio(tmp_path)
                     except Exception as err:
                         st.error(f"Speech transcription error: {err}")
@@ -1549,28 +1773,44 @@ elif selected_nav == "Interview Practice Room":
             render_video_recorder_component()
             
             st.subheader("2. Upload Saved Video File")
-            uploaded_video = st.file_uploader("Upload recorded video file (.webm, .mp4):", type=["webm", "mp4"])
+            uploaded_video = st.file_uploader("Upload recorded video file (.webm or .mp4):", type=["webm", "mp4"])
             
             if uploaded_video is not None:
                 ts = time.strftime("%Y%m%d_%H%M%S")
-                video_ext = "mp4" if uploaded_video.name.lower().endswith(".mp4") else "webm"
-                saved_video_filename = f"video_{ts}.{video_ext}"
-                saved_video_path = os.path.join(VIDEO_STORAGE_DIR, saved_video_filename)
+                incoming_ext = "mp4" if uploaded_video.name.lower().endswith(".mp4") else "webm"
+                incoming_path = os.path.join(VIDEO_STORAGE_DIR, f"incoming_{ts}.{incoming_ext}")
+                saved_video_path = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}.mp4")
                 
-                with open(saved_video_path, "wb") as f:
-                    f.write(uploaded_video.read())
+                with open(incoming_path, "wb") as f:
+                    f.write(uploaded_video.getvalue())
                 
-                st.video(saved_video_path)
-                st.success(f"Video file saved: `{saved_video_filename}`")
-                
-                with st.spinner("Transcribing video audio track via Whisper..."):
-                    try:
+                try:
+                    with st.spinner("Preparing MP4 interview video..."):
+                        if incoming_ext == "webm":
+                            saved_video_path = convert_video_to_mp4(incoming_path)
+                            if os.path.abspath(saved_video_path) != os.path.abspath(incoming_path):
+                                # convert_video_to_mp4 uses the input stem, so rename it to the final naming convention.
+                                target = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}.mp4")
+                                if os.path.abspath(saved_video_path) != os.path.abspath(target):
+                                    os.replace(saved_video_path, target)
+                                saved_video_path = target
+                        else:
+                            with open(saved_video_path, "wb") as out:
+                                out.write(uploaded_video.getvalue())
+                    if os.path.exists(incoming_path) and os.path.abspath(incoming_path) != os.path.abspath(saved_video_path):
+                        os.remove(incoming_path)
+                    st.session_state["current_video_path"] = saved_video_path
+                    st.session_state["communication_duration"] = get_media_duration_seconds(saved_video_path)
+                    st.video(saved_video_path)
+                    st.success(f"Interview video saved as MP4: `{os.path.basename(saved_video_path)}`")
+                    with st.spinner("Transcribing video audio track via Whisper..."):
                         extracted_transcript = transcribe_indian_english_audio(saved_video_path)
                         st.success("Video audio transcribed successfully.")
-                    except Exception as err:
-                        st.error(f"Speech transcription error: {err}")
-                        if not FFMPEG_PATH:
-                            st.info("FFmpeg is missing. Add `ffmpeg` to packages.txt (Streamlit Cloud) or install it in your Dockerfile (Cloud Run).")
+                except Exception as err:
+                    st.error(f"Video processing error: {err}")
+                    if os.path.exists(incoming_path):
+                        try: os.remove(incoming_path)
+                        except OSError: pass
 
         final_response_text = st.text_area(
             "Answer Transcript (Review or Edit Text Before Submitting):", 
@@ -1584,6 +1824,9 @@ elif selected_nav == "Interview Practice Room":
             else:
                 with st.spinner("Analyzing your response..."):
                     c_name = st.session_state.get('first_name', 'Student')
+                    st.session_state["communication_metrics"] = communication_metrics(
+                        final_response_text, st.session_state.get("communication_duration", 0.0)
+                    )
                     eval_prompt = f"""
                     Act as an encouraging MBA placement mentor at IPER Bhopal.
                     Evaluate the response for candidate: {c_name}.
@@ -1594,14 +1837,33 @@ elif selected_nav == "Interview Practice Room":
                     Resume Context: {json.dumps(st.session_state.get('resume_details', {}))}
                     Practice Mode: {mode}
 
+                    Communication metrics calculated from the recording/transcript:
+                    {json.dumps(st.session_state.get("communication_metrics", {}))}
+
+                    Evaluate the candidate as an MBA placement interviewer and English communication coach.
+                    Assess English communication separately from subject knowledge. Be constructive, evidence-based, and do not invent observations that cannot be supported by the transcript or calculated metrics.
+
                     Return response in VALID JSON strictly matching this structure:
                     {{
                         "CandidateName": "{c_name}",
                         "GradingScore": <0-100 integer>,
-                        "ExecutiveSummary": "<Warm greeting addressing {c_name} with an overall summary>",
-                        "TechnicalAssessment": "<Evaluation of subject knowledge and key points, addressing {c_name}>",
-                        "CommunicationAssessment": "<Assessment of clarity, structure, and delivery, addressing {c_name}>",
-                        "ResumeAlignment": "<How effectively {c_name} referenced their experience>",
+                        "ExecutiveSummary": "<Warm overall summary>",
+                        "TechnicalAssessment": "<Evaluation of subject knowledge and key points>",
+                        "CommunicationAssessment": "<Overall English communication assessment>",
+                        "EnglishCommunicationScore": <0-10>,
+                        "GrammarScore": <0-10>,
+                        "FillerWordsScore": <0-10>,
+                        "RateOfSpeechScore": <0-10>,
+                        "ToneScore": <0-10>,
+                        "ClarityScore": <0-10>,
+                        "GrammarIssues": ["<specific grammar issue and corrected form>"],
+                        "FillerWordsUsed": {{"word_or_phrase": <count>}},
+                        "RateOfSpeechAssessment": "<Assess WPM against professional interview speaking: generally around 120-160 WPM is a useful reference, but context matters>",
+                        "ToneAssessment": "<Assess professionalism, confidence, warmth, hesitation, and appropriateness from available evidence. Do not claim to hear vocal tone if only transcript is available>",
+                        "ClarityAssessment": "<Assess structure, sentence clarity, coherence, and ease of understanding>",
+                        "CommunicationStrengths": ["<strength>"],
+                        "CommunicationImprovements": ["<improvement>"],
+                        "ResumeAlignment": "<How effectively the candidate referenced relevant experience>",
                         "KeyFlaws": "<Constructive highlights of points missed or needing clarity>",
                         "CorrectiveSteps": "<Practical tips for {c_name} to improve next time>",
                         "Benchmark100Answer": "<A clear, exemplary benchmark model answer>"
@@ -1618,6 +1880,39 @@ elif selected_nav == "Interview Practice Room":
 
                         st.subheader(f"Interview Feedback for {c_name}")
                         st.metric("Overall Score", f"{score} / 100")
+
+                        metrics = st.session_state.get("communication_metrics", {})
+                        if metrics:
+                            st.markdown("### 🎙️ English Communication Analysis")
+                            m1, m2, m3, m4 = st.columns(4)
+                            m1.metric("English Communication", f"{eval_result.get('EnglishCommunicationScore', 0)}/10")
+                            m2.metric("Grammar", f"{eval_result.get('GrammarScore', 0)}/10")
+                            m3.metric("Rate of Speech", f"{metrics.get('wpm', 0)} WPM")
+                            m4.metric("Filler Words", str(metrics.get('filler_total', 0)))
+
+                            m5, m6, m7 = st.columns(3)
+                            m5.metric("Tone", f"{eval_result.get('ToneScore', 0)}/10")
+                            m6.metric("Clarity", f"{eval_result.get('ClarityScore', 0)}/10")
+                            m7.metric("Duration", f"{metrics.get('duration_minutes', 0)} min")
+
+                            st.markdown("**Grammar feedback**")
+                            for issue in eval_result.get("GrammarIssues", []):
+                                st.markdown(f"- {issue}")
+                            st.markdown("**Filler words detected**")
+                            filler = metrics.get("filler_counts", {})
+                            st.write(filler if filler else "No common filler words detected.")
+                            st.markdown("**Rate of speech**")
+                            st.write(eval_result.get("RateOfSpeechAssessment", ""))
+                            st.markdown("**Tone**")
+                            st.write(eval_result.get("ToneAssessment", ""))
+                            st.markdown("**Clarity**")
+                            st.write(eval_result.get("ClarityAssessment", ""))
+                            st.markdown("**Communication strengths**")
+                            for item in eval_result.get("CommunicationStrengths", []):
+                                st.markdown(f"- {item}")
+                            st.markdown("**Communication improvements**")
+                            for item in eval_result.get("CommunicationImprovements", []):
+                                st.markdown(f"- {item}")
 
                         st.write(eval_result.get("ExecutiveSummary", ""))
 
