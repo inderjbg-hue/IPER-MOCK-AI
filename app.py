@@ -856,6 +856,10 @@ def migrate_local_sqlite_to_postgres():
 
 
 
+GD_MAX_PARTICIPANTS = 7
+GD_MAX_MINUTES = 10
+GD_ROOM_COUNT = 7
+
 GD_TOPICS = [
     "Artificial Intelligence: Job Creator or Job Killer?",
     "Should college education be skill-based rather than degree-based?",
