@@ -897,6 +897,38 @@ def authenticate_student(email, password):
     return None
 
 
+def reset_student_password(email, scholar_id, new_password):
+    """Reset a student's password after verifying their official email and Scholar ID."""
+    email = email.strip().lower()
+    scholar_id = scholar_id.strip().upper()
+    password_hash, password_salt = hash_password(new_password)
+
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT id FROM students WHERE email = ? AND scholar_id = ?",
+            (email, scholar_id),
+        ).fetchone()
+
+        if not row:
+            return False, "We could not verify those details. Please check your official email ID and Scholar ID."
+
+        conn.execute(
+            "UPDATE students SET password_hash = ?, password_salt = ? WHERE id = ?",
+            (password_hash, password_salt, row["id"]),
+        )
+        conn.commit()
+        return True, "Password reset successfully. You can now sign in with your new password."
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
 def load_student_attempts(student_id):
     conn = get_db_connection()
     try:
@@ -1699,7 +1731,7 @@ def render_authentication_panel():
         unsafe_allow_html=True,
     )
 
-    login_tab, signup_tab = st.tabs(["🔐 Student Sign In", "📝 Student Sign Up"])
+    login_tab, signup_tab, reset_tab = st.tabs(["🔐 Student Sign In", "📝 Student Sign Up", "🔑 Forgot Password"])
 
     with login_tab:
         st.subheader("Sign in to your student account")
@@ -1730,6 +1762,41 @@ def render_authentication_panel():
                     st.rerun()
                 else:
                     st.error("Invalid email ID or password.")
+
+    with reset_tab:
+        st.subheader("Reset your password")
+        st.info("Use the official @iper.ac.in email ID and Scholar ID registered with your account.")
+
+        with st.form("student_password_reset_form"):
+            reset_email = st.text_input("Registered Email ID", placeholder="yourname@iper.ac.in")
+            reset_scholar_id = st.text_input("Scholar ID")
+            reset_new_password = st.text_input("New Password", type="password")
+            reset_confirm_password = st.text_input("Confirm New Password", type="password")
+            reset_submitted = st.form_submit_button("Reset Password", use_container_width=True)
+
+        if reset_submitted:
+            normalized_reset_email = reset_email.strip().lower()
+
+            if not is_valid_iper_email(normalized_reset_email):
+                st.error("Please use your official @iper.ac.in email ID.")
+            elif not reset_scholar_id.strip():
+                st.error("Please enter your Scholar ID.")
+            elif len(reset_new_password) < 8:
+                st.error("New password must contain at least 8 characters.")
+            elif reset_new_password != reset_confirm_password:
+                st.error("New Password and Confirm New Password do not match.")
+            else:
+                try:
+                    ok, message = reset_student_password(
+                        normalized_reset_email, reset_scholar_id, reset_new_password
+                    )
+                    if ok:
+                        st.success(message)
+                        st.info("Please return to the Student Sign In tab and use your new password.")
+                    else:
+                        st.error(message)
+                except Exception as exc:
+                    st.error(f"Password reset could not be completed: {exc}")
 
     with signup_tab:
         st.subheader("Create your IPER student account")
