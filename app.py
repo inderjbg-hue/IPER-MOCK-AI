@@ -975,6 +975,11 @@ GD_MAX_PARTICIPANTS = 7
 GD_MAX_MINUTES = 10
 GD_ROOM_COUNT = 7
 
+# Optional external video engine configuration for in-built GD practice.
+# The app gracefully falls back to the local/in-browser GD flow when these are not configured.
+VIDEO_ENGINE_URL = os.getenv("VIDEO_ENGINE_URL", st.secrets.get("VIDEO_ENGINE_URL", "")).strip().rstrip("/")
+VIDEO_ENGINE_JWT_SECRET = os.getenv("VIDEO_ENGINE_JWT_SECRET", st.secrets.get("VIDEO_ENGINE_JWT_SECRET", "")).strip()
+
 GD_TOPICS = [
     "Artificial Intelligence: Job Creator or Job Killer?",
     "Should college education be skill-based rather than degree-based?",
