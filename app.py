@@ -381,6 +381,12 @@ EXTRA_CURRICULAR_ACTIVITIES = ["Sports", "Cultural Event", "Club Activity", "Vol
 # ------------------------------------------------------------------------------
 # 5. STUDENT AUTHENTICATION & ACCOUNT MANAGEMENT
 # ------------------------------------------------------------------------------
+# IMPORTANT:
+# The original version used a relative SQLite database ("students.db"). That
+# database is NOT guaranteed to survive a restart/rebuild on hosted platforms.
+# This version supports a persistent PostgreSQL DATABASE_URL (recommended for
+# Streamlit Cloud) while retaining SQLite as a local-development fallback.
+
 import sqlite3
 import hashlib
 import secrets
@@ -389,9 +395,99 @@ from datetime import datetime
 import base64
 import hmac
 import urllib.parse
+import re
+
+try:
+    import psycopg2
+    from psycopg2 import IntegrityError as PostgresIntegrityError
+    POSTGRES_AVAILABLE = True
+except ImportError:
+    psycopg2 = None
+    PostgresIntegrityError = Exception
+    POSTGRES_AVAILABLE = False
 
 DATABASE_PATH = os.getenv("DATABASE_PATH", "students.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if not DATABASE_URL and "DATABASE_URL" in st.secrets:
+    DATABASE_URL = str(st.secrets["DATABASE_URL"]).strip()
+
 ALLOWED_EMAIL_DOMAIN = "@iper.ac.in"
+USING_POSTGRES = bool(DATABASE_URL)
+
+
+class HybridRow(dict):
+    """Dict-like DB row that also supports integer indexing used by legacy code."""
+    def __init__(self, columns, values):
+        super().__init__(zip(columns, values))
+        self._values = list(values)
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._values[key]
+        return super().__getitem__(key)
+
+
+class PostgresCursorWrapper:
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def fetchone(self):
+        row = self.cursor.fetchone()
+        if row is None:
+            return None
+        return HybridRow([d.name for d in self.cursor.description], row)
+
+    def fetchall(self):
+        rows = self.cursor.fetchall()
+        if not rows:
+            return []
+        columns = [d.name for d in self.cursor.description]
+        return [HybridRow(columns, row) for row in rows]
+
+
+class PostgresConnectionWrapper:
+    """Small compatibility layer so the existing SQLite-style SQL can run on PostgreSQL."""
+    def __init__(self, url):
+        self.conn = psycopg2.connect(url, connect_timeout=15)
+        self.conn.autocommit = False
+
+    @staticmethod
+    def _translate_sql(sql):
+        # SQLite uses ? placeholders; psycopg2 uses %s.
+        sql = sql.replace("?", "%s")
+        sql = re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", sql, flags=re.I)
+        sql = re.sub(r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b", "BIGSERIAL PRIMARY KEY", sql, flags=re.I)
+        return sql
+
+    def execute(self, sql, params=None):
+        # PostgreSQL equivalent of the SQLite migration query.
+        if sql.strip().lower().startswith("pragma table_info(gd_rooms)"):
+            cur = self.conn.cursor()
+            cur.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'gd_rooms'
+                ORDER BY ordinal_position
+            """)
+            return PostgresCursorWrapper(cur)
+
+        translated = self._translate_sql(sql)
+        # The only INSERT OR IGNORE in the app is safe to express as ON CONFLICT DO NOTHING.
+        if translated.lstrip().upper().startswith("INSERT INTO GD_ROOMS") and "ON CONFLICT" not in translated.upper():
+            translated = translated.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+
+        cur = self.conn.cursor()
+        cur.execute(translated, params or ())
+        return PostgresCursorWrapper(cur)
+
+    def commit(self):
+        self.conn.commit()
+
+    def rollback(self):
+        self.conn.rollback()
+
+    def close(self):
+        self.conn.close()
 
 
 def is_valid_iper_email(email):
@@ -400,90 +496,109 @@ def is_valid_iper_email(email):
 
 
 def get_db_connection():
-    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+    """Use persistent PostgreSQL when DATABASE_URL is configured; SQLite locally otherwise."""
+    if DATABASE_URL:
+        if not POSTGRES_AVAILABLE:
+            raise RuntimeError(
+                "DATABASE_URL is configured, but psycopg2-binary is not installed. "
+                "Add psycopg2-binary to requirements.txt and redeploy."
+            )
+        return PostgresConnectionWrapper(DATABASE_URL)
+
+    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_database():
     conn = get_db_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS students (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            scholar_id TEXT NOT NULL UNIQUE,
-            email TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            password_salt TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS interview_attempts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id INTEGER NOT NULL,
-            timestamp TEXT NOT NULL,
-            domain TEXT,
-            score INTEGER,
-            mode TEXT,
-            question TEXT,
-            FOREIGN KEY(student_id) REFERENCES students(id)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS gd_rooms (
-            slot INTEGER PRIMARY KEY,
-            code TEXT UNIQUE,
-            topic TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Open',
-            created_at TEXT NOT NULL,
-            started_at TEXT,
-            ended_at TEXT,
-            recording_status TEXT DEFAULT 'Not Started'
-        )
-    """)
-    # Backward-compatible migration: remember which student created/hosts the GD.
     try:
-        existing_columns = [row[1] for row in conn.execute("PRAGMA table_info(gd_rooms)").fetchall()]
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS students (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                first_name TEXT NOT NULL,
+                last_name TEXT NOT NULL,
+                scholar_id TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                password_salt TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS interview_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER NOT NULL,
+                timestamp TEXT NOT NULL,
+                domain TEXT,
+                score INTEGER,
+                mode TEXT,
+                question TEXT,
+                FOREIGN KEY(student_id) REFERENCES students(id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS gd_rooms (
+                slot INTEGER PRIMARY KEY,
+                code TEXT UNIQUE,
+                topic TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Open',
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                ended_at TEXT,
+                recording_status TEXT DEFAULT 'Not Started'
+            )
+        """)
+
+        # Backward-compatible migration: remember which student created/hosts the GD.
+        existing_columns = [row[0] if USING_POSTGRES else row[1]
+                            for row in conn.execute("PRAGMA table_info(gd_rooms)").fetchall()]
         if "host_scholar_id" not in existing_columns:
             conn.execute("ALTER TABLE gd_rooms ADD COLUMN host_scholar_id TEXT")
-    except Exception:
-        pass
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS gd_participants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            slot INTEGER NOT NULL,
-            scholar_id TEXT NOT NULL,
-            first_name TEXT NOT NULL,
-            last_name TEXT NOT NULL,
-            joined_at TEXT NOT NULL,
-            left_at TEXT,
-            active INTEGER NOT NULL DEFAULT 1,
-            UNIQUE(slot, scholar_id),
-            FOREIGN KEY(slot) REFERENCES gd_rooms(slot)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS gd_feedback (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            slot INTEGER NOT NULL,
-            scholar_id TEXT NOT NULL,
-            voice_score INTEGER NOT NULL,
-            perspective_score INTEGER NOT NULL,
-            participation_score INTEGER NOT NULL,
-            camera_clarity_score INTEGER NOT NULL,
-            strengths TEXT,
-            improvements TEXT,
-            created_at TEXT NOT NULL
-        )
-    """)
-    for slot in range(1, 8):
-        conn.execute("INSERT OR IGNORE INTO gd_rooms (slot, code, topic, status, created_at) VALUES (?, NULL, ?, 'Open', ?)",
-                     (slot, 'Not allocated', datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-    conn.commit()
-    conn.close()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS gd_participants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slot INTEGER NOT NULL,
+                scholar_id TEXT NOT NULL,
+                first_name TEXT NOT NULL,
+                last_name TEXT NOT NULL,
+                joined_at TEXT NOT NULL,
+                left_at TEXT,
+                active INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(slot, scholar_id),
+                FOREIGN KEY(slot) REFERENCES gd_rooms(slot)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS gd_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slot INTEGER NOT NULL,
+                scholar_id TEXT NOT NULL,
+                voice_score INTEGER NOT NULL,
+                perspective_score INTEGER NOT NULL,
+                participation_score INTEGER NOT NULL,
+                camera_clarity_score INTEGER NOT NULL,
+                strengths TEXT,
+                improvements TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        for slot in range(1, 8):
+            conn.execute(
+                "INSERT OR IGNORE INTO gd_rooms (slot, code, topic, status, created_at) VALUES (?, NULL, ?, 'Open', ?)",
+                (slot, 'Not allocated', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+            )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def hash_password(password, salt=None):
@@ -513,24 +628,26 @@ def create_student(first_name, last_name, scholar_id, email, password):
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                first_name.strip(),
-                last_name.strip(),
-                scholar_id,
-                email,
-                password_hash,
-                password_salt,
+                first_name.strip(), last_name.strip(), scholar_id, email,
+                password_hash, password_salt,
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ),
         )
         conn.commit()
         return True, "Account created successfully. You can now sign in."
-    except sqlite3.IntegrityError as exc:
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         message = str(exc).lower()
-        if "email" in message:
-            return False, "This email ID is already registered. Please sign in."
-        if "scholar_id" in message:
-            return False, "This Scholar ID is already registered."
-        return False, "This account could not be created because the details already exist."
+        if "unique" in message or "duplicate" in message:
+            if "email" in message:
+                return False, "This email ID is already registered. Please sign in."
+            if "scholar_id" in message:
+                return False, "This Scholar ID is already registered."
+            return False, "This account could not be created because the details already exist."
+        raise
     finally:
         conn.close()
 
@@ -538,10 +655,12 @@ def create_student(first_name, last_name, scholar_id, email, password):
 def authenticate_student(email, password):
     email = email.strip().lower()
     conn = get_db_connection()
-    row = conn.execute(
-        "SELECT * FROM students WHERE email = ?", (email,)
-    ).fetchone()
-    conn.close()
+    try:
+        row = conn.execute(
+            "SELECT * FROM students WHERE email = ?", (email,)
+        ).fetchone()
+    finally:
+        conn.close()
 
     if row and verify_password(password, row["password_hash"], row["password_salt"]):
         return dict(row)
@@ -550,24 +669,23 @@ def authenticate_student(email, password):
 
 def load_student_attempts(student_id):
     conn = get_db_connection()
-    rows = conn.execute(
-        """
-        SELECT timestamp, domain, score, mode, question
-        FROM interview_attempts
-        WHERE student_id = ?
-        ORDER BY id ASC
-        """,
-        (student_id,),
-    ).fetchall()
-    conn.close()
+    try:
+        rows = conn.execute(
+            """
+            SELECT timestamp, domain, score, mode, question
+            FROM interview_attempts
+            WHERE student_id = ?
+            ORDER BY id ASC
+            """,
+            (student_id,),
+        ).fetchall()
+    finally:
+        conn.close()
     return [
         {
-            "Timestamp": row["timestamp"],
-            "Candidate": "Student",
-            "Domain": row["domain"] or "",
-            "Score": row["score"] or 0,
-            "Mode": row["mode"] or "",
-            "Question": row["question"] or "",
+            "Timestamp": row["timestamp"], "Candidate": "Student",
+            "Domain": row["domain"] or "", "Score": row["score"] or 0,
+            "Mode": row["mode"] or "", "Question": row["question"] or "",
         }
         for row in rows
     ]
@@ -575,165 +693,79 @@ def load_student_attempts(student_id):
 
 def save_student_attempt(student_id, domain, score, mode, question):
     conn = get_db_connection()
-    conn.execute(
-        """
-        INSERT INTO interview_attempts
-        (student_id, timestamp, domain, score, mode, question)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (
-            student_id,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            domain,
-            int(score),
-            mode,
-            question,
-        ),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            """
+            INSERT INTO interview_attempts
+            (student_id, timestamp, domain, score, mode, question)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                student_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                domain, int(score), mode, question,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
+# Show a clear deployment warning rather than silently using an ephemeral DB.
+def database_status_message():
+    if DATABASE_URL:
+        return "Persistent student database: PostgreSQL"
+    return "Local student database: SQLite (use DATABASE_URL in production for persistent accounts)"
 
-GD_MAX_PARTICIPANTS = 7
-GD_MAX_MINUTES = 10
-GD_ROOM_COUNT = 7
-VIDEO_ENGINE_URL = os.getenv("VIDEO_ENGINE_URL", st.secrets.get("VIDEO_ENGINE_URL", "")).strip().rstrip("/")
-VIDEO_ENGINE_JWT_SECRET = os.getenv("VIDEO_ENGINE_JWT_SECRET", st.secrets.get("VIDEO_ENGINE_JWT_SECRET", "")).strip()
 
-GD_TOPICS = [
-    "Artificial Intelligence: Job Creator or Job Killer?",
-    "Should college education be skill-based rather than degree-based?",
-    "Work From Home vs Work From Office",
-    "Is Social Media a Boon or a Curse?",
-    "Should AI be regulated?",
-    "Digital Payments and the Future of Cash",
-    "Startup Culture vs Stable Corporate Jobs",
-    "Is India ready for a cashless economy?",
-    "Sustainability vs Profitability",
-    "Can India become a global manufacturing hub?",
-    "Online Education vs Classroom Education",
-    "Is influencer marketing trustworthy?",
-    "Electric Vehicles: Future or Fad?",
-    "Should internships be mandatory for every student?",
-    "Data Privacy in the Digital Age",
-    "Is competition good for students?",
-    "Work-Life Balance vs Career Growth",
-    "Should companies hire for skills rather than degrees?",
-    "Is failure necessary for success?",
-    "Leadership: Born or Made?",
-    "Is customer experience more important than product quality?",
-    "Can technology replace human creativity?",
-    "Should college attendance be compulsory?",
-    "Are advertisements influencing consumers too much?",
-    "Ethical Issues in Artificial Intelligence",
-    "Should businesses take political stands?",
-    "Is entrepreneurship for everyone?",
-    "Green Marketing: Genuine Need or Branding Strategy?",
-    "Should companies adopt a four-day work week?",
-    "Gig Economy: Opportunity or Exploitation?",
-    "Is remote work reducing organizational culture?",
-    "Should employees be allowed to work anywhere?",
-    "Can India lead the global AI revolution?",
-    "Technology and Human Relationships",
-    "Should social media platforms be responsible for misinformation?",
-    "Is economic growth possible without environmental damage?",
-    "Brand Loyalty in the Age of Online Shopping",
-    "Should financial literacy be compulsory in colleges?",
-    "Is cryptocurrency the future of money?",
-    "Digital Banking vs Traditional Banking",
-    "Should companies monitor employee productivity digitally?",
-    "Is diversity important for business success?",
-    "Can India achieve sustainable development?",
-    "Should exams be replaced by continuous assessment?",
-    "The Future of the Indian Retail Industry",
-    "Does advertising create artificial needs?",
-    "Should businesses prioritize local suppliers?",
-    "Is globalization good for developing countries?",
-    "Should college students be allowed to use AI for assignments?",
-    "AI in Recruitment: Fairness vs Efficiency",
-    "Can emotional intelligence be more important than IQ at work?",
-    "Should companies disclose their salary ranges?",
-    "Performance Pay vs Fixed Salary",
-    "Is job security becoming less important?",
-    "Should organizations prioritize employee wellbeing?",
-    "Is customer data the new oil?",
-    "Can digital marketing replace traditional marketing?",
-    "Are discounts destroying brand value?",
-    "Should luxury brands embrace mass-market collaborations?",
-    "India's youth and entrepreneurship",
-    "Is a high salary the best measure of career success?",
-    "Should students pursue passion or job security?",
-    "Is networking more important than academic performance?",
-    "Should companies invest more in employee training?",
-    "Can automation improve workplace productivity?",
-    "Should managers use AI to evaluate employees?",
-    "Is hybrid work the best future of work?",
-    "Should companies have unlimited leave policies?",
-    "Is employee loyalty still relevant?",
-    "Can small businesses compete with e-commerce giants?",
-    "Is quick commerce changing consumer behavior permanently?",
-    "Should India prioritize domestic consumption?",
-    "Tourism as a driver of economic development",
-    "Is sustainable tourism practical?",
-    "Should public transport be free in major cities?",
-    "Electric public transport and urban mobility",
-    "Should cities discourage private vehicles?",
-    "Is population growth an economic advantage or challenge?",
-    "Should businesses be responsible for social development?",
-    "Corporate Social Responsibility: Responsibility or Marketing?",
-    "Should profit be the primary goal of business?",
-    "Can ethical business practices create competitive advantage?",
-    "Is brand reputation more valuable than short-term sales?",
-    "Should CEOs be active on social media?",
-    "The impact of short-form video on attention spans",
-    "Is digital detox necessary?",
-    "Should children have restricted social media access?",
-    "Online privacy vs national security",
-    "Should AI-generated content be labelled?",
-    "Is misinformation a bigger threat than fake news?",
-    "Should voting be compulsory?",
-    "Youth participation in nation building",
-    "Can sports create stronger communities?",
-    "Should colleges focus more on employability?",
-    "Is academic pressure helping or harming students?",
-    "Mental resilience in professional life",
-    "Should companies value soft skills equally with technical skills?",
-    "The importance of communication skills in management",
-    "Is multitasking reducing productivity?",
-    "Should employees be allowed to disconnect after work?",
-    "Leadership lessons from Indian businesses",
-    "Future of management education in India",
-    "Can India become a knowledge economy?",
-    "The role of women in India's workforce",
-    "Should organizations prioritize gender diversity?",
-    "Is meritocracy possible without equal opportunity?",
-    "Should companies recruit directly from colleges?",
-    "Campus placements vs independent job search",
-    "Are internships becoming more important than degrees?",
-]
+def migrate_local_sqlite_to_postgres():
+    """One-time best-effort migration of an existing local students.db into PostgreSQL.
 
-GD_DOS = [
-    "Understand the topic before speaking.",
-    "Open with a clear and relevant point when appropriate.",
-    "Listen actively and build on other participants' ideas.",
-    "Use facts, examples and business or real-world context.",
-    "Keep your contribution concise and structured.",
-    "Invite quieter members into the discussion.",
-    "Disagree with ideas respectfully, not with people.",
-    "Help the group move toward a balanced conclusion."
-]
+    This runs only when DATABASE_URL is configured, the local SQLite file exists,
+    and the remote students table is empty. Password hashes/salts are copied as-is,
+    so existing student passwords continue to work.
+    """
+    if not DATABASE_URL or not os.path.exists(DATABASE_PATH):
+        return
 
-GD_DONTS = [
-    "Do not interrupt repeatedly.",
-    "Do not dominate the discussion.",
-    "Do not attack or ridicule another participant.",
-    "Do not invent statistics to sound convincing.",
-    "Do not repeat the same point without adding value.",
-    "Do not turn the GD into a one-to-one argument.",
-    "Do not stay silent for the entire discussion.",
-    "Do not force a conclusion without listening to the group."
-]
+    local = sqlite3.connect(DATABASE_PATH)
+    local.row_factory = sqlite3.Row
+    remote = get_db_connection()
+    try:
+        remote_count = remote.execute("SELECT COUNT(*) AS n FROM students").fetchone()["n"]
+        if int(remote_count or 0) > 0:
+            return
+
+        tables = ["students", "interview_attempts", "gd_rooms", "gd_participants", "gd_feedback"]
+        for table in tables:
+            rows = local.execute(f"SELECT * FROM {table}").fetchall()
+            if not rows:
+                continue
+            columns = rows[0].keys()
+            placeholders = ", ".join(["?"] * len(columns))
+            column_sql = ", ".join(columns)
+            for row in rows:
+                remote.execute(
+                    f"INSERT INTO {table} ({column_sql}) VALUES ({placeholders}) ON CONFLICT DO NOTHING",
+                    tuple(row[c] for c in columns),
+                )
+
+        # The imported SQLite IDs are explicit, so advance PostgreSQL sequences
+        # before any new accounts/attempts are created.
+        for table in ["students", "interview_attempts", "gd_participants", "gd_feedback"]:
+            remote.execute(
+                f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 1), true)"
+            )
+        remote.commit()
+    except Exception:
+        try:
+            remote.rollback()
+        except Exception:
+            pass
+        # Never prevent the app from starting just because an optional migration failed.
+    finally:
+        local.close()
+        remote.close()
+
 
 
 def generate_gd_code():
@@ -1157,6 +1189,7 @@ def render_authentication_panel():
 
 
 init_database()
+migrate_local_sqlite_to_postgres()
 
 FFMPEG_PATH = shutil.which("ffmpeg")
 
