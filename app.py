@@ -1721,295 +1721,330 @@ def generate_learning_story(activity, activity_type, student_name, role, challen
     return get_groq_response(prompt)
 
 def render_authentication_panel():
-    # Dedicated authentication styling. The existing authentication/database logic
-    # is intentionally preserved; only the presentation is redesigned.
+    # Compact, unified authentication card. Authentication/database logic is preserved;
+    # only the presentation is redesigned.
     st.markdown(
         """
         <style>
-            /* Authentication page */
-            .auth-shell {
-                max-width: 1120px;
-                margin: 34px auto 50px auto;
-                border: 1px solid #E2E8F0;
-                border-radius: 18px;
-                overflow: hidden;
-                background: #FFFFFF;
-                box-shadow: 0 18px 55px rgba(15, 23, 42, 0.10);
+            .auth-page-title {
+                text-align: center;
+                margin: 8px 0 22px 0;
             }
-            .auth-brand {
-                min-height: 610px;
-                height: 100%;
-                padding: 54px 46px;
-                background: linear-gradient(145deg, #0B1736 0%, #142A52 58%, #1E3A6D 100%);
+            .auth-page-title h1 {
+                color: #0F172A !important;
+                font-size: 28px !important;
+                margin: 0 !important;
+                font-weight: 800 !important;
+                letter-spacing: -0.5px;
+            }
+            .auth-page-title p {
+                color: #64748B !important;
+                font-size: 13px !important;
+                margin: 6px 0 0 0 !important;
+            }
+
+            /* Style the Streamlit bordered container as one unified card. */
+            div[data-testid="stVerticalBlockBorderWrapper"] {
+                max-width: 1040px;
+                margin: 0 auto !important;
+                border: 1px solid #E2E8F0 !important;
+                border-radius: 18px !important;
+                background: #FFFFFF !important;
+                box-shadow: 0 16px 45px rgba(15, 23, 42, 0.09) !important;
+                overflow: hidden !important;
+            }
+            .auth-info {
+                min-height: 420px;
+                padding: 42px 38px;
+                border-radius: 12px;
+                background: linear-gradient(145deg, #0B1736 0%, #142A52 62%, #1E3A6D 100%);
                 color: #FFFFFF;
                 display: flex;
                 flex-direction: column;
                 justify-content: space-between;
+                box-sizing: border-box;
             }
             .auth-mark {
-                width: 58px;
-                height: 58px;
-                border: 1px solid rgba(255,255,255,.28);
-                border-radius: 14px;
+                width: 48px;
+                height: 48px;
+                border: 1px solid rgba(255,255,255,.25);
+                border-radius: 12px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                font-size: 20px;
+                font-size: 17px;
                 font-weight: 800;
                 letter-spacing: .5px;
                 background: rgba(255,255,255,.08);
             }
-            .auth-brand h1 {
+            .auth-info h2 {
                 color: #FFFFFF !important;
-                font-size: 34px !important;
-                line-height: 1.15 !important;
-                margin: 34px 0 14px 0 !important;
+                font-size: 30px !important;
+                line-height: 1.14 !important;
+                margin: 24px 0 13px 0 !important;
                 font-weight: 800 !important;
+                letter-spacing: -0.6px;
             }
-            .auth-brand p {
+            .auth-info p {
                 color: #CBD5E1 !important;
-                font-size: 15px !important;
-                line-height: 1.75 !important;
+                font-size: 14px !important;
+                line-height: 1.65 !important;
                 margin: 0 !important;
             }
-            .auth-feature {
-                margin-top: 34px;
-                padding-top: 25px;
+            .auth-info-footer {
+                margin-top: 28px;
+                padding-top: 20px;
                 border-top: 1px solid rgba(255,255,255,.16);
             }
-            .auth-feature-title {
+            .auth-info-footer strong {
                 color: #FFFFFF;
-                font-size: 14px;
-                font-weight: 700;
-                margin-bottom: 8px;
-            }
-            .auth-feature-text {
-                color: #CBD5E1;
                 font-size: 13px;
-                line-height: 1.6;
+                font-weight: 700;
             }
-            .auth-panel {
-                padding: 44px 46px 38px 46px;
-                min-height: 610px;
-                background: #FFFFFF;
+            .auth-info-footer span {
+                display: block;
+                color: #CBD5E1;
+                font-size: 12px;
+                margin-top: 6px;
             }
-            .auth-panel h2 {
+
+            .auth-form {
+                padding: 20px 34px 18px 22px;
+            }
+            .auth-form h2 {
                 color: #0F172A !important;
                 font-size: 25px !important;
-                margin: 0 0 7px 0 !important;
-                font-weight: 750 !important;
+                margin: 0 0 5px 0 !important;
+                font-weight: 800 !important;
+                letter-spacing: -0.3px;
             }
-            .auth-panel .auth-kicker {
+            .auth-kicker {
                 color: #64748B;
                 font-size: 13px;
-                margin-bottom: 26px;
+                line-height: 1.5;
+                margin-bottom: 20px;
             }
-            .auth-panel [data-testid="stForm"] {
+            .auth-form [data-testid="stForm"] {
                 border: 0 !important;
                 padding: 0 !important;
             }
-            .auth-panel input {
-                height: 46px !important;
+            .auth-form input {
+                height: 44px !important;
                 border-radius: 8px !important;
                 border: 1px solid #CBD5E1 !important;
                 background: #FFFFFF !important;
                 color: #0F172A !important;
                 box-shadow: none !important;
             }
-            .auth-panel input:focus {
+            .auth-form input:focus {
                 border-color: #1E3A8A !important;
                 box-shadow: 0 0 0 2px rgba(30,58,138,.10) !important;
             }
-            .auth-panel label {
+            .auth-form label {
                 font-size: 13px !important;
                 font-weight: 600 !important;
                 color: #334155 !important;
             }
-            .auth-panel .stButton > button,
-            .auth-panel button[kind="primaryFormSubmit"] {
-                height: 46px !important;
+            .auth-form .stButton > button,
+            .auth-form button[kind="primaryFormSubmit"] {
+                height: 44px !important;
                 border-radius: 8px !important;
                 background: #0F172A !important;
                 border: 1px solid #0F172A !important;
                 color: #FFFFFF !important;
                 font-weight: 700 !important;
-                letter-spacing: .1px;
             }
-            .auth-panel .stButton > button:hover,
-            .auth-panel button[kind="primaryFormSubmit"]:hover {
+            .auth-form .stButton > button:hover,
+            .auth-form button[kind="primaryFormSubmit"]:hover {
                 background: #1E3A8A !important;
                 border-color: #1E3A8A !important;
             }
-            .auth-panel [data-baseweb="tab-list"] {
-                gap: 4px;
+            .auth-form [data-baseweb="tab-list"] {
+                gap: 2px;
                 border-bottom: 1px solid #E2E8F0;
-                margin-bottom: 26px;
+                margin-bottom: 20px;
             }
-            .auth-panel [data-baseweb="tab"] {
-                padding: 10px 14px !important;
+            .auth-form [data-baseweb="tab"] {
+                padding: 9px 11px !important;
                 color: #64748B !important;
-                font-size: 13px !important;
+                font-size: 12px !important;
                 font-weight: 600 !important;
             }
-            .auth-panel [aria-selected="true"] {
+            .auth-form [aria-selected="true"] {
                 color: #0F172A !important;
             }
-            .auth-panel [data-baseweb="tab-highlight"] {
+            .auth-form [data-baseweb="tab-highlight"] {
                 background: #0F172A !important;
                 height: 2px !important;
             }
-            .auth-panel [data-testid="stAlert"] {
+            .auth-form [data-testid="stAlert"] {
                 border-radius: 8px !important;
-                font-size: 13px !important;
+                font-size: 12px !important;
             }
             .auth-footer {
-                margin-top: 28px;
-                padding-top: 18px;
+                margin-top: 20px;
+                padding-top: 13px;
                 border-top: 1px solid #E2E8F0;
                 color: #94A3B8;
-                font-size: 11px;
+                font-size: 10px;
                 text-align: center;
             }
-            @media (max-width: 900px) {
-                .auth-shell { margin: 15px auto 30px auto; border-radius: 12px; }
-                .auth-brand { min-height: auto; padding: 32px 28px; }
-                .auth-brand h1 { font-size: 28px !important; }
-                .auth-panel { min-height: auto; padding: 32px 28px; }
+            @media (max-width: 850px) {
+                div[data-testid="stVerticalBlockBorderWrapper"] {
+                    margin: 0 8px !important;
+                    border-radius: 14px !important;
+                }
+                .auth-info { min-height: auto; padding: 30px 28px; }
+                .auth-form { padding: 24px 28px; }
+                .auth-info h2 { font-size: 26px !important; }
             }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    left, right = st.columns([0.92, 1.08], gap="small")
+    st.markdown(
+        """
+        <div class="auth-page-title">
+            <h1>IPER Student Placement Portal</h1>
+            <p>Student Login & Career Readiness Hub</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    with left:
-        st.markdown(
-            """
-            <div class="auth-brand">
-                <div>
-                    <div class="auth-mark">IP</div>
-                    <h1>IPER Student<br>Placement Portal</h1>
-                    <p>A focused career-readiness platform for students preparing for interviews, group discussions and campus placements.</p>
+    # One bordered container keeps the information and authentication experience
+    # visually connected instead of appearing as two separate page sections.
+    with st.container(border=True):
+        left, right = st.columns([0.92, 1.08], gap="large", vertical_alignment="center")
+
+        with left:
+            st.markdown(
+                """
+                <div class="auth-info">
+                    <div>
+                        <div class="auth-mark">IP</div>
+                        <h2>Prepare for<br>your next opportunity.</h2>
+                        <p>A focused career-readiness platform for students preparing for interviews, group discussions and campus placements.</p>
+                    </div>
+                    <div class="auth-info-footer">
+                        <strong>Career Readiness Hub</strong>
+                        <span>Practice. Improve. Prepare with confidence.</span>
+                    </div>
                 </div>
-                <div class="auth-feature">
-                    <div class="auth-feature-title">Career Readiness Hub</div>
-                    <div class="auth-feature-text">Practice. Improve. Prepare with confidence.</div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                """,
+                unsafe_allow_html=True,
+            )
 
-    with right:
-        st.markdown('<div class="auth-panel">', unsafe_allow_html=True)
-        st.markdown(
-            '<h2>Welcome back</h2>'
-            '<div class="auth-kicker">Sign in to continue to your student placement dashboard.</div>',
-            unsafe_allow_html=True,
-        )
+        with right:
+            st.markdown('<div class="auth-form">', unsafe_allow_html=True)
+            st.markdown(
+                '<h2>Welcome back</h2>'
+                '<div class="auth-kicker">Sign in to continue to your student placement dashboard.</div>',
+                unsafe_allow_html=True,
+            )
 
-        login_tab, signup_tab, reset_tab = st.tabs(["Student Sign In", "Create Account", "Forgot Password"])
+            login_tab, signup_tab, reset_tab = st.tabs(["Student Sign In", "Create Account", "Forgot Password"])
 
-        with login_tab:
-            with st.form("student_login_form"):
-                login_email = st.text_input("Email ID", placeholder="yourname@iper.ac.in")
-                login_password = st.text_input("Password", type="password")
-                login_submitted = st.form_submit_button("Sign In", use_container_width=True)
+            with login_tab:
+                with st.form("student_login_form"):
+                    login_email = st.text_input("Email ID", placeholder="yourname@iper.ac.in")
+                    login_password = st.text_input("Password", type="password")
+                    login_submitted = st.form_submit_button("Sign In", use_container_width=True)
 
-            if login_submitted:
-                normalized_email = login_email.strip().lower()
-                if not is_valid_iper_email(normalized_email):
-                    st.error("Please use your official @iper.ac.in email ID.")
-                elif not login_password:
-                    st.error("Please enter your password.")
-                else:
-                    student = authenticate_student(normalized_email, login_password)
-                    if student:
-                        st.session_state["authenticated"] = True
-                        st.session_state["student_id"] = student["id"]
-                        st.session_state["student_email"] = student["email"]
-                        st.session_state["first_name"] = student["first_name"]
-                        st.session_state["last_name"] = student["last_name"]
-                        st.session_state["scholar_id"] = student["scholar_id"]
-                        st.session_state["candidate_name"] = student["first_name"]
-                        st.session_state["history"] = load_student_attempts(student["id"])
-                        st.session_state["resume_details"] = None
-                        st.success(f"Welcome back, {student['first_name']}!")
-                        st.rerun()
+                if login_submitted:
+                    normalized_email = login_email.strip().lower()
+                    if not is_valid_iper_email(normalized_email):
+                        st.error("Please use your official @iper.ac.in email ID.")
+                    elif not login_password:
+                        st.error("Please enter your password.")
                     else:
-                        st.error("Invalid email ID or password.")
+                        student = authenticate_student(normalized_email, login_password)
+                        if student:
+                            st.session_state["authenticated"] = True
+                            st.session_state["student_id"] = student["id"]
+                            st.session_state["student_email"] = student["email"]
+                            st.session_state["first_name"] = student["first_name"]
+                            st.session_state["last_name"] = student["last_name"]
+                            st.session_state["scholar_id"] = student["scholar_id"]
+                            st.session_state["candidate_name"] = student["first_name"]
+                            st.session_state["history"] = load_student_attempts(student["id"])
+                            st.session_state["resume_details"] = None
+                            st.success(f"Welcome back, {student['first_name']}!")
+                            st.rerun()
+                        else:
+                            st.error("Invalid email ID or password.")
 
-        with reset_tab:
-            st.markdown('<div class="auth-kicker">Use your registered official email ID and Scholar ID to set a new password.</div>', unsafe_allow_html=True)
-            with st.form("student_password_reset_form"):
-                reset_email = st.text_input("Registered Email ID", placeholder="yourname@iper.ac.in")
-                reset_scholar_id = st.text_input("Scholar ID")
-                reset_new_password = st.text_input("New Password", type="password")
-                reset_confirm_password = st.text_input("Confirm New Password", type="password")
-                reset_submitted = st.form_submit_button("Reset Password", use_container_width=True)
+            with reset_tab:
+                st.markdown('<div class="auth-kicker">Use your registered official email ID and Scholar ID to set a new password.</div>', unsafe_allow_html=True)
+                with st.form("student_password_reset_form"):
+                    reset_email = st.text_input("Registered Email ID", placeholder="yourname@iper.ac.in")
+                    reset_scholar_id = st.text_input("Scholar ID")
+                    reset_new_password = st.text_input("New Password", type="password")
+                    reset_confirm_password = st.text_input("Confirm New Password", type="password")
+                    reset_submitted = st.form_submit_button("Reset Password", use_container_width=True)
 
-            if reset_submitted:
-                normalized_reset_email = reset_email.strip().lower()
-                if not is_valid_iper_email(normalized_reset_email):
-                    st.error("Please use your official @iper.ac.in email ID.")
-                elif not reset_scholar_id.strip():
-                    st.error("Please enter your Scholar ID.")
-                elif len(reset_new_password) < 8:
-                    st.error("New password must contain at least 8 characters.")
-                elif reset_new_password != reset_confirm_password:
-                    st.error("New Password and Confirm New Password do not match.")
-                else:
-                    try:
-                        ok, message = reset_student_password(
-                            normalized_reset_email, reset_scholar_id, reset_new_password
+                if reset_submitted:
+                    normalized_reset_email = reset_email.strip().lower()
+                    if not is_valid_iper_email(normalized_reset_email):
+                        st.error("Please use your official @iper.ac.in email ID.")
+                    elif not reset_scholar_id.strip():
+                        st.error("Please enter your Scholar ID.")
+                    elif len(reset_new_password) < 8:
+                        st.error("New password must contain at least 8 characters.")
+                    elif reset_new_password != reset_confirm_password:
+                        st.error("New Password and Confirm New Password do not match.")
+                    else:
+                        try:
+                            ok, message = reset_student_password(
+                                normalized_reset_email, reset_scholar_id, reset_new_password
+                            )
+                            if ok:
+                                st.success(message)
+                                st.info("Please return to the Student Sign In tab and use your new password.")
+                            else:
+                                st.error(message)
+                        except Exception as exc:
+                            st.error(f"Password reset could not be completed: {exc}")
+
+            with signup_tab:
+                st.markdown('<div class="auth-kicker">Registration is limited to official @iper.ac.in email IDs.</div>', unsafe_allow_html=True)
+                with st.form("student_signup_form"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        first_name = st.text_input("First Name")
+                        scholar_id = st.text_input("Scholar ID")
+                        email = st.text_input("Email ID", placeholder="yourname@iper.ac.in")
+                    with col2:
+                        last_name = st.text_input("Last Name")
+                        create_password = st.text_input("Create Password", type="password")
+                        confirm_password = st.text_input("Confirm Password", type="password")
+
+                    signup_submitted = st.form_submit_button("Create Student Account", use_container_width=True)
+
+                if signup_submitted:
+                    normalized_email = email.strip().lower()
+                    if not first_name.strip() or not last_name.strip():
+                        st.error("Please enter both First Name and Last Name.")
+                    elif not scholar_id.strip():
+                        st.error("Please enter your Scholar ID.")
+                    elif not is_valid_iper_email(normalized_email):
+                        st.error("Registration is restricted to official @iper.ac.in email IDs. Personal email IDs are not allowed.")
+                    elif len(create_password) < 8:
+                        st.error("Password must contain at least 8 characters.")
+                    elif create_password != confirm_password:
+                        st.error("Create Password and Confirm Password do not match.")
+                    else:
+                        ok, message = create_student(
+                            first_name, last_name, scholar_id, normalized_email, create_password
                         )
                         if ok:
                             st.success(message)
-                            st.info("Please return to the Student Sign In tab and use your new password.")
+                            st.info("Please open the Student Sign In tab and log in with your @iper.ac.in email ID.")
                         else:
                             st.error(message)
-                    except Exception as exc:
-                        st.error(f"Password reset could not be completed: {exc}")
 
-        with signup_tab:
-            st.markdown('<div class="auth-kicker">Registration is limited to official @iper.ac.in email IDs.</div>', unsafe_allow_html=True)
-            with st.form("student_signup_form"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    first_name = st.text_input("First Name")
-                    scholar_id = st.text_input("Scholar ID")
-                    email = st.text_input("Email ID", placeholder="yourname@iper.ac.in")
-                with col2:
-                    last_name = st.text_input("Last Name")
-                    create_password = st.text_input("Create Password", type="password")
-                    confirm_password = st.text_input("Confirm Password", type="password")
-
-                signup_submitted = st.form_submit_button("Create Student Account", use_container_width=True)
-
-            if signup_submitted:
-                normalized_email = email.strip().lower()
-                if not first_name.strip() or not last_name.strip():
-                    st.error("Please enter both First Name and Last Name.")
-                elif not scholar_id.strip():
-                    st.error("Please enter your Scholar ID.")
-                elif not is_valid_iper_email(normalized_email):
-                    st.error("Registration is restricted to official @iper.ac.in email IDs. Personal email IDs are not allowed.")
-                elif len(create_password) < 8:
-                    st.error("Password must contain at least 8 characters.")
-                elif create_password != confirm_password:
-                    st.error("Create Password and Confirm Password do not match.")
-                else:
-                    ok, message = create_student(
-                        first_name, last_name, scholar_id, normalized_email, create_password
-                    )
-                    if ok:
-                        st.success(message)
-                        st.info("Please open the Student Sign In tab and log in with your @iper.ac.in email ID.")
-                    else:
-                        st.error(message)
-
-        st.markdown('<div class="auth-footer">IPER Student Placement & Career Readiness Portal</div></div>', unsafe_allow_html=True)
+            st.markdown('<div class="auth-footer">IPER Student Placement & Career Readiness Portal</div></div>', unsafe_allow_html=True)
 
 
 init_database()
