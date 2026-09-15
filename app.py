@@ -1745,7 +1745,7 @@ def render_authentication_panel():
 
             /* Style the Streamlit bordered container as one unified card. */
             div[data-testid="stVerticalBlockBorderWrapper"] {
-                max-width: 1040px;
+                max-width: 1120px;
                 margin: 0 auto !important;
                 border: 1px solid #E2E8F0 !important;
                 border-radius: 18px !important;
@@ -1754,8 +1754,8 @@ def render_authentication_panel():
                 overflow: visible !important;
             }
             .auth-info {
-                min-height: 560px;
-                padding: 28px 30px;
+                min-height: 500px;
+                padding: 24px 28px;
                 border-radius: 12px;
                 background: #433B86;
                 color: #FFFFFF;
@@ -1766,9 +1766,9 @@ def render_authentication_panel():
             }
             .auth-logo-wrap {
                 width: 100%;
-                max-width: 235px;
-                margin: 0 auto 22px auto;
-                padding: 8px 8px 6px 8px;
+                max-width: 185px;
+                margin: 0 auto 18px auto;
+                padding: 7px 7px 5px 7px;
                 background: #FFFFFF;
                 border-radius: 12px;
                 box-sizing: border-box;
@@ -1786,21 +1786,21 @@ def render_authentication_panel():
             }
             .auth-info h2 {
                 color: #FFFFFF !important;
-                font-size: 27px !important;
+                font-size: 24px !important;
                 line-height: 1.14 !important;
-                margin: 12px 0 10px 0 !important;
+                margin: 10px 0 8px 0 !important;
                 font-weight: 800 !important;
                 letter-spacing: -0.6px;
             }
             .auth-info p {
                 color: #CBD5E1 !important;
-                font-size: 14px !important;
-                line-height: 1.65 !important;
+                font-size: 13px !important;
+                line-height: 1.55 !important;
                 margin: 0 !important;
             }
             .auth-info-footer {
-                margin-top: 28px;
-                padding-top: 20px;
+                margin-top: 20px;
+                padding-top: 16px;
                 border-top: 1px solid rgba(255,255,255,.16);
             }
             .auth-info-footer strong {
@@ -1816,12 +1816,12 @@ def render_authentication_panel():
             }
 
             .auth-form {
-                padding: 20px 34px 18px 22px;
+                padding: 18px 30px 18px 18px;
             }
             .auth-form h2 {
                 color: #0F172A !important;
-                font-size: 25px !important;
-                margin: 0 0 5px 0 !important;
+                font-size: 28px !important;
+                margin: 0 0 6px 0 !important;
                 font-weight: 800 !important;
                 letter-spacing: -0.3px;
             }
@@ -1829,7 +1829,7 @@ def render_authentication_panel():
                 color: #64748B;
                 font-size: 13px;
                 line-height: 1.5;
-                margin-bottom: 20px;
+                margin-bottom: 16px;
             }
             .auth-form [data-testid="stForm"] {
                 border: 0 !important;
@@ -1872,10 +1872,10 @@ def render_authentication_panel():
                 margin-bottom: 20px;
             }
             .auth-form [data-baseweb="tab"] {
-                padding: 9px 11px !important;
+                padding: 8px 10px !important;
                 color: #64748B !important;
                 font-size: 12px !important;
-                font-weight: 600 !important;
+                font-weight: 650 !important;
             }
             .auth-form [aria-selected="true"] {
                 color: #0F172A !important;
@@ -1901,8 +1901,8 @@ def render_authentication_panel():
                     margin: 0 8px !important;
                     border-radius: 14px !important;
                 }
-                .auth-info { min-height: auto; padding: 30px 28px; }
-                .auth-logo-wrap { max-width: 220px; }
+                .auth-info { min-height: auto; padding: 28px 24px; }
+                .auth-logo-wrap { max-width: 185px; }
                 .auth-form { padding: 24px 28px; }
                 .auth-info h2 { font-size: 26px !important; }
             }
