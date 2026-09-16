@@ -624,10 +624,24 @@ except ImportError:
     PostgresIntegrityError = Exception
     POSTGRES_AVAILABLE = False
 
+# Persistent production account storage.
+# Configure DATABASE_URL (or POSTGRES_URL) in Streamlit Secrets.
+# Hosted Streamlit containers should not be used as permanent SQLite storage.
 DATABASE_PATH = os.getenv("DATABASE_PATH", "students.db")
-DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
-if not DATABASE_URL and "DATABASE_URL" in st.secrets:
-    DATABASE_URL = str(st.secrets["DATABASE_URL"]).strip()
+DATABASE_URL = (
+    os.getenv("DATABASE_URL", "").strip()
+    or os.getenv("POSTGRES_URL", "").strip()
+)
+if not DATABASE_URL:
+    try:
+        DATABASE_URL = str(st.secrets.get("DATABASE_URL", "") or "").strip()
+    except Exception:
+        DATABASE_URL = ""
+if not DATABASE_URL:
+    try:
+        DATABASE_URL = str(st.secrets.get("POSTGRES_URL", "") or "").strip()
+    except Exception:
+        pass
 
 ALLOWED_EMAIL_DOMAIN = "@iper.ac.in"
 USING_POSTGRES = bool(DATABASE_URL)
@@ -972,11 +986,19 @@ def save_student_attempt(student_id, domain, score, mode, question):
         conn.close()
 
 
-# Show a clear deployment warning rather than silently using an ephemeral DB.
 def database_status_message():
     if DATABASE_URL:
         return "Persistent student database: PostgreSQL"
-    return "Local student database: SQLite (use DATABASE_URL in production for persistent accounts)"
+    return "WARNING: Local SQLite storage is active. Configure DATABASE_URL in Streamlit Secrets for permanent student accounts."
+
+def require_persistent_database_for_production():
+    if not DATABASE_URL:
+        st.warning(
+            "Student accounts are currently stored in local SQLite storage. "
+            "On a hosted deployment, this storage may disappear after a restart or rebuild. "
+            "Add a persistent PostgreSQL DATABASE_URL to Streamlit Secrets and redeploy "
+            "so students create their account only once."
+        )
 
 
 def migrate_local_sqlite_to_postgres():
@@ -2059,6 +2081,9 @@ def render_authentication_panel():
 
 init_database()
 migrate_local_sqlite_to_postgres()
+
+if not DATABASE_URL:
+    require_persistent_database_for_production()
 
 FFMPEG_PATH = shutil.which("ffmpeg")
 
