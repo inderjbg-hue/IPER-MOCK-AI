@@ -2152,119 +2152,410 @@ else:
 # SECTION 0: INDUSTRY & COMPANY INSIGHTS
 if selected_nav == "Industry & Company Insights":
     st.title("Industry & Company Insights")
-    st.caption("Explore India's major industries and companies documented in IPER's placement ecosystem — and prepare for the sectors you may encounter during campus recruitment.")
+    st.caption("Explore sectors in India and the companies documented in IPER's 2025–26 placement ecosystem. Use the information here to prepare for roles, interviews and campus recruitment.")
 
     st.markdown("""
-    <div style="background:linear-gradient(135deg,#433B86,#1E3A8A);padding:24px 28px;border-radius:14px;color:white;margin:10px 0 22px 0;">
+    <div style="background:linear-gradient(135deg,#433B86,#1E3A8A);padding:26px 30px;border-radius:14px;color:white;margin:10px 0 22px 0;">
       <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;opacity:.85;font-weight:700;">IPER Career Intelligence</div>
-      <div style="font-size:30px;font-weight:800;margin-top:5px;">Know the Industry. Know the Company. Know the Role.</div>
-      <div style="font-size:15px;margin-top:8px;opacity:.92;max-width:850px;">Use this section to understand where IPER recruiters operate, what business they are in, and which MBA capabilities are relevant to each sector.</div>
+      <div style="font-size:30px;font-weight:800;margin-top:5px;">Know the Sector. Know the Company. Know the Role.</div>
+      <div style="font-size:15px;margin-top:8px;opacity:.94;max-width:900px;">Understand India's business sectors, explore companies appearing in IPER's published 2025–26 recruiter list, and identify the knowledge and skills to prepare before a placement drive.</div>
     </div>
     """, unsafe_allow_html=True)
 
-    INDUSTRY_INSIGHTS = {
+    # IBEF reference pages used for sector-level learning. The portal contains
+    # original student-oriented summaries; it does not reproduce IBEF articles.
+    IBEF_SECTOR_URLS = {
+        "Banking & Financial Services": "https://www.ibef.org/industry/banking-india",
+        "Insurance": "https://www.ibef.org/industry/insurance-presentation",
+        "Financial Services": "https://www.ibef.org/industry/financial-services-presentation",
+        "FMCG & Food": "https://www.ibef.org/industry/fmcg-presentation",
+        "Paints & Building Materials": "https://www.ibef.org/industry/paints-india",
+        "Consumer Durables & Electricals": "https://www.ibef.org/industry/consumer-durables-presentation",
+        "Technology & IT Services": "https://www.ibef.org/industry/information-technology-india",
+        "EdTech & Education": "https://www.ibef.org/industry/education-presentation",
+        "Telecom & Digital Services": "https://www.ibef.org/industry/telecommunications",
+        "Automotive & Mobility": "https://www.ibef.org/industry/automobiles-presentation",
+        "Manufacturing & Engineering": "https://www.ibef.org/industry/manufacturing-sector-india",
+        "Textiles": "https://www.ibef.org/industry/textiles",
+        "Hospitality & Tourism": "https://www.ibef.org/industry/tourism-hospitality-india",
+        "Media & Entertainment": "https://www.ibef.org/industry/media-entertainment-india",
+        "Retail & E-commerce": "https://www.ibef.org/industry/retail-india",
+        "Real Estate & Housing Finance": "https://www.ibef.org/industry/real-estate-india",
+        "Renewable Energy": "https://www.ibef.org/industry/renewable-energy",
+        "HR & Recruitment Services": "https://www.ibef.org/industry/services",
+        "Business & Professional Services": "https://www.ibef.org/industry/services",
+        "Diversified / Conglomerate": "https://www.ibef.org/index.php/industry.aspx",
+    }
+
+    SECTOR_INFO = {
         "Banking & Financial Services": {
-            "summary": "Banking, lending, insurance, securities and other financial services form a major part of India's services economy and are closely aligned with MBA careers in finance, sales, operations and HR.",
-            "companies": ["HDFC Bank", "ICICI Bank", "Axis Bank", "Bandhan Bank", "ICICI Securities", "Mahindra Finance"],
-            "roles": "Relationship Manager • Credit & Risk • Sales • Financial Analysis • Operations • HR",
-            "skills": "Financial literacy • Excel • Communication • Customer handling • Sales orientation • Analytical thinking",
-            "prep": "Understand RBI, banking products, KYC, credit, digital banking, financial inclusion and basic financial statements."
+            "about": "Banks and financial institutions provide deposits, lending, payments, investment and related financial services. MBA roles commonly span relationship management, sales, credit, operations, analytics and HR.",
+            "roles": "Relationship Management • Credit & Risk • Sales • Financial Analysis • Operations • HR",
+            "skills": "Financial literacy • Excel • Communication • Customer handling • Analytical thinking • Sales orientation",
+            "prepare": "RBI basics, banking products, KYC, credit, digital banking, financial inclusion and basic financial statements."
         },
-        "FMCG & Consumer": {
-            "summary": "FMCG and consumer businesses operate around high-volume products, distribution, branding, pricing and customer behaviour. They are especially relevant to marketing and sales-oriented MBA roles.",
-            "companies": ["Amul", "ITC", "Nestlé India"],
+        "Insurance": {
+            "about": "Insurance businesses manage risk through life and general insurance products, distribution networks, customer servicing and claims-related processes.",
+            "roles": "Agency/Channel Sales • Relationship Management • Underwriting Support • Operations • Customer Service • HR",
+            "skills": "Communication • Financial literacy • Relationship management • Compliance awareness • Data interpretation",
+            "prepare": "Life-insurance concepts, risk pooling, premiums, policy servicing, distribution, bancassurance and customer needs."
+        },
+        "Financial Services": {
+            "about": "Financial-services companies support investing, securities, wealth, lending and other capital-market activities.",
+            "roles": "Wealth Management • Broking • Research Support • Sales • Operations • Client Servicing",
+            "skills": "Financial markets • Excel • Analytical thinking • Communication • Client management",
+            "prepare": "Equity/debt markets, mutual funds, risk-return, basic valuation, investor behaviour and financial regulation."
+        },
+        "FMCG & Food": {
+            "about": "FMCG and food companies compete through brands, distribution, pricing, product quality and consumer understanding, creating strong opportunities in sales and marketing.",
             "roles": "Brand Management • Sales • Trade Marketing • Distribution • Category Management • HR",
-            "skills": "Consumer insight • Market research • Communication • Negotiation • Channel management • Data interpretation",
-            "prep": "Know consumer behaviour, 4Ps/7Ps, distribution channels, brand positioning, rural markets, e-commerce and changing consumption patterns."
+            "skills": "Consumer insight • Market research • Negotiation • Channel management • Data interpretation",
+            "prepare": "4Ps/7Ps, consumer behaviour, brand positioning, distribution, rural markets, category management and e-commerce."
         },
         "Paints & Building Materials": {
-            "summary": "The paints and building-materials ecosystem connects manufacturing with distribution, dealer networks, construction activity and consumer demand.",
-            "companies": ["Asian Paints", "Berger Paints"],
+            "about": "This sector connects manufacturing with dealer networks, construction demand, distribution, product innovation and consumer-facing brands.",
             "roles": "Sales • Marketing • Dealer Management • Supply Chain • Finance • HR",
-            "skills": "Channel sales • Relationship management • Territory planning • Market analysis • Negotiation",
-            "prep": "Study dealer/distributor economics, B2B and B2C selling, construction demand, product positioning and territory management."
+            "skills": "Channel sales • Territory planning • Relationship management • Negotiation • Market analysis",
+            "prepare": "Dealer/distributor economics, B2B/B2C selling, construction demand, territory management and product positioning."
         },
-        "Telecom & Digital": {
-            "summary": "Telecommunications combines network infrastructure with digital services, customer acquisition, retention and technology-led business models.",
-            "companies": ["Airtel"],
+        "Consumer Durables & Electricals": {
+            "about": "Consumer-durable and electrical businesses combine product development, manufacturing, distribution, retail and customer service.",
+            "roles": "Product Marketing • Sales • Distribution • Supply Chain • Category Management • Finance",
+            "skills": "Product knowledge • Channel management • Consumer insight • Analytics • Negotiation",
+            "prepare": "Product positioning, distribution, channel margins, consumer demand, retail and after-sales service."
+        },
+        "Technology & IT Services": {
+            "about": "India's technology sector includes IT services, software, analytics, digital platforms and technology-enabled business processes.",
+            "roles": "Business Development • Product • Analytics • Customer Success • Consulting Support • HR",
+            "skills": "Digital fluency • Data literacy • Problem solving • Presentation • Adaptability",
+            "prepare": "AI, cloud, analytics, cybersecurity, SaaS, digital transformation and technology-driven business models."
+        },
+        "EdTech & Education": {
+            "about": "Education and EdTech organisations deliver learning through institutions, digital platforms, content, counselling and technology-enabled services.",
+            "roles": "Business Development • Academic Operations • Sales • Customer Success • Marketing • HR",
+            "skills": "Communication • Consultative selling • Presentation • Customer handling • Digital literacy",
+            "prepare": "Education business models, learner journeys, B2C/B2B sales, digital learning, customer acquisition and retention."
+        },
+        "Telecom & Digital Services": {
+            "about": "Telecom and digital-service businesses combine connectivity, customer acquisition, network-led services and digital products.",
             "roles": "Sales • Product • Digital Marketing • Customer Experience • Business Analytics • HR",
             "skills": "Digital literacy • Customer analytics • Communication • Product thinking • Data interpretation",
-            "prep": "Understand telecom business models, ARPU, customer acquisition and retention, digital services, 5G and competitive dynamics."
+            "prepare": "5G, ARPU, customer acquisition/retention, digital services, network economics and competitive dynamics."
         },
-        "Technology & Digital Services": {
-            "summary": "India's technology ecosystem spans IT services, software, digital platforms, analytics and technology-enabled business services.",
-            "companies": ["BYJU'S", "PhonePe", "Paytm", "S&P Global"],
-            "roles": "Business Development • Product • Analytics • Sales • Customer Success • HR",
-            "skills": "Digital fluency • Data literacy • Problem solving • Presentation • Adaptability",
-            "prep": "Follow AI, fintech, digital payments, SaaS, analytics, cybersecurity and technology-driven changes in business models."
+        "Automotive & Mobility": {
+            "about": "Automotive and mobility businesses span vehicles, components, tyres, dealerships, finance, after-sales and increasingly EV ecosystems.",
+            "roles": "Sales • Marketing • Dealer Management • Operations • Supply Chain • Finance",
+            "skills": "Process thinking • Supply chain basics • Cost awareness • Customer orientation • Data analysis",
+            "prepare": "EV transition, auto supply chains, dealer economics, mobility trends, inventory, quality and customer experience."
         },
-        "Automobiles & Manufacturing": {
-            "summary": "Automobiles and manufacturing combine production, supply chains, distribution, engineering, quality and increasingly digital and EV capabilities.",
-            "companies": ["MRF Ltd", "Mahindra Finance", "Vardhman Textiles Ltd"],
-            "roles": "Operations • Supply Chain • Procurement • Sales • Marketing • Finance • HR",
-            "skills": "Process thinking • Supply chain basics • Cost awareness • Quality mindset • Data analysis",
-            "prep": "Understand manufacturing, supply chains, capacity, quality, inventory, EV transition, exports and Industry 4.0."
+        "Manufacturing & Engineering": {
+            "about": "Manufacturing and engineering companies convert materials and technology into industrial, consumer or infrastructure products and services.",
+            "roles": "Operations • Supply Chain • Procurement • Sales • Project Management • Finance",
+            "skills": "Process thinking • Costing • Quality • Supply chain • Excel/data analysis • Problem solving",
+            "prepare": "Capacity, quality, inventory, procurement, Industry 4.0, automation, productivity and cost management."
         },
-        "Retail & Consumer Services": {
-            "summary": "Retail combines merchandising, customer experience, store operations, omnichannel commerce and supply-chain execution.",
-            "companies": ["Bata India Ltd", "Vivo"],
-            "roles": "Retail Operations • Sales • Category Management • Marketing • Customer Experience • HR",
-            "skills": "Customer orientation • Sales • Merchandising • Communication • Retail analytics",
-            "prep": "Study omnichannel retail, customer experience, merchandising, inventory, e-commerce, quick commerce and store economics."
+        "Textiles": {
+            "about": "Textiles covers fibre, yarn, fabric, apparel and related value chains, with management opportunities across manufacturing, merchandising, sourcing and sales.",
+            "roles": "Merchandising • Sales • Operations • Supply Chain • Procurement • HR",
+            "skills": "Cost awareness • Supply chain • Negotiation • Quality • Market understanding",
+            "prepare": "Textile value chains, exports, sourcing, production planning, sustainability and fashion/consumer demand."
         },
-        "Media & Communications": {
-            "summary": "Media and communications businesses operate across publishing, broadcasting, digital content, advertising and audience engagement.",
-            "companies": ["Times Group"],
-            "roles": "Media Sales • Marketing • Advertising • Business Development • HR",
+        "Hospitality & Tourism": {
+            "about": "Hospitality businesses combine accommodation, food service, guest experience, sales and revenue management.",
+            "roles": "Sales • Revenue Management • Guest Experience • Operations • Marketing • HR",
+            "skills": "Communication • Service orientation • Problem solving • Sales • Customer experience",
+            "prepare": "Service quality, occupancy, yield/revenue management, customer experience, digital bookings and tourism demand."
+        },
+        "Media & Entertainment": {
+            "about": "Media businesses operate across publishing, news, advertising, digital content, audience engagement and entertainment.",
+            "roles": "Media Sales • Marketing • Advertising • Business Development • Content Operations • HR",
             "skills": "Storytelling • Sales • Presentation • Digital marketing • Audience understanding",
-            "prep": "Understand advertising models, digital media, audience metrics, content monetisation and changing consumer attention."
+            "prepare": "Advertising models, audience metrics, digital media, content monetisation and changing consumer attention."
+        },
+        "Retail & E-commerce": {
+            "about": "Retail combines merchandising, stores, customer experience, omnichannel commerce, pricing and supply-chain execution.",
+            "roles": "Retail Operations • Sales • Category Management • Marketing • Customer Experience • Supply Chain",
+            "skills": "Customer orientation • Sales • Merchandising • Retail analytics • Inventory management",
+            "prepare": "Omnichannel retail, customer experience, merchandising, inventory, e-commerce, quick commerce and store economics."
+        },
+        "Real Estate & Housing Finance": {
+            "about": "Real-estate and housing-finance businesses connect property development, home finance, customer acquisition, sales and project economics.",
+            "roles": "Sales • Relationship Management • Project Support • Credit • Marketing • Customer Service",
+            "skills": "Financial literacy • Sales • Negotiation • Customer handling • Market analysis",
+            "prepare": "Home loans, property markets, credit basics, customer acquisition, project economics and regulatory awareness."
+        },
+        "Renewable Energy": {
+            "about": "Renewable-energy businesses develop and deploy solar and other clean-energy solutions, creating opportunities across sales, project management and operations.",
+            "roles": "Business Development • Project Management • Sales • Operations • Procurement • Finance",
+            "skills": "Commercial awareness • Project thinking • Data analysis • Negotiation • Sustainability literacy",
+            "prepare": "Solar economics, project lifecycle, energy transition, procurement, financing and sustainability."
+        },
+        "HR & Recruitment Services": {
+            "about": "Recruitment and staffing businesses connect employers with talent and manage sourcing, screening, staffing and workforce solutions.",
+            "roles": "Recruitment • Business Development • Client Servicing • Operations • Talent Acquisition",
+            "skills": "Communication • Sourcing • Interviewing • CRM • Relationship management",
+            "prepare": "Talent acquisition, staffing models, recruitment metrics, client management and candidate experience."
+        },
+        "Business & Professional Services": {
+            "about": "Professional-services firms provide specialised business, consulting, technology, staffing or operational services to organisations.",
+            "roles": "Consulting Support • Business Development • Client Servicing • Operations • Analytics • HR",
+            "skills": "Problem solving • Communication • Excel • Presentation • Client management",
+            "prepare": "Understand the firm's service model, target clients, value proposition, delivery process and role-specific KPIs."
+        },
+        "Diversified / Conglomerate": {
+            "about": "Diversified groups operate across multiple business lines, giving MBA students exposure to different functions, markets and operating models.",
+            "roles": "Marketing • Finance • HR • Operations • Business Development • Corporate Functions",
+            "skills": "Business awareness • Analytical thinking • Communication • Adaptability • Cross-functional understanding",
+            "prepare": "Research the specific business division, role, competitors, customers and current business priorities mentioned in the placement JD."
         },
     }
 
-    st.markdown("### Explore an Industry")
-    selected_industry = st.selectbox("Select Industry / Sector", list(INDUSTRY_INSIGHTS.keys()))
-    data = INDUSTRY_INSIGHTS[selected_industry]
-
-    c1, c2 = st.columns([1.55, 1])
-    with c1:
-        st.markdown(f"#### {selected_industry}")
-        st.write(data["summary"])
-        st.markdown("**Typical MBA Roles**")
-        st.info(data["roles"])
-        st.markdown("**Skills to Build**")
-        st.info(data["skills"])
-        st.markdown("**What to Prepare for Interviews**")
-        st.write(data["prep"])
-    with c2:
-        st.markdown("#### Companies documented by IPER")
-        for company in data["companies"]:
-            st.markdown(f"<div style='padding:11px 14px;margin:7px 0;border:1px solid #E2E8F0;border-radius:9px;background:#F8FAFC;font-weight:700;color:#0F172A;'>{company}</div>", unsafe_allow_html=True)
-
-    st.markdown("---")
-    st.markdown("### IPER Recruitment Ecosystem")
-    st.caption("The companies below are drawn from IPER's published placement/recruiter information. Their appearance here indicates that IPER has documented them in its placement ecosystem; it does not imply that every company recruits in every academic year.")
-    iper_companies = [
-        ("Amul", "FMCG / Dairy"), ("BYJU'S", "Education / Technology"), ("Times Group", "Media"),
-        ("ICICI Bank", "Banking"), ("HDFC Bank", "Banking"), ("Airtel", "Telecom"),
-        ("Vivo", "Consumer Electronics"), ("S&P Global", "Financial Information / Analytics"),
-        ("PhonePe", "Fintech / Digital Payments"), ("Paytm", "Fintech / Digital Services"),
-        ("MRF Ltd", "Tyres / Manufacturing"), ("Bata India Ltd", "Retail / Footwear"),
-        ("Bandhan Bank", "Banking"), ("Mahindra Finance", "Financial Services"), ("ITC", "FMCG / Diversified"),
-        ("Berger Paints", "Paints / Building Materials"), ("Vardhman Textiles Ltd", "Textiles / Manufacturing"),
-        ("ICICI Securities", "Financial Services / Securities"), ("Asian Paints", "Paints / Building Materials"),
-        ("Nestlé India", "FMCG / Food"), ("Axis Bank", "Banking")
+    # Complete recruiter list shown in IPER's 2025–26 placement graphic.
+    # Source: IPER Placements 2026 page, image "Cos-at-IPER-2025-26.png".
+    IPER_2026_COMPANIES = [
+        (1, "Axis Bank Ltd.", "Banking & Financial Services"),
+        (2, "Bajaj Life Insurance Ltd.", "Insurance"),
+        (3, "DCB Bank Ltd.", "Banking & Financial Services"),
+        (4, "HDFC Life Insurance Co. Ltd.", "Insurance"),
+        (5, "HDFC Life Insurance Co. Ltd. (HR)", "Insurance"),
+        (6, "ICICI Prudential Life Insurance Co. Ltd. (Gujarat)", "Insurance"),
+        (7, "ICICI Prudential Life Insurance Co. Ltd. (MP)", "Insurance"),
+        (8, "ICICI Prudential Life Insurance Co. Ltd. (Rajasthan)", "Insurance"),
+        (9, "Teleperformance India Pvt. Ltd.", "Business & Professional Services"),
+        (10, "Asian Paints", "Paints & Building Materials"),
+        (11, "Berger Paints India Ltd.", "Paints & Building Materials"),
+        (12, "Ceasefire Industries Pvt. Ltd.", "Manufacturing & Engineering"),
+        (13, "Home First Finance Co. India Ltd.", "Real Estate & Housing Finance"),
+        (14, "KMV Ventures Pvt. Ltd.", "Business & Professional Services"),
+        (15, "Havells India Ltd.", "Consumer Durables & Electricals"),
+        (16, "Indigo Paints Ltd.", "Paints & Building Materials"),
+        (17, "Methodex Systems Pvt. Ltd.", "Manufacturing & Engineering"),
+        (18, "The-H Digital Solutions Pvt. Ltd.", "Technology & IT Services"),
+        (19, "IndiaMART InterMESH Ltd.", "Technology & IT Services"),
+        (20, "CarWale (CarTrade Tech Ltd.)", "Technology & IT Services"),
+        (21, "Yash Technologies Pvt. Ltd.", "Technology & IT Services"),
+        (22, "AISECT Ltd.", "EdTech & Education"),
+        (23, "Bhanzu", "EdTech & Education"),
+        (24, "Edukyu Pvt. Ltd.", "EdTech & Education"),
+        (25, "Trounsoler Ed-Tech Services Pvt. Ltd.", "EdTech & Education"),
+        (26, "Jaro Education", "EdTech & Education"),
+        (27, "Learning Shala", "EdTech & Education"),
+        (28, "PlanetSpark", "EdTech & Education"),
+        (29, "Bajaj Life Insurance Ltd. (additional source entry)", "Insurance"),
+        (30, "PREPOCA (Limeam Eduserver)", "EdTech & Education"),
+        (31, "Step UP Academy", "EdTech & Education"),
+        (32, "Sygnific Careers Pvt. Ltd.", "HR & Recruitment Services"),
+        (33, "Tata ClassEdge Ltd.", "EdTech & Education"),
+        (34, "Toprankers Edtech Solutions Pvt. Ltd.", "EdTech & Education"),
+        (35, "Info India Ltd. (Naukri.com)", "Technology & IT Services"),
+        (36, "Eastman Auto", "Automotive & Mobility"),
+        (37, "XL Dynamics India Pvt. Ltd.", "Financial Services"),
+        (38, "Gujarat Cooperative Milk Marketing Federation Ltd. (Amul)", "FMCG & Food"),
+        (39, "Haleon Plc", "FMCG & Food"),
+        (40, "Himalaya Wellness Co.", "FMCG & Food"),
+        (41, "Majestic Basmati Rice Pvt. Ltd.", "FMCG & Food"),
+        (42, "Mahindra Holidays & Resorts India Ltd.", "Hospitality & Tourism"),
+        (43, "Marriott International India", "Hospitality & Tourism"),
+        (44, "Artech Infosystems Pvt. Ltd.", "HR & Recruitment Services"),
+        (45, "Collabera Services Pvt. Ltd.", "HR & Recruitment Services"),
+        (46, "Futur Staffing Solutions Pvt. Ltd.", "HR & Recruitment Services"),
+        (47, "Sarthee Consultancy", "HR & Recruitment Services"),
+        (48, "American Chase", "HR & Recruitment Services"),
+        (49, "Anaxee Digital Runners Pvt. Ltd.", "Business & Professional Services"),
+        (50, "Cogent Infotech", "Technology & IT Services"),
+        (51, "Netlink Software Pvt. Ltd.", "Technology & IT Services"),
+        (52, "Tata Consultancy Services Ltd.", "Technology & IT Services"),
+        (53, "Yash Technologies Pvt. Ltd. (additional source entry)", "Technology & IT Services"),
+        (54, "Toprankers Edtech Solutions Pvt. Ltd. (additional source entry)", "EdTech & Education"),
+        (55, "KMV Ventures Pvt. Ltd. (additional source entry)", "Business & Professional Services"),
+        (56, "Bajaj Life Insurance Ltd. (additional source entry)", "Insurance"),
+        (57, "Bhaskar Industries Pvt. Ltd.", "Manufacturing & Engineering"),
+        (58, "Impression Furniture Industries Pvt. Ltd.", "Manufacturing & Engineering"),
+        (59, "Impression Furniture Industries Pvt. Ltd. (additional source entry)", "Manufacturing & Engineering"),
+        (60, "Motilal Oswal", "Financial Services"),
+        (61, "MPM Ltd.", "Manufacturing & Engineering"),
+        (62, "Shakesteller Energy Solutions Pvt. Ltd.", "Renewable Energy"),
+        (63, "Trident Group", "Textiles"),
+        (64, "DB Corp Ltd. (Dainik Bhaskar)", "Media & Entertainment"),
+        (65, "The Times Group (Delhi/Mumbai)", "Media & Entertainment"),
+        (66, "The Times Group (Vadodara)", "Media & Entertainment"),
+        (67, "Aditya Capital Pvt. Ltd.", "Financial Services"),
+        (68, "Bajaj Finserv Ltd.", "Financial Services"),
+        (69, "Bajaj Housing Finance Ltd.", "Real Estate & Housing Finance"),
+        (70, "Home First Finance Co. India Ltd. (additional source entry)", "Real Estate & Housing Finance"),
+        (71, "PlanetSpark (additional source entry)", "EdTech & Education"),
+        (72, "ICICI Securities Ltd.", "Financial Services"),
+        (73, "India Shelter Finance Corporation Ltd.", "Real Estate & Housing Finance"),
+        (74, "Motilal Oswal (additional source entry)", "Financial Services"),
+        (75, "Motilal Oswal (source entry)", "Financial Services"),
+        (76, "NJ India Invest Pvt. Ltd.", "Financial Services"),
+        (77, "Ashiana Housing Ltd.", "Real Estate & Housing Finance"),
+        (78, "Ashiana Housing Ltd. (additional source entry)", "Real Estate & Housing Finance"),
+        (79, "CarWale (CarTrade Tech Ltd.) (additional source entry)", "Technology & IT Services"),
+        (80, "MoneyOne Consulting Pvt. Ltd.", "Financial Services"),
+        (81, "SCG Group", "Business & Professional Services"),
+        (82, "Deloitte Consulting India Pvt. Ltd.", "Business & Professional Services"),
+        (83, "Aditya Birla Lifestyle Brands Ltd.", "Retail & E-commerce"),
+        (84, "Avenue Supermarts (DMart)", "Retail & E-commerce"),
+        (85, "Avenue Supermarts Ltd. (DMart) (additional source entry)", "Retail & E-commerce"),
+        (86, "Bluestone Jewellery & Lifestyle Ltd.", "Retail & E-commerce"),
+        (87, "Pantaloons Fashion & Retail Ltd.", "Retail & E-commerce"),
+        (88, "Parnalan Fashion & Retail Ltd. (Calvin Klein & Tommy Hilfiger)", "Retail & E-commerce"),
+        (89, "SolarSquare Energy Pvt. Ltd.", "Renewable Energy"),
+        (90, "SolarSquare Energy Pvt. Ltd. (additional source entry)", "Renewable Energy"),
     ]
-    search_company = st.text_input("Search IPER recruiter / company", placeholder="e.g. HDFC, Asian Paints, Amul")
-    filtered = [(name, sector) for name, sector in iper_companies if not search_company.strip() or search_company.lower() in name.lower() or search_company.lower() in sector.lower()]
-    cols = st.columns(3)
-    for i, (name, sector) in enumerate(filtered):
-        with cols[i % 3]:
-            st.markdown(f"<div style='border:1px solid #E2E8F0;border-radius:10px;padding:14px;margin:5px 0 10px 0;background:white;min-height:85px;'><div style='font-weight:800;color:#433B86;font-size:16px;'>{name}</div><div style='font-size:12px;color:#64748B;margin-top:5px;'>{sector}</div></div>", unsafe_allow_html=True)
+
+    # Clean display names for repeated source entries while preserving the fact
+    # that IPER's published graphic contains repeated entries/locations.
+    def display_company_name(name):
+        return re.sub(r"\s*\(additional source entry\)$|\s*\(source entry\)$", "", name).strip()
+
+    # Company-level student preparation notes. These are intentionally concise;
+    # sector-level information is referenced to IBEF, while recruiter presence is
+    # sourced from IPER's published placement material.
+    COMPANY_NOTES = {
+        "Axis Bank Ltd.": "Private-sector banking company; prepare banking products, relationship management, credit basics, sales and digital banking.",
+        "DCB Bank Ltd.": "Banking and financial-services employer; prepare retail/corporate banking basics, customer acquisition, credit and operations.",
+        "HDFC Life Insurance Co. Ltd.": "Life-insurance business; prepare insurance products, distribution, relationship management, customer servicing and sales.",
+        "ICICI Prudential Life Insurance Co. Ltd.": "Life-insurance business; focus on insurance concepts, financial planning, customer needs and distribution channels.",
+        "Asian Paints": "Paints and coatings business; focus on brand management, dealer networks, territory sales, consumer insight and distribution.",
+        "Berger Paints India Ltd.": "Paints and coatings business; prepare channel sales, dealer management, marketing, supply chain and consumer demand.",
+        "Havells India Ltd.": "Electrical and consumer-durable business; prepare product marketing, distribution, retail, channel management and customer experience.",
+        "Indigo Paints Ltd.": "Paints and coatings business; focus on branding, dealer/channel management, sales and market expansion.",
+        "IndiaMART InterMESH Ltd.": "B2B digital marketplace; prepare digital business models, B2B sales, lead generation, customer acquisition and retention.",
+        "CarWale (CarTrade Tech Ltd.)": "Digital automotive marketplace; prepare digital marketing, marketplace economics, customer acquisition and automotive retail trends.",
+        "Yash Technologies Pvt. Ltd.": "Technology and digital-services employer; prepare consulting/service delivery, business development, analytics and digital transformation.",
+        "Tata Consultancy Services Ltd.": "Large IT-services and consulting organisation; prepare digital transformation, client management, analytics, consulting and business processes.",
+        "Netlink Software Pvt. Ltd.": "Technology/software-services employer; prepare client delivery, technology-enabled services, analytics and business development.",
+        "Deloitte Consulting India Pvt. Ltd.": "Professional-services and consulting employer; prepare structured problem solving, case thinking, data interpretation and presentation.",
+        "Gujarat Cooperative Milk Marketing Federation Ltd. (Amul)": "FMCG/dairy cooperative and consumer brand; prepare brand management, distribution, rural markets, sales and consumer behaviour.",
+        "Haleon Plc": "Consumer-health business; prepare brand management, consumer insight, sales, category thinking and healthcare-adjacent consumer markets.",
+        "Himalaya Wellness Co.": "Consumer wellness and personal-care business; prepare brand positioning, consumer behaviour, distribution and digital marketing.",
+        "Mahindra Holidays & Resorts India Ltd.": "Hospitality/leisure business; prepare customer experience, membership sales, service quality and revenue management.",
+        "Marriott International India": "Hospitality employer; prepare guest experience, service operations, sales, revenue management and hotel business fundamentals.",
+        "Trident Group": "Diversified textile/home-textile business; prepare manufacturing, exports, supply chain, merchandising, sales and operations.",
+        "DB Corp Ltd. (Dainik Bhaskar)": "Media organisation; prepare advertising sales, audience engagement, digital media, content monetisation and business development.",
+        "The Times Group": "Media and communications group; prepare media sales, advertising, digital content, audience metrics and business development.",
+        "Bajaj Finserv Ltd.": "Diversified financial-services group; prepare lending, insurance, investment, digital finance and customer acquisition.",
+        "Bajaj Housing Finance Ltd.": "Housing-finance business; prepare home loans, credit, customer acquisition, relationship management and financial analysis.",
+        "ICICI Securities Ltd.": "Securities and investment-services business; prepare capital markets, client servicing, wealth/investment products and financial literacy.",
+        "India Shelter Finance Corporation Ltd.": "Housing-finance business; prepare credit, affordable housing, customer acquisition, field sales and financial inclusion.",
+        "NJ India Invest Pvt. Ltd.": "Investment and financial-services business; prepare mutual funds/investment concepts, client servicing, sales and financial planning.",
+        "Ashiana Housing Ltd.": "Real-estate developer; prepare real-estate sales, customer experience, project economics, marketing and relationship management.",
+        "Aditya Birla Lifestyle Brands Ltd.": "Lifestyle and fashion retail business; prepare brand management, merchandising, retail operations, customer experience and omnichannel retail.",
+        "Avenue Supermarts (DMart)": "Large-format value retail business; prepare retail operations, merchandising, inventory, procurement, pricing and customer behaviour.",
+        "Bluestone Jewellery & Lifestyle Ltd.": "Omnichannel jewellery retail business; prepare digital commerce, customer experience, merchandising, marketing and retail analytics.",
+        "Pantaloons Fashion & Retail Ltd.": "Fashion retail business; prepare merchandising, category management, store operations, marketing and customer experience.",
+        "SolarSquare Energy Pvt. Ltd.": "Solar-energy solutions business; prepare clean-energy markets, sales, project economics, customer acquisition and sustainability.",
+    }
+
+    # Build a searchable profile table while preserving all source entries.
+    company_rows = []
+    for source_no, raw_name, sector in IPER_2026_COMPANIES:
+        clean_name = display_company_name(raw_name)
+        base = clean_name
+        if base.startswith("Gujarat Cooperative Milk Marketing Federation"):
+            base = "Gujarat Cooperative Milk Marketing Federation Ltd. (Amul)"
+        if base.startswith("The Times Group"):
+            base = "The Times Group"
+        if base.startswith("ICICI Prudential Life Insurance"):
+            base = "ICICI Prudential Life Insurance Co. Ltd."
+        if base.startswith("HDFC Life Insurance"):
+            base = "HDFC Life Insurance Co. Ltd."
+        if base.startswith("Bajaj Life Insurance"):
+            base = "Bajaj Life Insurance Ltd."
+        if base.startswith("Home First Finance"):
+            base = "Home First Finance Co. India Ltd."
+        if base.startswith("KMV Ventures"):
+            base = "KMV Ventures Pvt. Ltd."
+        if base.startswith("Yash Technologies"):
+            base = "Yash Technologies Pvt. Ltd."
+        if base.startswith("Toprankers"):
+            base = "Toprankers Edtech Solutions Pvt. Ltd."
+        if base.startswith("PlanetSpark"):
+            base = "PlanetSpark"
+        if base.startswith("Motilal Oswal"):
+            base = "Motilal Oswal"
+        if base.startswith("CarWale"):
+            base = "CarWale (CarTrade Tech Ltd.)"
+        if base.startswith("Avenue Supermarts"):
+            base = "Avenue Supermarts (DMart)"
+        if base.startswith("Ashiana Housing"):
+            base = "Ashiana Housing Ltd."
+        if base.startswith("SolarSquare"):
+            base = "SolarSquare Energy Pvt. Ltd."
+        if base.startswith("Impression Furniture"):
+            base = "Impression Furniture Industries Pvt. Ltd."
+        note = COMPANY_NOTES.get(base)
+        if not note:
+            note = f"IPER's 2025–26 placement material lists this organisation. For preparation, study its {sector.lower()} business model, the role-specific job description and the current priorities of the business."
+        company_rows.append({"No": source_no, "Company": clean_name, "Sector": sector, "Note": note})
+
+    # Student-friendly sector selector
+    st.markdown("### Explore Indian Sectors")
+    selected_sector = st.selectbox("Select a sector", list(SECTOR_INFO.keys()))
+    sector_data = SECTOR_INFO[selected_sector]
+
+    c1, c2 = st.columns([1.65, 1])
+    with c1:
+        st.markdown(f"#### {selected_sector}")
+        st.write(sector_data["about"])
+        st.markdown("**Typical MBA Roles**")
+        st.info(sector_data["roles"])
+        st.markdown("**Skills to Build**")
+        st.info(sector_data["skills"])
+        st.markdown("**Placement Interview Preparation**")
+        st.write(sector_data["prepare"])
+    with c2:
+        st.markdown("#### IBEF Reference")
+        st.write("Use IBEF for the latest sector reports, market context and India-industry developments.")
+        st.link_button("Open IBEF sector reference", IBEF_SECTOR_URLS[selected_sector], use_container_width=True)
+        st.caption("The portal provides original student-oriented summaries. IBEF is the external reference for sector research.")
 
     st.markdown("---")
-    st.markdown("### Source & Learning Note")
-    st.markdown("Industry categories and sector context are structured with reference to **India Brand Equity Foundation (IBEF)** industry resources. Recruiter names are based on **IPER's published placement information**. The portal uses original student-oriented summaries rather than reproducing source articles.")
-    st.markdown("[Open IBEF — Indian Industries](https://www.ibef.org/index.php/industry.aspx)  ·  [Open IPER Placements 2023](https://iper.ac.in/placements2023/)  ·  [Open IPER Placements 2026](https://iper.ac.in/placements-2026/)")
+    st.markdown("### Companies Documented in IPER 2025–26")
+    st.caption("The list below is transcribed from IPER's published 2025–26 recruiter graphic. Repeated names/entries are retained where they appear in the source; they should not be interpreted as separate companies or as a guarantee of recruitment every year.")
+
+    search_company = st.text_input("Search company or sector", placeholder="e.g. HDFC, Asian Paints, Deloitte, Banking, EdTech")
+    sector_filter = st.selectbox("Filter by sector", ["All sectors"] + sorted(SECTOR_INFO.keys()))
+    filtered_rows = [
+        row for row in company_rows
+        if (sector_filter == "All sectors" or row["Sector"] == sector_filter)
+        and (not search_company.strip() or search_company.lower() in row["Company"].lower() or search_company.lower() in row["Sector"].lower())
+    ]
+
+    st.markdown(f"**{len(filtered_rows)} source entries shown**")
+    for row in filtered_rows:
+        with st.expander(f"{row['Company']}  ·  {row['Sector']}"):
+            left, right = st.columns([1.5, 1])
+            with left:
+                st.markdown(f"**Sector:** {row['Sector']}")
+                st.markdown(f"**IPER source entry:** #{row['No']} — 2025–26")
+                st.write(row["Note"])
+            with right:
+                st.markdown("**Prepare for roles such as**")
+                st.write(SECTOR_INFO[row["Sector"]]["roles"])
+                st.markdown("**Sector reference**")
+                st.link_button("Read on IBEF", IBEF_SECTOR_URLS[row["Sector"]], use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### How to Research a Company Before a Placement Drive")
+    research_cols = st.columns(4)
+    research_steps = [
+        ("01", "Business", "What does the company sell or provide? Who are its customers?"),
+        ("02", "Industry", "What is changing in the sector? Use IBEF for India-level context."),
+        ("03", "Role", "What will the MBA role actually deliver? Read the placement JD carefully."),
+        ("04", "Interview", "Prepare company facts, competitors, current developments and role-specific questions."),
+    ]
+    for col, (num, title, text) in zip(research_cols, research_steps):
+        with col:
+            st.markdown(f"<div style='border:1px solid #E2E8F0;border-radius:11px;padding:15px;min-height:145px;background:#F8FAFC;'><div style='font-size:12px;font-weight:800;color:#433B86;'>{num}</div><div style='font-size:17px;font-weight:800;color:#0F172A;margin-top:5px;'>{title}</div><div style='font-size:13px;color:#475569;margin-top:7px;line-height:1.5;'>{text}</div></div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### Official References")
+    st.markdown("- **IPER Placements 2026:** [View IPER's official placement page](https://iper.ac.in/placements-2026/)")
+    st.markdown("- **IBEF Indian Industries:** [Explore IBEF's industry directory](https://www.ibef.org/index.php/industry.aspx)")
+    st.caption("Company presence is sourced from IPER's published placement material. Sector explanations are original placement-preparation content structured with reference to IBEF industry resources. Current roles, openings and recruitment status should always be checked against the official placement notice/JD.")
 
 # SECTION 1: RESUME CHECKER & JOB MATCHER
 if selected_nav == "Resume Checker & Job Matcher":
