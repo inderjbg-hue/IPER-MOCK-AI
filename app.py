@@ -858,7 +858,7 @@ def verify_password(password, stored_hash, stored_salt):
     return secrets.compare_digest(password_hash, stored_hash)
 
 
-def create_student(first_name, last_name, scholar_id, email, password):
+def create_student(full_name, scholar_id, email, password):
     email = email.strip().lower()
     scholar_id = scholar_id.strip().upper()
     password_hash, password_salt = hash_password(password)
@@ -872,7 +872,7 @@ def create_student(first_name, last_name, scholar_id, email, password):
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                first_name.strip(), last_name.strip(), scholar_id, email,
+                full_name.strip(), "", scholar_id, email,
                 password_hash, password_salt,
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ),
@@ -2044,11 +2044,10 @@ def render_authentication_panel():
                 with st.form("student_signup_form"):
                     col1, col2 = st.columns(2)
                     with col1:
-                        first_name = st.text_input("First Name")
+                        full_name = st.text_input("Full Name", placeholder="Enter your full name")
                         scholar_id = st.text_input("Scholar ID")
                         email = st.text_input("Email ID", placeholder="yourname@iper.ac.in")
                     with col2:
-                        last_name = st.text_input("Last Name")
                         create_password = st.text_input("Create Password", type="password")
                         confirm_password = st.text_input("Confirm Password", type="password")
 
@@ -2056,8 +2055,10 @@ def render_authentication_panel():
 
                 if signup_submitted:
                     normalized_email = email.strip().lower()
-                    if not first_name.strip() or not last_name.strip():
-                        st.error("Please enter both First Name and Last Name.")
+                    if not full_name.strip():
+                        st.error("Please enter your Full Name.")
+                    elif len(full_name.strip().split()) < 2:
+                        st.error("Please enter your complete name, including first and last name.")
                     elif not scholar_id.strip():
                         st.error("Please enter your Scholar ID.")
                     elif not is_valid_iper_email(normalized_email):
@@ -2068,7 +2069,7 @@ def render_authentication_panel():
                         st.error("Create Password and Confirm Password do not match.")
                     else:
                         ok, message = create_student(
-                            first_name, last_name, scholar_id, normalized_email, create_password
+                            full_name, scholar_id, normalized_email, create_password
                         )
                         if ok:
                             st.success(message)
