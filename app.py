@@ -2118,6 +2118,7 @@ st.sidebar.markdown("---")
 selected_nav = st.sidebar.radio(
     "MAIN MENU",
     [
+        "Industry & Company Insights",
         "Resume Checker & Job Matcher", 
         "Career Development",
         "Interview Preparation Guide", 
@@ -2147,6 +2148,123 @@ else:
 # ------------------------------------------------------------------------------
 # 6. APPLICATION SECTIONS
 # ------------------------------------------------------------------------------
+
+# SECTION 0: INDUSTRY & COMPANY INSIGHTS
+if selected_nav == "Industry & Company Insights":
+    st.title("Industry & Company Insights")
+    st.caption("Explore India's major industries and companies documented in IPER's placement ecosystem — and prepare for the sectors you may encounter during campus recruitment.")
+
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,#433B86,#1E3A8A);padding:24px 28px;border-radius:14px;color:white;margin:10px 0 22px 0;">
+      <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;opacity:.85;font-weight:700;">IPER Career Intelligence</div>
+      <div style="font-size:30px;font-weight:800;margin-top:5px;">Know the Industry. Know the Company. Know the Role.</div>
+      <div style="font-size:15px;margin-top:8px;opacity:.92;max-width:850px;">Use this section to understand where IPER recruiters operate, what business they are in, and which MBA capabilities are relevant to each sector.</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    INDUSTRY_INSIGHTS = {
+        "Banking & Financial Services": {
+            "summary": "Banking, lending, insurance, securities and other financial services form a major part of India's services economy and are closely aligned with MBA careers in finance, sales, operations and HR.",
+            "companies": ["HDFC Bank", "ICICI Bank", "Axis Bank", "Bandhan Bank", "ICICI Securities", "Mahindra Finance"],
+            "roles": "Relationship Manager • Credit & Risk • Sales • Financial Analysis • Operations • HR",
+            "skills": "Financial literacy • Excel • Communication • Customer handling • Sales orientation • Analytical thinking",
+            "prep": "Understand RBI, banking products, KYC, credit, digital banking, financial inclusion and basic financial statements."
+        },
+        "FMCG & Consumer": {
+            "summary": "FMCG and consumer businesses operate around high-volume products, distribution, branding, pricing and customer behaviour. They are especially relevant to marketing and sales-oriented MBA roles.",
+            "companies": ["Amul", "ITC", "Nestlé India"],
+            "roles": "Brand Management • Sales • Trade Marketing • Distribution • Category Management • HR",
+            "skills": "Consumer insight • Market research • Communication • Negotiation • Channel management • Data interpretation",
+            "prep": "Know consumer behaviour, 4Ps/7Ps, distribution channels, brand positioning, rural markets, e-commerce and changing consumption patterns."
+        },
+        "Paints & Building Materials": {
+            "summary": "The paints and building-materials ecosystem connects manufacturing with distribution, dealer networks, construction activity and consumer demand.",
+            "companies": ["Asian Paints", "Berger Paints"],
+            "roles": "Sales • Marketing • Dealer Management • Supply Chain • Finance • HR",
+            "skills": "Channel sales • Relationship management • Territory planning • Market analysis • Negotiation",
+            "prep": "Study dealer/distributor economics, B2B and B2C selling, construction demand, product positioning and territory management."
+        },
+        "Telecom & Digital": {
+            "summary": "Telecommunications combines network infrastructure with digital services, customer acquisition, retention and technology-led business models.",
+            "companies": ["Airtel"],
+            "roles": "Sales • Product • Digital Marketing • Customer Experience • Business Analytics • HR",
+            "skills": "Digital literacy • Customer analytics • Communication • Product thinking • Data interpretation",
+            "prep": "Understand telecom business models, ARPU, customer acquisition and retention, digital services, 5G and competitive dynamics."
+        },
+        "Technology & Digital Services": {
+            "summary": "India's technology ecosystem spans IT services, software, digital platforms, analytics and technology-enabled business services.",
+            "companies": ["BYJU'S", "PhonePe", "Paytm", "S&P Global"],
+            "roles": "Business Development • Product • Analytics • Sales • Customer Success • HR",
+            "skills": "Digital fluency • Data literacy • Problem solving • Presentation • Adaptability",
+            "prep": "Follow AI, fintech, digital payments, SaaS, analytics, cybersecurity and technology-driven changes in business models."
+        },
+        "Automobiles & Manufacturing": {
+            "summary": "Automobiles and manufacturing combine production, supply chains, distribution, engineering, quality and increasingly digital and EV capabilities.",
+            "companies": ["MRF Ltd", "Mahindra Finance", "Vardhman Textiles Ltd"],
+            "roles": "Operations • Supply Chain • Procurement • Sales • Marketing • Finance • HR",
+            "skills": "Process thinking • Supply chain basics • Cost awareness • Quality mindset • Data analysis",
+            "prep": "Understand manufacturing, supply chains, capacity, quality, inventory, EV transition, exports and Industry 4.0."
+        },
+        "Retail & Consumer Services": {
+            "summary": "Retail combines merchandising, customer experience, store operations, omnichannel commerce and supply-chain execution.",
+            "companies": ["Bata India Ltd", "Vivo"],
+            "roles": "Retail Operations • Sales • Category Management • Marketing • Customer Experience • HR",
+            "skills": "Customer orientation • Sales • Merchandising • Communication • Retail analytics",
+            "prep": "Study omnichannel retail, customer experience, merchandising, inventory, e-commerce, quick commerce and store economics."
+        },
+        "Media & Communications": {
+            "summary": "Media and communications businesses operate across publishing, broadcasting, digital content, advertising and audience engagement.",
+            "companies": ["Times Group"],
+            "roles": "Media Sales • Marketing • Advertising • Business Development • HR",
+            "skills": "Storytelling • Sales • Presentation • Digital marketing • Audience understanding",
+            "prep": "Understand advertising models, digital media, audience metrics, content monetisation and changing consumer attention."
+        },
+    }
+
+    st.markdown("### Explore an Industry")
+    selected_industry = st.selectbox("Select Industry / Sector", list(INDUSTRY_INSIGHTS.keys()))
+    data = INDUSTRY_INSIGHTS[selected_industry]
+
+    c1, c2 = st.columns([1.55, 1])
+    with c1:
+        st.markdown(f"#### {selected_industry}")
+        st.write(data["summary"])
+        st.markdown("**Typical MBA Roles**")
+        st.info(data["roles"])
+        st.markdown("**Skills to Build**")
+        st.info(data["skills"])
+        st.markdown("**What to Prepare for Interviews**")
+        st.write(data["prep"])
+    with c2:
+        st.markdown("#### Companies documented by IPER")
+        for company in data["companies"]:
+            st.markdown(f"<div style='padding:11px 14px;margin:7px 0;border:1px solid #E2E8F0;border-radius:9px;background:#F8FAFC;font-weight:700;color:#0F172A;'>{company}</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### IPER Recruitment Ecosystem")
+    st.caption("The companies below are drawn from IPER's published placement/recruiter information. Their appearance here indicates that IPER has documented them in its placement ecosystem; it does not imply that every company recruits in every academic year.")
+    iper_companies = [
+        ("Amul", "FMCG / Dairy"), ("BYJU'S", "Education / Technology"), ("Times Group", "Media"),
+        ("ICICI Bank", "Banking"), ("HDFC Bank", "Banking"), ("Airtel", "Telecom"),
+        ("Vivo", "Consumer Electronics"), ("S&P Global", "Financial Information / Analytics"),
+        ("PhonePe", "Fintech / Digital Payments"), ("Paytm", "Fintech / Digital Services"),
+        ("MRF Ltd", "Tyres / Manufacturing"), ("Bata India Ltd", "Retail / Footwear"),
+        ("Bandhan Bank", "Banking"), ("Mahindra Finance", "Financial Services"), ("ITC", "FMCG / Diversified"),
+        ("Berger Paints", "Paints / Building Materials"), ("Vardhman Textiles Ltd", "Textiles / Manufacturing"),
+        ("ICICI Securities", "Financial Services / Securities"), ("Asian Paints", "Paints / Building Materials"),
+        ("Nestlé India", "FMCG / Food"), ("Axis Bank", "Banking")
+    ]
+    search_company = st.text_input("Search IPER recruiter / company", placeholder="e.g. HDFC, Asian Paints, Amul")
+    filtered = [(name, sector) for name, sector in iper_companies if not search_company.strip() or search_company.lower() in name.lower() or search_company.lower() in sector.lower()]
+    cols = st.columns(3)
+    for i, (name, sector) in enumerate(filtered):
+        with cols[i % 3]:
+            st.markdown(f"<div style='border:1px solid #E2E8F0;border-radius:10px;padding:14px;margin:5px 0 10px 0;background:white;min-height:85px;'><div style='font-weight:800;color:#433B86;font-size:16px;'>{name}</div><div style='font-size:12px;color:#64748B;margin-top:5px;'>{sector}</div></div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### Source & Learning Note")
+    st.markdown("Industry categories and sector context are structured with reference to **India Brand Equity Foundation (IBEF)** industry resources. Recruiter names are based on **IPER's published placement information**. The portal uses original student-oriented summaries rather than reproducing source articles.")
+    st.markdown("[Open IBEF — Indian Industries](https://www.ibef.org/index.php/industry.aspx)  ·  [Open IPER Placements 2023](https://iper.ac.in/placements2023/)  ·  [Open IPER Placements 2026](https://iper.ac.in/placements-2026/)")
 
 # SECTION 1: RESUME CHECKER & JOB MATCHER
 if selected_nav == "Resume Checker & Job Matcher":
