@@ -828,6 +828,24 @@ def init_database():
                 created_at TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS student_profiles (
+                student_id INTEGER PRIMARY KEY,
+                tenth_percentage TEXT,
+                twelfth_percentage TEXT,
+                undergraduation TEXT,
+                post_graduation TEXT,
+                internship TEXT,
+                certification_courses TEXT,
+                activities_participated TEXT,
+                achievements TEXT,
+                professional_interest TEXT,
+                about_yourself TEXT,
+                profile_hash TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(student_id) REFERENCES students(id)
+            )
+        """)
 
         for slot in range(1, 8):
             conn.execute(
@@ -984,6 +1002,84 @@ def save_student_attempt(student_id, domain, score, mode, question):
         conn.commit()
     finally:
         conn.close()
+
+
+def load_student_profile(student_id):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT * FROM student_profiles WHERE student_id = ?", (student_id,)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else {}
+
+
+def save_student_profile(student_id, profile, about_yourself, profile_hash):
+    conn = get_db_connection()
+    try:
+        conn.execute("""
+            INSERT INTO student_profiles
+            (student_id, tenth_percentage, twelfth_percentage, undergraduation, post_graduation,
+             internship, certification_courses, activities_participated, achievements,
+             professional_interest, about_yourself, profile_hash, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(student_id) DO UPDATE SET
+                tenth_percentage=excluded.tenth_percentage,
+                twelfth_percentage=excluded.twelfth_percentage,
+                undergraduation=excluded.undergraduation,
+                post_graduation=excluded.post_graduation,
+                internship=excluded.internship,
+                certification_courses=excluded.certification_courses,
+                activities_participated=excluded.activities_participated,
+                achievements=excluded.achievements,
+                professional_interest=excluded.professional_interest,
+                about_yourself=excluded.about_yourself,
+                profile_hash=excluded.profile_hash,
+                updated_at=excluded.updated_at
+        """, (
+            student_id, profile.get('tenth_percentage',''), profile.get('twelfth_percentage',''),
+            profile.get('undergraduation',''), profile.get('post_graduation',''), profile.get('internship',''),
+            profile.get('certification_courses',''), profile.get('activities_participated',''),
+            profile.get('achievements',''), profile.get('professional_interest',''), about_yourself,
+            profile_hash, datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def generate_about_yourself(profile):
+    if not client:
+        return "GROQ API Key is missing. Add GROQ_API_KEY in Streamlit App Settings → Secrets to generate your personalized About Yourself response."
+    prompt = f"""Create a professional, natural and interview-ready 'About Yourself' response for an MBA placement student at IPER Bhopal.
+Use ONLY the information supplied below. Do not invent companies, roles, percentages, achievements, skills or experience.
+Write in first person, confident but not exaggerated, suitable for a 60-90 second interview answer.
+Integrate education, internship, certifications, activities, achievements and professional interests into one coherent story.
+If some fields are blank, do not mention them. Avoid sounding like a resume being read aloud.
+The response should be easy to speak naturally and should end with a forward-looking statement about the kind of professional opportunity the student seeks.
+
+Student profile:
+10th Percentage: {profile.get('tenth_percentage','')}
+12th Percentage: {profile.get('twelfth_percentage','')}
+Undergraduation: {profile.get('undergraduation','')}
+Post Graduation: {profile.get('post_graduation','')}
+Internship: {profile.get('internship','')}
+Certification Courses: {profile.get('certification_courses','')}
+Activities Participated: {profile.get('activities_participated','')}
+Achievements: {profile.get('achievements','')}
+Professional Interest: {profile.get('professional_interest','')}
+"""
+    try:
+        response = client.chat.completions.create(
+            messages=[
+                {"role":"system","content":"You are an expert MBA placement interview coach. Produce polished spoken English while staying strictly factual to the student's supplied profile."},
+                {"role":"user","content":prompt}
+            ],
+            model=GROQ_MODEL,
+            temperature=0.25
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as exc:
+        return f"AI generation could not be completed: {exc}"
 
 
 def database_status_message():
@@ -2095,7 +2191,7 @@ if not st.session_state["authenticated"]:
     render_authentication_panel()
     st.stop()
 
-# Keep the logged-in student's first name as the permanent personalized display name.
+# Keep the logged-in student's full name as the permanent personalized display name.
 st.session_state["candidate_name"] = st.session_state.get("first_name", "Student")
 
 # Personalized header shown throughout the logged-in student panel.
@@ -2120,6 +2216,7 @@ selected_nav = st.sidebar.radio(
     "MAIN MENU",
     [
         "Industry & Company Insights",
+        "About Myself",
         "Resume Checker & Job Matcher", 
         "Career Development",
         "Interview Preparation Guide", 
@@ -2559,6 +2656,55 @@ if selected_nav == "Industry & Company Insights":
     st.caption("Company presence is sourced from IPER's published placement material. Sector explanations are original placement-preparation content structured with reference to IBEF industry resources. Current roles, openings and recruitment status should always be checked against the official placement notice/JD.")
 
 # SECTION 1: RESUME CHECKER & JOB MATCHER
+# SECTION: ABOUT MYSELF
+elif selected_nav == "About Myself":
+    st.title("About Myself")
+    st.caption("Build your personal interview introduction and keep it progressively updated as you add new skills, experiences and achievements.")
+
+    student_id = st.session_state.get("student_id")
+    existing_profile = load_student_profile(student_id) if student_id else {}
+
+    fields = {
+        "tenth_percentage": st.text_input("10th Percentage", value=existing_profile.get("tenth_percentage", ""), placeholder="e.g., 82%"),
+        "twelfth_percentage": st.text_input("12th Percentage", value=existing_profile.get("twelfth_percentage", ""), placeholder="e.g., 78%"),
+        "undergraduation": st.text_area("Undergraduation", value=existing_profile.get("undergraduation", ""), placeholder="Degree, college/university, specialization, year, relevant learning", height=90),
+        "post_graduation": st.text_area("Post Graduation", value=existing_profile.get("post_graduation", ""), placeholder="MBA/PG degree, specialization, institute, relevant learning", height=90),
+        "internship": st.text_area("Internship", value=existing_profile.get("internship", ""), placeholder="Company, role, duration, responsibilities, key learning", height=100),
+        "certification_courses": st.text_area("Certification Courses", value=existing_profile.get("certification_courses", ""), placeholder="Courses, certifications, platforms and key skills learned", height=100),
+        "activities_participated": st.text_area("Activities Participated", value=existing_profile.get("activities_participated", ""), placeholder="Clubs, events, competitions, sports, volunteering, leadership activities", height=100),
+        "achievements": st.text_area("Achievements", value=existing_profile.get("achievements", ""), placeholder="Academic, professional, competition or extracurricular achievements", height=100),
+        "professional_interest": st.text_area("Professional Interest", value=existing_profile.get("professional_interest", ""), placeholder="Roles, sectors, functions or career areas you want to pursue", height=100),
+    }
+
+    profile_payload = {k: (v or "").strip() for k, v in fields.items()}
+    profile_hash = hashlib.sha256(json.dumps(profile_payload, sort_keys=True).encode("utf-8")).hexdigest()
+    previous_hash = existing_profile.get("profile_hash", "")
+
+    st.markdown("### Your AI-Generated About Yourself")
+    if existing_profile.get("about_yourself"):
+        st.markdown(f"<div style='background:#F8FAFC;border:1px solid #CBD5E1;border-radius:10px;padding:18px;line-height:1.75;'>{existing_profile['about_yourself'].replace(chr(10), '<br>')}</div>", unsafe_allow_html=True)
+        if existing_profile.get("updated_at"):
+            st.caption(f"Last revised: {existing_profile['updated_at']}")
+    else:
+        st.info("Complete your profile and click Generate / Revise About Yourself. Your introduction will be stored for future sessions.")
+
+    changed = profile_hash != previous_hash
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        generate_clicked = st.button("Generate / Revise About Yourself", use_container_width=True)
+    with col2:
+        st.markdown("**Progressive profile:** Add a new skill, certification, achievement or experience and generate again. The AI will revise the complete introduction using your latest profile.")
+
+    if generate_clicked or (changed and any(profile_payload.values()) and not existing_profile.get("about_yourself")):
+        with st.spinner("Building your personalized About Yourself response..."):
+            about = generate_about_yourself(profile_payload)
+        save_student_profile(student_id, profile_payload, about, profile_hash)
+        st.success("Your About Yourself has been updated with your latest profile details.")
+        st.rerun()
+
+    st.markdown("### Recommended Interview Structure")
+    st.write("Education → Internship / practical exposure → Certifications & skills → Activities & achievements → Professional interest → Career direction")
+
 if selected_nav == "Resume Checker & Job Matcher":
     st.title("Resume Checker & Job Matcher")
     st.caption("Upload your resume and a target job description to get clarity on your match level, key strengths, and areas to polish.")
