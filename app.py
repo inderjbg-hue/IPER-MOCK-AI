@@ -2705,6 +2705,7 @@ elif selected_nav == "Industry & Company Insights":
     # fall back to the conventional /about-us path on the official company domain.
     COMPANY_ABOUT_URLS = {
         "Axis Bank Ltd.": "https://www.axis.bank.in/about-us",
+        "Jaro Education": "https://www.jaroeducation.com/about-us",
         "Bajaj Life Insurance Ltd.": "https://www.bajajlifeinsurance.com/about-us.html",
         "DCB Bank Ltd.": "https://www.dcb.bank.in/about-us/overview",
         "Asian Paints": "https://www.asianpaints.com/about-us.html",
@@ -2713,7 +2714,7 @@ elif selected_nav == "Industry & Company Insights":
         "Yash Technologies Pvt. Ltd.": "https://www.yash.com/about-us/",
         "IndiaMART InterMESH Ltd.": "https://corporate.indiamart.com/about-us/",
         "Tata Consultancy Services Ltd.": "https://www.tcs.com/who-we-are",
-        "Gujarat Cooperative Milk Marketing Federation Ltd. (Amul)": "https://www.amul.com/m/about-us",
+        "Gujarat Cooperative Milk Marketing Federation Ltd. (Amul)": "https://amul.com/our-legacy",
         "Haleon Plc": "https://www.haleon.com/about-us/",
         "Himalaya Wellness Co.": "https://himalayawellness.in/pages/about-us",
         "Marriott International India": "https://www.marriott.com/about/culture-and-values.mi",
