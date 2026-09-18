@@ -766,9 +766,16 @@ def init_database():
                 score INTEGER,
                 mode TEXT,
                 question TEXT,
+                duration_seconds REAL DEFAULT 0,
                 FOREIGN KEY(student_id) REFERENCES students(id)
             )
         """)
+        # Backward-compatible migration for practice duration tracking.
+        interview_columns = [row[0] if USING_POSTGRES else row[1]
+                             for row in conn.execute("PRAGMA table_info(interview_attempts)").fetchall()]
+        if "duration_seconds" not in interview_columns:
+            conn.execute("ALTER TABLE interview_attempts ADD COLUMN duration_seconds REAL DEFAULT 0")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS gd_rooms (
                 slot INTEGER PRIMARY KEY,
@@ -825,9 +832,15 @@ def init_database():
                 transcript_json TEXT,
                 report_json TEXT,
                 video_filename TEXT,
+                duration_seconds REAL DEFAULT 0,
                 created_at TEXT NOT NULL
             )
         """)
+        gd_assessment_columns = [row[0] if USING_POSTGRES else row[1]
+                                  for row in conn.execute("PRAGMA table_info(gd_assessments)").fetchall()]
+        if "duration_seconds" not in gd_assessment_columns:
+            conn.execute("ALTER TABLE gd_assessments ADD COLUMN duration_seconds REAL DEFAULT 0")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS student_profiles (
                 student_id INTEGER PRIMARY KEY,
@@ -966,7 +979,7 @@ def load_student_attempts(student_id):
     try:
         rows = conn.execute(
             """
-            SELECT timestamp, domain, score, mode, question
+            SELECT timestamp, domain, score, mode, question, duration_seconds
             FROM interview_attempts
             WHERE student_id = ?
             ORDER BY id ASC
@@ -980,23 +993,24 @@ def load_student_attempts(student_id):
             "Timestamp": row["timestamp"], "Candidate": "Student",
             "Domain": row["domain"] or "", "Score": row["score"] or 0,
             "Mode": row["mode"] or "", "Question": row["question"] or "",
+            "DurationSeconds": float(row["duration_seconds"] or 0),
         }
         for row in rows
     ]
 
 
-def save_student_attempt(student_id, domain, score, mode, question):
+def save_student_attempt(student_id, domain, score, mode, question, duration_seconds=0):
     conn = get_db_connection()
     try:
         conn.execute(
             """
             INSERT INTO interview_attempts
-            (student_id, timestamp, domain, score, mode, question)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (student_id, timestamp, domain, score, mode, question, duration_seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 student_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                domain, int(score), mode, question,
+                domain, int(score), mode, question, float(duration_seconds or 0),
             ),
         )
         conn.commit()
@@ -1653,16 +1667,25 @@ All scores are integers from 0 to 10 except OverallScore fields, which are 0 to 
 
 def save_gd_video_assessment(scholar_id, topic, participants, segments, report, video_filename):
     conn = get_db_connection()
+    duration_seconds = 0.0
+    try:
+        ends = [float(seg.get("end", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
+        starts = [float(seg.get("start", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
+        if ends:
+            duration_seconds = max(0.0, max(ends) - (min(starts) if starts else 0.0))
+    except Exception:
+        duration_seconds = 0.0
     conn.execute("""
         INSERT INTO gd_assessments
-        (scholar_id, topic, participant_names, transcript_json, report_json, video_filename, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (scholar_id, topic, participant_names, transcript_json, report_json, video_filename, duration_seconds, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         scholar_id, topic,
         json.dumps(participants, ensure_ascii=False),
         json.dumps(segments, ensure_ascii=False),
         json.dumps(report, ensure_ascii=False),
         video_filename,
+        duration_seconds,
         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ))
     conn.commit()
@@ -2215,6 +2238,7 @@ st.sidebar.markdown("---")
 selected_nav = st.sidebar.radio(
     "MAIN MENU",
     [
+        "Progress",
         "Industry & Company Insights",
         "About Myself",
         "Resume Checker & Job Matcher", 
@@ -2247,8 +2271,106 @@ else:
 # 6. APPLICATION SECTIONS
 # ------------------------------------------------------------------------------
 
-# SECTION 0: INDUSTRY & COMPANY INSIGHTS
-if selected_nav == "Industry & Company Insights":
+# SECTION 0: PROGRESS
+if selected_nav == "Progress":
+    st.title("Progress")
+    st.caption("A quick view of your placement-practice journey, activity and next steps.")
+
+    scholar_id = st.session_state.get("scholar_id", "")
+    student_id = st.session_state.get("student_id")
+    history = st.session_state.get("history", [])
+
+    # Refresh persisted interview attempts so progress survives login/session refreshes.
+    if student_id:
+        try:
+            persisted_attempts = load_student_attempts(student_id)
+            if persisted_attempts:
+                history = persisted_attempts
+                st.session_state["history"] = persisted_attempts
+        except Exception:
+            pass
+
+    pi_attempts = len(history)
+    pi_scores = [float(item.get("Score", 0) or 0) for item in history]
+    pi_minutes = sum(float(item.get("DurationSeconds", 0) or 0) for item in history) / 60.0
+
+    gd_attempts = 0
+    gd_scores = []
+    gd_minutes = 0.0
+    if scholar_id:
+        try:
+            gd_assessments = get_gd_video_assessments(scholar_id)
+            gd_attempts = len(gd_assessments)
+            for assessment in gd_assessments:
+                report = assessment.get("report_json") or {}
+                participant_report = next(
+                    (p for p in (report.get("Participants") or [])
+                     if str(p.get("Name", "")).strip().lower() == str(st.session_state.get("candidate_name", "")).strip().lower()),
+                    None
+                )
+                if participant_report and participant_report.get("OverallScore") is not None:
+                    gd_scores.append(float(participant_report.get("OverallScore", 0) or 0) * 10 if float(participant_report.get("OverallScore", 0) or 0) <= 10 else float(participant_report.get("OverallScore", 0) or 0))
+                gd_minutes += float(assessment.get("duration_seconds", 0) or 0) / 60.0
+        except Exception:
+            pass
+
+    total_minutes = pi_minutes + gd_minutes
+    all_scores = pi_scores + gd_scores
+    average_score = (sum(all_scores) / len(all_scores)) if all_scores else 0.0
+
+    # Progress is intentionally activity-based: 20 completed practice assessments is the first milestone.
+    target_attempts = 20
+    progress_pct = min(100, round(((pi_attempts + gd_attempts) / target_attempts) * 100))
+
+    st.markdown("### Placement Readiness Progress")
+    st.progress(progress_pct, text=f"{progress_pct}% of your first {target_attempts} practice assessments completed")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Minutes Utilized", f"{total_minutes:.1f} min")
+    m2.metric("PI Attempted", pi_attempts)
+    m3.metric("GD Attempted", gd_attempts)
+    m4.metric("Average Score", f"{average_score:.1f} / 100" if all_scores else "—")
+
+    st.markdown("### Your Way Ahead")
+    suggestions = []
+    if pi_attempts == 0:
+        suggestions.append("Complete your first PI practice session and establish a baseline score.")
+    elif average_score < 60:
+        suggestions.append("Focus first on answer structure, clarity and confidence before increasing practice volume.")
+    elif average_score < 75:
+        suggestions.append("Continue regular PI practice and strengthen examples from your resume, internship and projects.")
+    else:
+        suggestions.append("Maintain your current performance and practise company-specific and advanced interview questions.")
+    if gd_attempts == 0:
+        suggestions.append("Attempt at least one GD and practise concise points, active listening and balanced participation.")
+    elif gd_attempts < 3:
+        suggestions.append("Complete a few more GDs so your participation and communication patterns become consistent.")
+    else:
+        suggestions.append("Review your GD feedback after each attempt and target one specific improvement in the next discussion.")
+    if total_minutes < 30:
+        suggestions.append("Aim for at least 30 minutes of meaningful placement practice before your next review.")
+    else:
+        suggestions.append("Keep a steady weekly practice routine rather than relying on last-minute preparation.")
+
+    for suggestion in suggestions[:3]:
+        st.markdown(f"• {suggestion}")
+
+    st.markdown("### Activity Snapshot")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("PI Practice Minutes", f"{pi_minutes:.1f}")
+    with c2:
+        st.metric("GD Assessment Minutes", f"{gd_minutes:.1f}")
+
+    if history:
+        st.markdown("### PI Score Trend")
+        trend = pd.DataFrame({"Attempt": range(1, len(pi_scores) + 1), "Score": pi_scores})
+        st.line_chart(trend.set_index("Attempt"))
+    else:
+        st.info("Your progress will start building as soon as you complete your first PI or GD practice assessment.")
+
+# SECTION 1: INDUSTRY & COMPANY INSIGHTS
+elif selected_nav == "Industry & Company Insights":
     st.title("Industry & Company Insights")
     st.caption("Explore sectors in India and the companies documented in IPER's 2025–26 placement ecosystem. Use the information here to prepare for roles, interviews and campus recruitment.")
 
@@ -3183,7 +3305,8 @@ elif selected_nav == "Interview Practice Room":
                             "Domain": category,
                             "Score": score,
                             "Mode": mode,
-                            "Question": st.session_state.get("current_question", "")
+                            "Question": st.session_state.get("current_question", ""),
+                            "DurationSeconds": float(st.session_state.get("communication_duration", 0.0) or 0.0)
                         }
                         st.session_state["history"].append(attempt)
                         save_student_attempt(
@@ -3191,7 +3314,8 @@ elif selected_nav == "Interview Practice Room":
                             category,
                             score,
                             mode,
-                            st.session_state.get("current_question", "")
+                            st.session_state.get("current_question", ""),
+                            st.session_state.get("communication_duration", 0.0)
                         )
 
                     except (json.JSONDecodeError, TypeError, ValueError):
