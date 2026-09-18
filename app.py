@@ -2700,6 +2700,29 @@ elif selected_nav == "Industry & Company Insights":
         "Pantaloons Fashion & Retail Ltd.": "https://www.pantaloons.com/", "Parnalan Fashion & Retail Ltd. (Calvin Klein & Tommy Hilfiger)": "https://www.abfrl.com/", "SolarSquare Energy Pvt. Ltd.": "https://solarsquare.in/",
     }
 
+    # About Us pages are intentionally kept separate from the company homepages.
+    # Where a company uses a non-standard About page, use the verified URL; otherwise
+    # fall back to the conventional /about-us path on the official company domain.
+    COMPANY_ABOUT_URLS = {
+        "Axis Bank Ltd.": "https://www.axis.bank.in/about-us",
+        "Bajaj Life Insurance Ltd.": "https://www.bajajlifeinsurance.com/about-us.html",
+        "DCB Bank Ltd.": "https://www.dcb.bank.in/about-us/overview",
+        "Asian Paints": "https://www.asianpaints.com/about-us.html",
+        "Home First Finance Co. India Ltd.": "https://homefirstindia.com/about-us",
+        "Havells India Ltd.": "https://www.havells.com/about-us",
+        "Yash Technologies Pvt. Ltd.": "https://www.yash.com/about-us/",
+        "IndiaMART InterMESH Ltd.": "https://corporate.indiamart.com/about-us/",
+        "Tata Consultancy Services Ltd.": "https://www.tcs.com/who-we-are",
+        "Gujarat Cooperative Milk Marketing Federation Ltd. (Amul)": "https://www.amul.com/m/about-us",
+        "Haleon Plc": "https://www.haleon.com/about-us/",
+        "Himalaya Wellness Co.": "https://himalayawellness.in/pages/about-us",
+        "Marriott International India": "https://www.marriott.com/about/culture-and-values.mi",
+        "Bajaj Finserv Ltd.": "https://www.bajajfinserv.in/about-us",
+        "Deloitte Consulting India Pvt. Ltd.": "https://www.deloitte.com/in/en/about.html",
+        "Avenue Supermarts (DMart)": "https://www.dmartindia.com/about-us",
+        "SolarSquare Energy Pvt. Ltd.": "https://www.solarsquare.in/about-us",
+    }
+
     # Build a searchable profile table while preserving all source entries.
     company_rows = []
     for source_no, raw_name, sector in IPER_2026_COMPANIES:
@@ -2740,7 +2763,11 @@ elif selected_nav == "Industry & Company Insights":
         note = COMPANY_NOTES.get(base)
         if not note:
             note = f"IPER's 2025–26 placement material lists this organisation. For preparation, study its {sector.lower()} business model, the role-specific job description and the current priorities of the business."
-        company_rows.append({"No": source_no, "Company": clean_name, "Sector": sector, "Note": note, "Website": COMPANY_WEBSITES.get(base)})
+        official_site = COMPANY_WEBSITES.get(base)
+        about_url = COMPANY_ABOUT_URLS.get(base)
+        if not about_url and official_site:
+            about_url = official_site.rstrip("/") + "/about-us"
+        company_rows.append({"No": source_no, "Company": clean_name, "Sector": sector, "Note": note, "Website": official_site, "AboutURL": about_url})
 
     # Student-friendly sector selector
     st.markdown("### Explore Indian Sectors")
@@ -2784,11 +2811,12 @@ elif selected_nav == "Industry & Company Insights":
                 st.markdown(f"**IPER source entry:** #{row['No']} — 2025–26")
                 st.write(row["Note"])
             with right:
-                st.markdown("**About Us / Official Website**")
-                if row.get("Website"):
-                    st.link_button("Open Company Website ↗", row["Website"], use_container_width=True)
+                st.markdown("**About Us**")
+                if row.get("AboutURL"):
+                    st.link_button("Open About Us ↗", row["AboutURL"], use_container_width=True)
+                    st.caption("Official company About Us page")
                 else:
-                    st.caption("Official website link not verified")
+                    st.caption("About Us page not verified")
                 st.markdown("**Prepare for roles such as**")
                 st.write(SECTOR_INFO[row["Sector"]]["roles"])
                 st.markdown("**Sector reference**")
