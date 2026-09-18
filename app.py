@@ -692,15 +692,19 @@ class PostgresConnectionWrapper:
         return sql
 
     def execute(self, sql, params=None):
-        # PostgreSQL equivalent of the SQLite migration query.
-        if sql.strip().lower().startswith("pragma table_info(gd_rooms)"):
+        # SQLite PRAGMA statements are not supported by PostgreSQL.
+        # Translate PRAGMA table_info(<table>) into information_schema.columns
+        # so schema migrations work with the persistent PostgreSQL database too.
+        pragma_match = re.match(r"\s*pragma\s+table_info\(([^)]+)\)\s*;?\s*$", sql, flags=re.I)
+        if pragma_match:
+            table_name = pragma_match.group(1).strip().strip("\"`").strip("'")
             cur = self.conn.cursor()
             cur.execute("""
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = 'gd_rooms'
+                WHERE table_schema = 'public' AND table_name = %s
                 ORDER BY ordinal_position
-            """)
+            """, (table_name,))
             return PostgresCursorWrapper(cur)
 
         translated = self._translate_sql(sql)
