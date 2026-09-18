@@ -2673,6 +2673,33 @@ elif selected_nav == "Industry & Company Insights":
         "SolarSquare Energy Pvt. Ltd.": "Solar-energy solutions business; prepare clean-energy markets, sales, project economics, customer acquisition and sustainability.",
     }
 
+    # Official company / "About Us" websites for student company research.
+    COMPANY_WEBSITES = {
+        "Axis Bank Ltd.": "https://www.axisbank.com/", "Bajaj Life Insurance Ltd.": "https://www.bajajlifeinsurance.com/", "DCB Bank Ltd.": "https://www.dcbbank.com/",
+        "HDFC Life Insurance Co. Ltd.": "https://www.hdfclife.com/", "ICICI Prudential Life Insurance Co. Ltd.": "https://www.iciciprulife.com/", "Teleperformance India Pvt. Ltd.": "https://www.teleperformance.com/",
+        "Asian Paints": "https://www.asianpaints.com/", "Berger Paints India Ltd.": "https://www.bergerpaints.com/", "Ceasefire Industries Pvt. Ltd.": "https://www.ceasefire.in/",
+        "Home First Finance Co. India Ltd.": "https://www.homefirstindia.com/", "KMV Ventures Pvt. Ltd.": "https://kmvventures.com/", "Havells India Ltd.": "https://www.havells.com/",
+        "Indigo Paints Ltd.": "https://indigopaints.com/", "Methodex Systems Pvt. Ltd.": "https://www.methodexsystems.com/", "The-H Digital Solutions Pvt. Ltd.": "https://the-h.com/",
+        "IndiaMART InterMESH Ltd.": "https://www.indiamart.com/", "CarWale (CarTrade Tech Ltd.)": "https://www.cartradetech.com/", "Yash Technologies Pvt. Ltd.": "https://www.yash.com/",
+        "AISECT Ltd.": "https://aisect.org/", "Bhanzu": "https://bhanzu.com/", "Edukyu Pvt. Ltd.": "https://edukyu.com/", "Trounsoler Ed-Tech Services Pvt. Ltd.": "https://trounsoler.com/",
+        "Jaro Education": "https://www.jaroeducation.com/", "Learning Shala": "https://learningshala.in/", "PlanetSpark": "https://www.planetspark.in/", "PREPOCA (Limeam Eduserver)": "https://prepoca.com/",
+        "Step UP Academy": "https://stepupacademyindia.com/", "Sygnific Careers Pvt. Ltd.": "https://sygnificcareers.com/", "Tata ClassEdge Ltd.": "https://www.tataclassedge.com/", "Toprankers Edtech Solutions Pvt. Ltd.": "https://www.toprankers.com/",
+        "Info India Ltd. (Naukri.com)": "https://www.naukri.com/", "Eastman Auto": "https://www.eastmanauto.com/", "XL Dynamics India Pvt. Ltd.": "https://www.xldynamics.com/",
+        "Gujarat Cooperative Milk Marketing Federation Ltd. (Amul)": "https://www.amul.com/", "Haleon Plc": "https://www.haleon.com/", "Himalaya Wellness Co.": "https://himalayawellness.in/",
+        "Majestic Basmati Rice Pvt. Ltd.": "https://www.majesticbasmati.com/", "Mahindra Holidays & Resorts India Ltd.": "https://www.clubmahindra.com/", "Marriott International India": "https://www.marriott.com/",
+        "Artech Infosystems Pvt. Ltd.": "https://www.artech.com/", "Collabera Services Pvt. Ltd.": "https://collabera.com/", "Futur Staffing Solutions Pvt. Ltd.": "https://www.futurstaffing.com/",
+        "Sarthee Consultancy": "https://sarthee.com/", "American Chase": "https://www.american-chase.com/", "Anaxee Digital Runners Pvt. Ltd.": "https://anaxee.com/",
+        "Cogent Infotech": "https://www.cogentinfo.com/", "Netlink Software Pvt. Ltd.": "https://www.netlink.com/", "Tata Consultancy Services Ltd.": "https://www.tcs.com/",
+        "Bhaskar Industries Pvt. Ltd.": "https://www.bhaskar.com/", "Impression Furniture Industries Pvt. Ltd.": "https://www.impressionfurniture.com/", "Motilal Oswal": "https://www.motilaloswal.com/",
+        "MPM Ltd.": "https://www.mpm.co.in/", "Shakesteller Energy Solutions Pvt. Ltd.": "https://shakesteller.com/", "Trident Group": "https://www.tridentindia.com/",
+        "DB Corp Ltd. (Dainik Bhaskar)": "https://www.dbcorpltd.com/", "The Times Group": "https://timesgroup.com/", "Aditya Capital Pvt. Ltd.": "https://www.adityacapital.com/",
+        "Bajaj Finserv Ltd.": "https://www.bajajfinserv.in/", "Bajaj Housing Finance Ltd.": "https://www.bajajhousingfinance.in/", "ICICI Securities Ltd.": "https://www.icicidirect.com/",
+        "India Shelter Finance Corporation Ltd.": "https://www.indiashelter.in/", "NJ India Invest Pvt. Ltd.": "https://www.njgroup.in/", "Ashiana Housing Ltd.": "https://www.ashianahousing.com/",
+        "MoneyOne Consulting Pvt. Ltd.": "https://moneyone.in/", "SCG Group": "https://www.scggroup.com/", "Deloitte Consulting India Pvt. Ltd.": "https://www.deloitte.com/in/en.html",
+        "Aditya Birla Lifestyle Brands Ltd.": "https://www.adityabirlafashion.com/", "Avenue Supermarts (DMart)": "https://www.dmartindia.com/", "Bluestone Jewellery & Lifestyle Ltd.": "https://www.bluestone.com/",
+        "Pantaloons Fashion & Retail Ltd.": "https://www.pantaloons.com/", "Parnalan Fashion & Retail Ltd. (Calvin Klein & Tommy Hilfiger)": "https://www.abfrl.com/", "SolarSquare Energy Pvt. Ltd.": "https://solarsquare.in/",
+    }
+
     # Build a searchable profile table while preserving all source entries.
     company_rows = []
     for source_no, raw_name, sector in IPER_2026_COMPANIES:
@@ -2713,7 +2740,7 @@ elif selected_nav == "Industry & Company Insights":
         note = COMPANY_NOTES.get(base)
         if not note:
             note = f"IPER's 2025–26 placement material lists this organisation. For preparation, study its {sector.lower()} business model, the role-specific job description and the current priorities of the business."
-        company_rows.append({"No": source_no, "Company": clean_name, "Sector": sector, "Note": note})
+        company_rows.append({"No": source_no, "Company": clean_name, "Sector": sector, "Note": note, "Website": COMPANY_WEBSITES.get(base)})
 
     # Student-friendly sector selector
     st.markdown("### Explore Indian Sectors")
@@ -2757,6 +2784,11 @@ elif selected_nav == "Industry & Company Insights":
                 st.markdown(f"**IPER source entry:** #{row['No']} — 2025–26")
                 st.write(row["Note"])
             with right:
+                st.markdown("**About Us / Official Website**")
+                if row.get("Website"):
+                    st.link_button("Open Company Website ↗", row["Website"], use_container_width=True)
+                else:
+                    st.caption("Official website link not verified")
                 st.markdown("**Prepare for roles such as**")
                 st.write(SECTOR_INFO[row["Sector"]]["roles"])
                 st.markdown("**Sector reference**")
