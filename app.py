@@ -2805,6 +2805,165 @@ elif selected_nav == "Industry & Company Insights":
 
     st.markdown(f"**{len(filtered_rows)} source entries shown**")
 
+    # ------------------------------------------------------------------
+    # COMPANY INTELLIGENCE — displayed directly inside the portal
+    # ------------------------------------------------------------------
+    # The portal uses verified company/sector links where available and
+    # deliberately avoids fabricating live financial figures. Company-specific
+    # financial metrics should be taken from the latest annual report/investor
+    # filing before students use them in assignments or interviews.
+    SECTOR_CUSTOMERS = {
+        "Banking & Financial Services": "Retail customers, businesses, MSMEs and institutional clients (B2C + B2B).",
+        "Insurance": "Individuals, families, employers and distribution partners (primarily B2C/B2B2C).",
+        "Financial Services": "Retail investors, HNIs, businesses and institutional clients (B2C + B2B).",
+        "FMCG & Food": "Mass-market consumers, households, retailers and distributors (primarily B2C).",
+        "Paints & Building Materials": "Homeowners, contractors, dealers, builders, architects and institutional buyers (B2C + B2B).",
+        "Consumer Durables & Electricals": "Households, retailers, dealers, builders and institutional buyers (B2C + B2B).",
+        "Technology & IT Services": "Enterprises, governments, institutions and digital consumers depending on the offering (B2B/B2G/B2C).",
+        "EdTech & Education": "Students, parents, schools, colleges and corporate learners (B2C/B2B/B2B2C).",
+        "Telecom & Digital Services": "Consumers, enterprises and institutions using connectivity and digital services (B2C + B2B).",
+        "Automotive & Mobility": "Vehicle buyers, fleet operators, dealerships, OEMs and mobility customers (B2C + B2B).",
+        "Manufacturing & Engineering": "Industrial customers, distributors, OEMs, infrastructure firms and institutional buyers (B2B).",
+        "Textiles": "Apparel brands, retailers, exporters, distributors and end consumers depending on the product (B2B/B2C).",
+        "Hospitality & Tourism": "Leisure travellers, business travellers, families, corporate clients and event customers (B2C + B2B).",
+        "Media & Entertainment": "Readers/viewers/listeners, advertisers, brands and digital audiences (B2C + B2B).",
+        "Retail & E-commerce": "Individual consumers, households and digital shoppers (primarily B2C).",
+        "Real Estate & Housing Finance": "Homebuyers, investors, borrowers, developers and property customers (B2C + B2B).",
+        "Renewable Energy": "Homes, commercial establishments, institutions and industrial customers seeking clean-energy solutions (B2B + B2C).",
+        "HR & Recruitment Services": "Employers, recruiters, job seekers and organisations requiring workforce solutions (B2B/B2C).",
+        "Business & Professional Services": "Businesses, institutions and organisations requiring specialised professional or operational services (B2B).",
+        "Diversified / Conglomerate": "Multiple customer segments across the group's businesses."
+    }
+
+    SECTOR_CHANNELS = {
+        "Banking & Financial Services": "Branches, relationship managers, mobile/web banking, call centres and partner channels.",
+        "Insurance": "Agents, bancassurance, brokers, branches, digital channels and corporate partnerships.",
+        "Financial Services": "Branches/offices, relationship managers, digital platforms, distributors and partner networks.",
+        "FMCG & Food": "General trade, modern trade, distributors, e-commerce and direct/brand channels.",
+        "Paints & Building Materials": "Dealers, distributors, retailers, project sales and digital discovery channels.",
+        "Consumer Durables & Electricals": "Dealers, distributors, retail stores, e-commerce and institutional/project sales.",
+        "Technology & IT Services": "Direct enterprise sales, account teams, partnerships, digital channels and global delivery centres.",
+        "EdTech & Education": "Direct sales, counsellors, institutional partnerships, websites/apps and digital marketing.",
+        "Telecom & Digital Services": "Retail outlets, digital channels, direct sales, distributors and enterprise sales teams.",
+        "Automotive & Mobility": "Dealerships, digital platforms, OEM/distributor networks, fleet sales and service centres.",
+        "Manufacturing & Engineering": "Direct sales, distributors, dealers, OEM relationships, tenders and project sales.",
+        "Textiles": "Direct B2B sales, exporters, distributors, retailers, brands and e-commerce where applicable.",
+        "Hospitality & Tourism": "Brand websites/apps, OTAs, travel agents, corporate sales and direct bookings.",
+        "Media & Entertainment": "Print, websites/apps, social platforms, OTT/digital properties, subscriptions and advertising sales.",
+        "Retail & E-commerce": "Stores, websites, apps, marketplaces, omnichannel and direct-to-consumer channels.",
+        "Real Estate & Housing Finance": "Branches, field sales, direct sales, brokers/channel partners and digital platforms.",
+        "Renewable Energy": "Direct sales, channel partners, EPC/project teams, digital lead generation and institutional sales.",
+        "HR & Recruitment Services": "Direct enterprise sales, recruiters, staffing teams, digital platforms and client relationships.",
+        "Business & Professional Services": "Direct enterprise sales, consulting/account teams, partnerships and referrals.",
+        "Diversified / Conglomerate": "Business-unit specific; typically a mix of direct sales, retail, digital and partner channels."
+    }
+
+    SECTOR_PRICING = {
+        "Banking & Financial Services": "Product-specific pricing: interest rates, fees, commissions and spreads; varies by customer/product.",
+        "Insurance": "Risk-based premiums and product-specific charges, influenced by coverage, term and customer profile.",
+        "Financial Services": "Product/service fees, commissions, brokerage, spreads and asset/service-based charges.",
+        "FMCG & Food": "Competitive, volume-driven pricing with different price points across brands and channels.",
+        "Paints & Building Materials": "Market- and channel-based pricing influenced by product segment, dealer economics and competition.",
+        "Consumer Durables & Electricals": "Tiered/competitive pricing across product categories and channels.",
+        "Technology & IT Services": "Contract/project/subscription-based pricing depending on service or product.",
+        "EdTech & Education": "Course/program/service pricing, often differentiated by format, duration and customer segment.",
+        "Telecom & Digital Services": "Plan/package-based competitive pricing, often with bundles and usage tiers.",
+        "Automotive & Mobility": "Segment and model-based pricing, with financing, dealer and service economics affecting the customer proposition.",
+        "Manufacturing & Engineering": "B2B/project pricing negotiated by volume, specifications, contracts and input costs.",
+        "Textiles": "Market- and order-based pricing influenced by fibre, quality, volumes, brand and export conditions.",
+        "Hospitality & Tourism": "Dynamic pricing based on demand, season, location, room/product category and booking channel.",
+        "Media & Entertainment": "Advertising, subscription and/or transaction-based pricing depending on the business model.",
+        "Retail & E-commerce": "Competitive retail pricing with category, brand, promotion and channel-specific differences.",
+        "Real Estate & Housing Finance": "Property-specific pricing or interest-rate/fee-based pricing depending on the business model.",
+        "Renewable Energy": "Project/system pricing based on capacity, technology, financing, installation and service requirements.",
+        "HR & Recruitment Services": "Contract, placement, staffing or service-fee models depending on the offering.",
+        "Business & Professional Services": "Project, retainer, subscription, transaction or contract-based pricing depending on service.",
+        "Diversified / Conglomerate": "Varies by business unit."
+    }
+
+    SECTOR_COMPETITORS = {
+        "Banking & Financial Services": "Major private/public banks and other financial institutions serving the same customer segment.",
+        "Insurance": "Other life/general insurers, bancassurance-led competitors and digital insurance platforms.",
+        "Financial Services": "Banks, brokerages, wealth managers, asset managers and fintech competitors.",
+        "FMCG & Food": "Large national brands, regional brands, private labels and emerging D2C brands.",
+        "Paints & Building Materials": "Major paints/coatings brands plus regional manufacturers and construction-material competitors.",
+        "Consumer Durables & Electricals": "National consumer-electrical/durable brands, regional players and private labels.",
+        "Technology & IT Services": "Global IT-services firms, Indian IT majors, specialist technology firms and digital-native competitors.",
+        "EdTech & Education": "Traditional institutions, other EdTech platforms, coaching providers and specialised learning companies.",
+        "Telecom & Digital Services": "Other telecom operators and digital-service/platform providers.",
+        "Automotive & Mobility": "Vehicle OEMs, component suppliers, mobility platforms and other players in the relevant category.",
+        "Manufacturing & Engineering": "Domestic and multinational manufacturers, specialist suppliers and project/engineering firms.",
+        "Textiles": "Integrated textile groups, specialised manufacturers, exporters and international sourcing competitors.",
+        "Hospitality & Tourism": "Hotel chains, independent hotels, OTAs, resorts and alternative accommodation providers.",
+        "Media & Entertainment": "Other newspapers/media groups, digital publishers, broadcasters, streaming and social platforms.",
+        "Retail & E-commerce": "National retailers, e-commerce marketplaces, D2C brands and regional competitors.",
+        "Real Estate & Housing Finance": "Other developers, housing-finance companies, banks and NBFCs serving the same segment.",
+        "Renewable Energy": "Solar EPCs, rooftop/utility-scale developers, installers, equipment providers and energy-service firms.",
+        "HR & Recruitment Services": "Staffing firms, recruitment consultancies, job platforms and specialist workforce providers.",
+        "Business & Professional Services": "Consulting, outsourcing, technology-enabled and specialist professional-services firms.",
+        "Diversified / Conglomerate": "Varies by business unit."
+    }
+
+    def company_intelligence(row):
+        company = row["Company"]
+        sector = row["Sector"]
+        note = row.get("Note") or ""
+        # Company-specific business descriptions already maintained in the portal.
+        overview = note
+        if not overview:
+            overview = f"{company} is represented in IPER's published placement ecosystem under {sector}. Students should study the company's current business model, products/services, customers and roles before an interview."
+        return {
+            "Company Name": company,
+            "Industry/Sector": sector,
+            "Company Size (Employees)": "Use the latest company annual report / official corporate filing for the current employee count.",
+            "Current CEO": "Verify the current CEO/MD on the company's official corporate website or latest annual report.",
+            "Annual Revenue": "Use the latest reported financial year from the company's annual report / investor filing.",
+            "Revenue Growth Rate": "Calculate latest year-on-year growth from the company's reported revenue figures.",
+            "Annual Profit": "Use the latest reported net profit/PAT from the company's annual report / investor filing.",
+            "Profit Growth Rate": "Calculate latest year-on-year growth from the company's reported profit figures.",
+            "Key Products/Services": overview,
+            "Target Customer Segments": SECTOR_CUSTOMERS.get(sector, "Verify from the company's official business profile."),
+            "Pricing Strategy": SECTOR_PRICING.get(sector, "Verify from company/product information."),
+            "Distribution Channels": SECTOR_CHANNELS.get(sector, "Verify from the company's business model."),
+            "Market Share (%)": "Use a recent industry/company source and record the reporting year; market share may not be publicly disclosed for every company.",
+            "Primary Competitors": SECTOR_COMPETITORS.get(sector, "Identify competitors serving the same customer segment and geography."),
+            "Industry Growth Rate": "See the selected IBEF sector reference for the latest sector-level growth data and reporting period."
+        }
+
+    st.markdown("### 🔎 Company Intelligence")
+    st.caption("Select any company below to see its company profile, business context, research parameters and source links directly in the portal. Financial figures are intentionally source-based rather than guessed.")
+    for row in filtered_rows:
+        with st.expander(f"🏢 {row['Company']}  •  {row['Sector']}", expanded=False):
+            profile = company_intelligence(row)
+            p1, p2, p3 = st.columns([1.35, 1.35, 1])
+            with p1:
+                st.markdown("**Company Snapshot**")
+                st.write(f"**Sector:** {profile['Industry/Sector']}")
+                st.write(f"**Business:** {profile['Key Products/Services']}")
+            with p2:
+                st.markdown("**Market & Customer Context**")
+                st.write(f"**Customers:** {profile['Target Customer Segments']}")
+                st.write(f"**Pricing:** {profile['Pricing Strategy']}")
+                st.write(f"**Distribution:** {profile['Distribution Channels']}")
+            with p3:
+                st.markdown("**Research Sources**")
+                if row.get("AboutURL"):
+                    st.link_button("Open About Us ↗", row["AboutURL"], use_container_width=True)
+                if row.get("Website") and row.get("Website") != row.get("AboutURL"):
+                    st.link_button("Official Website ↗", row["Website"], use_container_width=True)
+                st.link_button("IBEF Sector Reference ↗", IBEF_SECTOR_URLS.get(row["Sector"], "https://www.ibef.org/"), use_container_width=True)
+            st.markdown("**Company Report — 15 Parameters**")
+            detail_cols = st.columns([0.45, 1.45, 3.25])
+            detail_cols[0].markdown("**#**")
+            detail_cols[1].markdown("**Parameter**")
+            detail_cols[2].markdown("**Portal Information / What to Verify**")
+            for no, (parameter, _) in enumerate(COMPANY_REPORT_FIELDS, 1):
+                cols = st.columns([0.45, 1.45, 3.25])
+                cols[0].write(str(no))
+                cols[1].markdown(f"**{parameter}**")
+                cols[2].write(profile.get(parameter, "Verify from an official source."))
+            st.info("For CEO, employee count, revenue, profit and market-share figures, record the latest reporting period and source. The portal does not fabricate current figures when they are not verified.")
+
     # Company Report / Sector Report assignment framework. These are displayed
     # inside the portal so students can research the company/sector using the
     # official About Us page, annual reports, investor presentations, and the
