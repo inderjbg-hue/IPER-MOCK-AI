@@ -2378,6 +2378,24 @@ elif selected_nav == "Industry & Company Insights":
     st.title("Industry & Company Insights")
     st.caption("Explore sectors in India and the companies documented in IPER's 2025–26 placement ecosystem. Use the information here to prepare for roles, interviews and campus recruitment.")
 
+    st.markdown("---")
+    st.markdown("## 3. The 5 Things You Must Know Before Any Company Interview")
+    must_cols = st.columns(5)
+    must_know = [
+        ("01", "Business", "What does the company actually do?"),
+        ("02", "Customers", "Who buys from or uses its products/services?"),
+        ("03", "Competition", "Who competes with it?"),
+        ("04", "Recent", "What recent development have you noticed?"),
+        ("05", "Your Fit", "Why do you want to work there and what can you contribute?"),
+    ]
+    for col, (num, title, desc) in zip(must_cols, must_know):
+        with col:
+            st.markdown(f"### {num}")
+            st.markdown(f"**{title}**")
+            st.caption(desc)
+
+    st.info("Placement tip: A strong answer to 'Why do you want to work with us?' should connect the company's business or role with your own skills, interests and career direction — not simply say that the company is reputed.")
+
     st.markdown("""
     <div style="background:linear-gradient(135deg,#433B86,#1E3A8A);padding:26px 30px;border-radius:14px;color:white;margin:10px 0 22px 0;">
       <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;opacity:.85;font-weight:700;">IPER Career Intelligence</div>
@@ -3146,24 +3164,6 @@ elif selected_nav == "Industry & Company Insights":
                 )
                 if answer_prompt.strip():
                     st.success("Good. Now say the answer aloud in your own words and keep it specific to the company and role.")
-
-    st.markdown("---")
-    st.markdown("## 3. The 5 Things You Must Know Before Any Company Interview")
-    must_cols = st.columns(5)
-    must_know = [
-        ("01", "Business", "What does the company actually do?"),
-        ("02", "Customers", "Who buys from or uses its products/services?"),
-        ("03", "Competition", "Who competes with it?"),
-        ("04", "Recent", "What recent development have you noticed?"),
-        ("05", "Your Fit", "Why do you want to work there and what can you contribute?"),
-    ]
-    for col, (num, title, desc) in zip(must_cols, must_know):
-        with col:
-            st.markdown(f"### {num}")
-            st.markdown(f"**{title}**")
-            st.caption(desc)
-
-    st.info("Placement tip: A strong answer to 'Why do you want to work with us?' should connect the company's business or role with your own skills, interests and career direction — not simply say that the company is reputed.")
 
 # SECTION 1: RESUME CHECKER & JOB MATCHER
 # SECTION: ABOUT MYSELF
