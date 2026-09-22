@@ -3706,14 +3706,42 @@ TECHNICAL KNOWLEDGE ASSESSMENT RULES:
 - If the candidate says "I don't know" or provides no substantive answer, technical score should be low.
 - Do not invent a company fact to mark the candidate wrong when the question does not establish that fact.
 
-STRICT SCORING ANCHORS FOR BOTH 0-100 COMPONENT SCORES:
-0-29 = seriously inadequate / mostly absent or materially incorrect
-30-49 = weak / substantial gaps
-50-59 = below placement-ready / partial understanding
-60-69 = adequate but clear gaps
-70-79 = good and mostly correct, with limited gaps
-80-89 = strong and well-supported; uncommon
-90-100 = exceptional, highly accurate and complete; very rare
+STRICT TECHNICAL KNOWLEDGE MARKING — BE DELIBERATELY MISELY:
+- Technical marks are NOT a reward for effort, length, confidence, fluency, or use of business buzzwords.
+- Start from 0 and add marks only for technically correct, relevant, clearly demonstrated knowledge.
+- A partially correct answer must remain low even if it sounds polished.
+- If a core concept is missing, the answer cannot receive a high technical score.
+- One or more material factual/conceptual errors should sharply reduce the score.
+- Unsupported claims, vague statements, circular explanations and generic examples earn little or no technical credit.
+- If the answer is mostly generic, treat technical knowledge as weak unless the question itself is behavioral.
+- For behavioral questions, technical/substance marks should reflect sound reasoning, decision-making, role understanding and evidence from the example; do not demand textbook terminology.
+- Do not give partial credit merely because an answer contains some correct words. The candidate must demonstrate the concept accurately.
+
+TECHNICAL SCORE ANCHORS — STRICT:
+0-19 = no meaningful technical understanding, irrelevant, or fundamentally wrong
+20-34 = very weak; isolated correct points but major misunderstanding or gaps
+35-49 = weak; some understanding but core concepts are missing or materially flawed
+50-59 = basic/partial; enough correct knowledge to show limited understanding, but important gaps remain
+60-69 = adequate; technically sound in the main points but with noticeable omissions or minor errors
+70-79 = good; mostly accurate, relevant and reasonably complete, but not deep or precise enough for a high score
+80-89 = strong; accurate, precise, complete and supported with appropriate application/example; uncommon
+90-100 = exceptional; near-expert accuracy, depth, completeness and application; extremely rare
+
+CALIBRATION RULES:
+- Do NOT default to 60, 70 or 80. A student must earn each mark.
+- If you are uncertain whether a technical claim is correct, do not award credit for that claim.
+- If the question has 4 clearly required technical elements and the candidate addresses only 2 adequately, the technical score should normally remain around the partial/basic range rather than being inflated for presentation quality.
+- A fluent but technically shallow answer should score lower technically than a simple but accurate answer.
+- 90+ should be used only when the response is exceptionally accurate and complete; normal good student answers should not receive it.
+
+COMMUNICATION SCORE ANCHORS:
+0-29 = seriously inadequate communication
+30-49 = weak communication with substantial problems
+50-59 = below placement-ready
+60-69 = adequate but clear communication gaps
+70-79 = good communication with limited gaps
+80-89 = strong communication; uncommon
+90-100 = exceptional communication; very rare
 
 IMPORTANT: Do not inflate scores. Use integers only. The FINAL SCORE must be the simple arithmetic average of Communication Score and Technical Knowledge Score, rounded to the nearest whole number. Do not use any other weighting.
 
@@ -3746,7 +3774,7 @@ Return ONLY valid JSON matching this exact structure:
                         response = client.chat.completions.create(
                             model=GROQ_MODEL,
                             messages=[
-                                {"role": "system", "content": "You are a strict, evidence-based MBA interview assessor. Return only the requested JSON."},
+                                {"role": "system", "content": "You are an exceptionally strict, evidence-based MBA interview assessor. Technical marks must be earned from demonstrated correctness; when in doubt, award less technical credit. Return only the requested JSON."},
                                 {"role": "user", "content": eval_prompt},
                             ],
                             temperature=0.15,
