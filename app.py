@@ -777,6 +777,8 @@ def init_database():
                 mode TEXT,
                 question TEXT,
                 duration_seconds REAL DEFAULT 0,
+                communication_score INTEGER DEFAULT 0,
+                technical_score INTEGER DEFAULT 0,
                 FOREIGN KEY(student_id) REFERENCES students(id)
             )
         """)
@@ -785,6 +787,10 @@ def init_database():
                              for row in conn.execute("PRAGMA table_info(interview_attempts)").fetchall()]
         if "duration_seconds" not in interview_columns:
             conn.execute("ALTER TABLE interview_attempts ADD COLUMN duration_seconds REAL DEFAULT 0")
+        if "communication_score" not in interview_columns:
+            conn.execute("ALTER TABLE interview_attempts ADD COLUMN communication_score INTEGER DEFAULT 0")
+        if "technical_score" not in interview_columns:
+            conn.execute("ALTER TABLE interview_attempts ADD COLUMN technical_score INTEGER DEFAULT 0")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS gd_rooms (
@@ -989,7 +995,8 @@ def load_student_attempts(student_id):
     try:
         rows = conn.execute(
             """
-            SELECT timestamp, domain, score, mode, question, duration_seconds
+            SELECT timestamp, domain, score, mode, question, duration_seconds,
+                   communication_score, technical_score
             FROM interview_attempts
             WHERE student_id = ?
             ORDER BY id ASC
@@ -1004,23 +1011,26 @@ def load_student_attempts(student_id):
             "Domain": row["domain"] or "", "Score": row["score"] or 0,
             "Mode": row["mode"] or "", "Question": row["question"] or "",
             "DurationSeconds": float(row["duration_seconds"] or 0),
+            "CommunicationScore": int(row["communication_score"] or 0),
+            "TechnicalScore": int(row["technical_score"] or 0),
         }
         for row in rows
     ]
 
 
-def save_student_attempt(student_id, domain, score, mode, question, duration_seconds=0):
+def save_student_attempt(student_id, domain, score, mode, question, duration_seconds=0, communication_score=0, technical_score=0):
     conn = get_db_connection()
     try:
         conn.execute(
             """
             INSERT INTO interview_attempts
-            (student_id, timestamp, domain, score, mode, question, duration_seconds)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (student_id, timestamp, domain, score, mode, question, duration_seconds, communication_score, technical_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 student_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 domain, int(score), mode, question, float(duration_seconds or 0),
+                int(communication_score or 0), int(technical_score or 0),
             ),
         )
         conn.commit()
@@ -3644,125 +3654,208 @@ elif selected_nav == "Interview Practice Room":
                 st.error("Please record your audio/video response or write your transcript text first.")
             elif mode in ("Audio Response Mode", "Video Response Mode") and not st.session_state.get("speech_detected", False):
                 st.error("No clear human speech was detected in this recording. Background music/noise has been ignored. Please record a spoken answer, or enter the transcript manually if you intentionally want to evaluate typed text.")
+            elif not st.session_state.get("current_question", "").strip():
+                st.error("Please generate a practice question before submitting your response.")
+            elif client is None:
+                st.error("AI feedback is unavailable because GROQ_API_KEY is not configured.")
             else:
-                with st.spinner("Analyzing your response..."):
+                with st.spinner("Assessing communication and technical knowledge separately..."):
                     c_name = st.session_state.get('first_name', 'Student')
-                    st.session_state["communication_metrics"] = communication_metrics(
+                    comm_metrics = communication_metrics(
                         final_response_text, st.session_state.get("communication_duration", 0.0)
                     )
+                    st.session_state["communication_metrics"] = comm_metrics
+
+                    # Strict placement rubric: the model must award marks only for evidence in the answer.
+                    # Communication and technical knowledge are deliberately scored independently.
                     eval_prompt = f"""
-                    Act as an encouraging MBA placement mentor at IPER Bhopal.
-                    Evaluate the response for candidate: {c_name}.
-                    Address {c_name} warmly by name across feedback areas.
+You are the senior interview assessor for the IPER MBA Placement Portal.
+Assess the candidate strictly and professionally. Be a MISTRAL SCORER: do not give marks merely because an answer sounds confident, fluent, long, or plausible.
+Only award marks that are supported by evidence in the candidate's actual response.
+High scores must be earned; scores above 80 are uncommon and require a clearly strong response. A response with major factual errors, invented facts, weak relevance, or missing core concepts must lose marks.
+Never invent facts that the candidate did not state.
 
-                    Question Asked: {st.session_state['current_question']}
-                    Candidate Response: {final_response_text}
-                    Resume Context: {json.dumps(st.session_state.get('resume_details', {}))}
-                    Practice Mode: {mode}
+QUESTION:
+{st.session_state['current_question']}
 
-                    Communication metrics calculated from the recording/transcript:
-                    {json.dumps(st.session_state.get("communication_metrics", {}))}
+CANDIDATE RESPONSE:
+{final_response_text}
 
-                    Evaluate the candidate as an MBA placement interviewer and English communication coach.
-                    Assess English communication separately from subject knowledge. Be constructive, evidence-based, and do not invent observations that cannot be supported by the transcript or calculated metrics.
+PRACTICE CATEGORY: {category}
+TARGET COMPANY: {selected_comp or 'Not company-specific'}
+TARGET SPECIALIZATION: {selected_spec or 'Not specialization-specific'}
+RESUME CONTEXT (use only as context; do not reward claims not supported by the response):
+{json.dumps(st.session_state.get('resume_details', {}))}
 
-                    Return response in VALID JSON strictly matching this structure:
-                    {{
-                        "CandidateName": "{c_name}",
-                        "GradingScore": <0-100 integer>,
-                        "ExecutiveSummary": "<Warm overall summary>",
-                        "TechnicalAssessment": "<Evaluation of subject knowledge and key points>",
-                        "CommunicationAssessment": "<Overall English communication assessment>",
-                        "EnglishCommunicationScore": <0-10>,
-                        "GrammarScore": <0-10>,
-                        "FillerWordsScore": <0-10>,
-                        "RateOfSpeechScore": <0-10>,
-                        "ToneScore": <0-10>,
-                        "ClarityScore": <0-10>,
-                        "GrammarIssues": ["<specific grammar issue and corrected form>"],
-                        "FillerWordsUsed": {{"word_or_phrase": <count>}},
-                        "RateOfSpeechAssessment": "<Assess WPM against professional interview speaking: generally around 120-160 WPM is a useful reference, but context matters>",
-                        "ToneAssessment": "<Assess professionalism, confidence, warmth, hesitation, and appropriateness from available evidence. Do not claim to hear vocal tone if only transcript is available>",
-                        "ClarityAssessment": "<Assess structure, sentence clarity, coherence, and ease of understanding>",
-                        "CommunicationStrengths": ["<strength>"],
-                        "CommunicationImprovements": ["<improvement>"],
-                        "ResumeAlignment": "<How effectively the candidate referenced relevant experience>",
-                        "KeyFlaws": "<Constructive highlights of points missed or needing clarity>",
-                        "CorrectiveSteps": "<Practical tips for {c_name} to improve next time>",
-                        "Benchmark100Answer": "<A clear, exemplary benchmark model answer>"
-                    }}
-                    """
-                    raw_eval = get_groq_response(eval_prompt)
-                    
+DETERMINISTIC COMMUNICATION METRICS:
+{json.dumps(comm_metrics)}
+
+COMMUNICATION ASSESSMENT RULES:
+- Assess only what can be supported by the transcript and deterministic metrics.
+- Grammar: identify actual grammar errors; do not penalize normal Indian English accent/usage merely for being different.
+- Clarity: assess structure, coherence, relevance and ease of understanding.
+- Filler words: use the supplied counts; do not invent additional counts.
+- Rate of speech: use WPM only when duration is available.
+- Tone: if only transcript/audio transcript is available, do not claim to hear vocal tone. For video/audio, tone can only be assessed if the available evidence supports it.
+- Communication score must reflect communication quality, not subject knowledge.
+
+TECHNICAL KNOWLEDGE ASSESSMENT RULES:
+- First identify the concepts/facts that a correct answer to this exact question requires.
+- Judge the candidate's statements against established business/management concepts and the question asked.
+- Separate correct, partially correct, unsupported, and incorrect claims.
+- Penalize contradictions, wrong definitions, wrong formulas, wrong business logic, and materially incorrect facts.
+- Do not award technical marks for generic confidence statements or communication fluency.
+- If the question is behavioral, assess the quality of the reasoning, decision-making, business understanding and relevance of the example rather than demanding textbook terminology.
+- If the candidate says "I don't know" or provides no substantive answer, technical score should be low.
+- Do not invent a company fact to mark the candidate wrong when the question does not establish that fact.
+
+STRICT SCORING ANCHORS FOR BOTH 0-100 COMPONENT SCORES:
+0-29 = seriously inadequate / mostly absent or materially incorrect
+30-49 = weak / substantial gaps
+50-59 = below placement-ready / partial understanding
+60-69 = adequate but clear gaps
+70-79 = good and mostly correct, with limited gaps
+80-89 = strong and well-supported; uncommon
+90-100 = exceptional, highly accurate and complete; very rare
+
+IMPORTANT: Do not inflate scores. Use integers only. The FINAL SCORE must be the simple arithmetic average of Communication Score and Technical Knowledge Score, rounded to the nearest whole number. Do not use any other weighting.
+
+Return ONLY valid JSON matching this exact structure:
+{{
+  "CandidateName": "{c_name}",
+  "CommunicationScore": 0,
+  "TechnicalKnowledgeScore": 0,
+  "FinalScore": 0,
+  "CommunicationAssessment": "",
+  "TechnicalKnowledgeAssessment": "",
+  "TechnicalCorrectness": "",
+  "CorrectPoints": [],
+  "TechnicalErrorsOrGaps": [],
+  "GrammarIssues": [],
+  "FillerWordsUsed": {{}},
+  "RateOfSpeechAssessment": "",
+  "ToneAssessment": "",
+  "ClarityAssessment": "",
+  "CommunicationStrengths": [],
+  "CommunicationImprovements": [],
+  "TechnicalStrengths": [],
+  "TechnicalImprovements": [],
+  "KeyCorrections": [],
+  "BenchmarkAnswer": "",
+  "NextPracticeFocus": ""
+}}
+"""
                     try:
-                        clean_json = raw_eval.replace("```json", "").replace("```", "").strip()
-                        eval_result = json.loads(clean_json)
+                        response = client.chat.completions.create(
+                            model=GROQ_MODEL,
+                            messages=[
+                                {"role": "system", "content": "You are a strict, evidence-based MBA interview assessor. Return only the requested JSON."},
+                                {"role": "user", "content": eval_prompt},
+                            ],
+                            temperature=0.15,
+                            response_format={
+                                "type": "json_schema",
+                                "json_schema": {
+                                    "name": "iper_interview_assessment",
+                                    "strict": True,
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "CandidateName": {"type": "string"},
+                                            "CommunicationScore": {"type": "integer", "minimum": 0, "maximum": 100},
+                                            "TechnicalKnowledgeScore": {"type": "integer", "minimum": 0, "maximum": 100},
+                                            "FinalScore": {"type": "integer", "minimum": 0, "maximum": 100},
+                                            "CommunicationAssessment": {"type": "string"},
+                                            "TechnicalKnowledgeAssessment": {"type": "string"},
+                                            "TechnicalCorrectness": {"type": "string"},
+                                            "CorrectPoints": {"type": "array", "items": {"type": "string"}},
+                                            "TechnicalErrorsOrGaps": {"type": "array", "items": {"type": "string"}},
+                                            "GrammarIssues": {"type": "array", "items": {"type": "string"}},
+                                            "FillerWordsUsed": {"type": "object", "additionalProperties": {"type": "integer"}},
+                                            "RateOfSpeechAssessment": {"type": "string"},
+                                            "ToneAssessment": {"type": "string"},
+                                            "ClarityAssessment": {"type": "string"},
+                                            "CommunicationStrengths": {"type": "array", "items": {"type": "string"}},
+                                            "CommunicationImprovements": {"type": "array", "items": {"type": "string"}},
+                                            "TechnicalStrengths": {"type": "array", "items": {"type": "string"}},
+                                            "TechnicalImprovements": {"type": "array", "items": {"type": "string"}},
+                                            "KeyCorrections": {"type": "array", "items": {"type": "string"}},
+                                            "BenchmarkAnswer": {"type": "string"},
+                                            "NextPracticeFocus": {"type": "string"}
+                                        },
+                                        "required": ["CandidateName", "CommunicationScore", "TechnicalKnowledgeScore", "FinalScore", "CommunicationAssessment", "TechnicalKnowledgeAssessment", "TechnicalCorrectness", "CorrectPoints", "TechnicalErrorsOrGaps", "GrammarIssues", "FillerWordsUsed", "RateOfSpeechAssessment", "ToneAssessment", "ClarityAssessment", "CommunicationStrengths", "CommunicationImprovements", "TechnicalStrengths", "TechnicalImprovements", "KeyCorrections", "BenchmarkAnswer", "NextPracticeFocus"],
+                                        "additionalProperties": False
+                                    }
+                                }
+                            }
+                        )
+                        eval_result = json.loads(response.choices[0].message.content or "{}")
 
-                        score = int(eval_result.get("GradingScore", 0))
-                        score = max(0, min(100, score))
+                        comm_score = max(0, min(100, int(eval_result.get("CommunicationScore", 0))))
+                        tech_score = max(0, min(100, int(eval_result.get("TechnicalKnowledgeScore", 0))))
+                        # Enforce the portal's scoring rule in Python, regardless of model output.
+                        final_score = int(round((comm_score + tech_score) / 2.0))
+                        eval_result["FinalScore"] = final_score
 
                         st.subheader(f"Interview Feedback for {c_name}")
-                        st.metric("Overall Score", f"{score} / 100")
+                        sc1, sc2, sc3 = st.columns(3)
+                        sc1.metric("Communication", f"{comm_score} / 100")
+                        sc2.metric("Technical Knowledge", f"{tech_score} / 100")
+                        sc3.metric("Final Score", f"{final_score} / 100")
+                        st.caption("Final Score = average of Communication and Technical Knowledge. Scores are intentionally strict and evidence-based.")
 
-                        metrics = st.session_state.get("communication_metrics", {})
-                        if metrics:
-                            st.markdown("### 🎙️ English Communication Analysis")
-                            m1, m2, m3, m4 = st.columns(4)
-                            m1.metric("English Communication", f"{eval_result.get('EnglishCommunicationScore', 0)}/10")
-                            m2.metric("Grammar", f"{eval_result.get('GrammarScore', 0)}/10")
-                            m3.metric("Rate of Speech", f"{metrics.get('wpm', 0)} WPM")
-                            m4.metric("Filler Words", str(metrics.get('filler_total', 0)))
-
-                            m5, m6, m7 = st.columns(3)
-                            m5.metric("Tone", f"{eval_result.get('ToneScore', 0)}/10")
-                            m6.metric("Clarity", f"{eval_result.get('ClarityScore', 0)}/10")
-                            m7.metric("Duration", f"{metrics.get('duration_minutes', 0)} min")
-
-                            st.markdown("**Grammar feedback**")
-                            for issue in eval_result.get("GrammarIssues", []):
-                                st.markdown(f"- {issue}")
-                            st.markdown("**Filler words detected**")
-                            filler = metrics.get("filler_counts", {})
-                            st.write(filler if filler else "No common filler words detected.")
-                            st.markdown("**Rate of speech**")
-                            st.write(eval_result.get("RateOfSpeechAssessment", ""))
-                            st.markdown("**Tone**")
-                            st.write(eval_result.get("ToneAssessment", ""))
-                            st.markdown("**Clarity**")
-                            st.write(eval_result.get("ClarityAssessment", ""))
-                            st.markdown("**Communication strengths**")
-                            for item in eval_result.get("CommunicationStrengths", []):
-                                st.markdown(f"- {item}")
-                            st.markdown("**Communication improvements**")
-                            for item in eval_result.get("CommunicationImprovements", []):
-                                st.markdown(f"- {item}")
-
-                        st.write(eval_result.get("ExecutiveSummary", ""))
-
-                        st.markdown("### Technical Assessment")
-                        st.write(eval_result.get("TechnicalAssessment", ""))
-
-                        st.markdown("### Communication Assessment")
+                        st.markdown("### 1. Communication Feedback")
                         st.write(eval_result.get("CommunicationAssessment", ""))
+                        metrics = comm_metrics
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Grammar", f"{max(0, min(10, round(comm_score/10)))} / 10")
+                        m2.metric("Rate of Speech", f"{metrics.get('wpm', 0)} WPM")
+                        m3.metric("Filler Words", str(metrics.get('filler_total', 0)))
+                        m4.metric("Duration", f"{metrics.get('duration_minutes', 0)} min")
+                        st.markdown("**Grammar Issues**")
+                        for issue in eval_result.get("GrammarIssues", []): st.markdown(f"- {issue}")
+                        st.markdown("**Filler Words Detected**")
+                        filler = metrics.get("filler_counts", {})
+                        st.write(filler if filler else "No common filler words detected.")
+                        st.markdown("**Rate of Speech**")
+                        st.write(eval_result.get("RateOfSpeechAssessment", ""))
+                        st.markdown("**Tone**")
+                        st.write(eval_result.get("ToneAssessment", ""))
+                        st.markdown("**Clarity**")
+                        st.write(eval_result.get("ClarityAssessment", ""))
+                        st.markdown("**Communication Strengths**")
+                        for item in eval_result.get("CommunicationStrengths", []): st.markdown(f"- {item}")
+                        st.markdown("**Communication Improvements**")
+                        for item in eval_result.get("CommunicationImprovements", []): st.markdown(f"- {item}")
 
-                        st.markdown("### Resume Alignment")
-                        st.write(eval_result.get("ResumeAlignment", ""))
+                        st.markdown("### 2. Technical Knowledge Feedback")
+                        st.write(eval_result.get("TechnicalKnowledgeAssessment", ""))
+                        st.markdown("**Technical Correctness**")
+                        st.write(eval_result.get("TechnicalCorrectness", ""))
+                        st.markdown("**What You Got Right**")
+                        for item in eval_result.get("CorrectPoints", []): st.markdown(f"- {item}")
+                        st.markdown("**Technical Errors / Knowledge Gaps**")
+                        for item in eval_result.get("TechnicalErrorsOrGaps", []): st.markdown(f"- {item}")
+                        st.markdown("**Technical Strengths**")
+                        for item in eval_result.get("TechnicalStrengths", []): st.markdown(f"- {item}")
+                        st.markdown("**Technical Improvements**")
+                        for item in eval_result.get("TechnicalImprovements", []): st.markdown(f"- {item}")
+                        st.markdown("**Key Corrections**")
+                        for item in eval_result.get("KeyCorrections", []): st.markdown(f"- {item}")
 
-                        st.markdown("### Key Areas to Improve")
-                        st.write(eval_result.get("KeyFlaws", ""))
-
-                        st.markdown("### Corrective Steps")
-                        st.write(eval_result.get("CorrectiveSteps", ""))
-
-                        st.markdown("### Benchmark 100/100 Answer")
-                        st.write(eval_result.get("Benchmark100Answer", ""))
+                        st.markdown("### Benchmark Answer")
+                        st.write(eval_result.get("BenchmarkAnswer", ""))
+                        st.markdown("### Next Practice Focus")
+                        st.info(eval_result.get("NextPracticeFocus", ""))
 
                         attempt_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                         attempt = {
                             "Timestamp": attempt_timestamp,
                             "Candidate": c_name,
                             "Domain": category,
-                            "Score": score,
+                            "Score": final_score,
+                            "CommunicationScore": comm_score,
+                            "TechnicalScore": tech_score,
                             "Mode": mode,
                             "Question": st.session_state.get("current_question", ""),
                             "DurationSeconds": float(st.session_state.get("communication_duration", 0.0) or 0.0)
@@ -3771,15 +3864,17 @@ elif selected_nav == "Interview Practice Room":
                         save_student_attempt(
                             st.session_state["student_id"],
                             category,
-                            score,
+                            final_score,
                             mode,
                             st.session_state.get("current_question", ""),
-                            st.session_state.get("communication_duration", 0.0)
+                            st.session_state.get("communication_duration", 0.0),
+                            comm_score,
+                            tech_score,
                         )
+                    except Exception as err:
+                        st.error(f"Interview assessment error: {err}")
+                        st.info("The answer was not scored. Please try the assessment again.")
 
-                    except (json.JSONDecodeError, TypeError, ValueError):
-                        st.warning("The AI response was not returned as valid JSON. The raw feedback is shown below.")
-                        st.markdown(raw_eval)
 
 # SECTION 4: GROUP DISCUSSION HUB
 elif selected_nav == "Group Discussion Hub":
