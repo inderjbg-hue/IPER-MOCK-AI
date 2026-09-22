@@ -2804,6 +2804,84 @@ elif selected_nav == "Industry & Company Insights":
     ]
 
     st.markdown(f"**{len(filtered_rows)} source entries shown**")
+
+    # Company Report / Sector Report assignment framework. These are displayed
+    # inside the portal so students can research the company/sector using the
+    # official About Us page, annual reports, investor presentations, and the
+    # IBEF sector reference. The portal does not invent current financial or
+    # market-share figures where they have not been verified.
+    COMPANY_REPORT_FIELDS = [
+        ("Company Name", "Name of the company"),
+        ("Industry/Sector", "The industry in which the company operates"),
+        ("Company Size (Employees)", "Total number of employees working in the company"),
+        ("Current CEO", "Name of the current CEO"),
+        ("Annual Revenue", "Total revenue generated in the last financial year"),
+        ("Revenue Growth Rate", "Percentage increase in revenue over the past years"),
+        ("Annual Profit", "Net profit reported in the last financial year"),
+        ("Profit Growth Rate", "Percentage increase in profit over the past years"),
+        ("Key Products/Services", "Main products or services offered by the company"),
+        ("Target Customer Segments", "Who are the company’s primary customers (B2B/B2C)?"),
+        ("Pricing Strategy", "How the company prices its products/services (Premium, Affordable, Competitive, etc.)"),
+        ("Distribution Channels", "How the company sells its products (Retail, Online, Distributors, Direct Sales, etc.)"),
+        ("Market Share (%)", "The company’s market share in its industry"),
+        ("Primary Competitors", "Key companies competing in the same industry"),
+        ("Industry Growth Rate", "Growth rate of the overall industry the company operates in"),
+    ]
+
+    SECTOR_REPORT_FIELDS = [
+        ("Sector Name", "Name of the industry/sector"),
+        ("Market Size", "Total market valuation in terms of revenue or GDP contribution"),
+        ("Growth Rate", "Current and projected industry growth rate (%)"),
+        ("Major Players", "Leading companies operating in this industry"),
+        ("Key Products/Services", "Main offerings of this industry"),
+        ("Target Customer Segments", "Who are the primary consumers (B2B/B2C)?"),
+        ("Revenue Generation Model", "How does the industry generate revenue (subscription, direct sales, commission, etc.)?"),
+        ("Market Trends", "Emerging trends, innovations, or new technologies"),
+        ("Regulatory Environment", "Government policies, regulations, and compliance requirements"),
+        ("Challenges & Risks", "Major obstacles affecting industry growth"),
+        ("Opportunities", "Potential areas for expansion or investment"),
+        ("Future Outlook", "Expected industry performance in the coming years"),
+    ]
+
+    with st.expander("📋 Company Report — Research Sheet", expanded=False):
+        st.caption("Use this sheet to prepare your company report. Verify current figures from the company's official sources before using them in an assignment or interview.")
+        report_header = st.columns([0.55, 1.45, 3.0, 2.2])
+        report_header[0].markdown("**S. No.**")
+        report_header[1].markdown("**Parameter**")
+        report_header[2].markdown("**Description**")
+        report_header[3].markdown("**Student Answer / Notes**")
+        for idx, (parameter, description) in enumerate(COMPANY_REPORT_FIELDS, 1):
+            cols = st.columns([0.55, 1.45, 3.0, 2.2])
+            cols[0].write(str(idx))
+            cols[1].markdown(f"**{parameter}**")
+            cols[2].write(description)
+            cols[3].text_input(
+                parameter,
+                key=f"company_report_{idx}_{selected_sector}",
+                label_visibility="collapsed",
+                placeholder="Enter your answer / notes...",
+            )
+
+    with st.expander(f"📊 Sector Report — {selected_sector}", expanded=False):
+        st.caption("Use this sheet to understand the broader industry before preparing for a company-specific placement interview.")
+        sector_header = st.columns([0.55, 1.45, 3.0, 2.2])
+        sector_header[0].markdown("**S. No.**")
+        sector_header[1].markdown("**Parameter**")
+        sector_header[2].markdown("**Description**")
+        sector_header[3].markdown("**Student Answer / Notes**")
+        for idx, (parameter, description) in enumerate(SECTOR_REPORT_FIELDS, 1):
+            cols = st.columns([0.55, 1.45, 3.0, 2.2])
+            cols[0].write(str(idx))
+            cols[1].markdown(f"**{parameter}**")
+            cols[2].write(description)
+            cols[3].text_input(
+                parameter,
+                key=f"sector_report_{idx}_{selected_sector}",
+                label_visibility="collapsed",
+                placeholder="Enter your answer / notes...",
+            )
+
+    st.markdown("### Company Profiles")
     for row in filtered_rows:
         with st.expander(f"{row['Company']}  ·  {row['Sector']}"):
             left, right = st.columns([1.5, 1])
