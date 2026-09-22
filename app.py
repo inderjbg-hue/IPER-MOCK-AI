@@ -782,15 +782,12 @@ def init_database():
                 FOREIGN KEY(student_id) REFERENCES students(id)
             )
         """)
-        # Backward-compatible migration for practice duration tracking.
-        interview_columns = [row[0] if USING_POSTGRES else row[1]
-                             for row in conn.execute("PRAGMA table_info(interview_attempts)").fetchall()]
-        if "duration_seconds" not in interview_columns:
-            conn.execute("ALTER TABLE interview_attempts ADD COLUMN duration_seconds REAL DEFAULT 0")
-        if "communication_score" not in interview_columns:
-            conn.execute("ALTER TABLE interview_attempts ADD COLUMN communication_score INTEGER DEFAULT 0")
-        if "technical_score" not in interview_columns:
-            conn.execute("ALTER TABLE interview_attempts ADD COLUMN technical_score INTEGER DEFAULT 0")
+        # Backward-compatible migrations. IF NOT EXISTS is safe on both
+        # SQLite and PostgreSQL and prevents duplicate-column crashes when
+        # Streamlit reruns init_database() against an existing database.
+        conn.execute("ALTER TABLE interview_attempts ADD COLUMN IF NOT EXISTS duration_seconds REAL DEFAULT 0")
+        conn.execute("ALTER TABLE interview_attempts ADD COLUMN IF NOT EXISTS communication_score INTEGER DEFAULT 0")
+        conn.execute("ALTER TABLE interview_attempts ADD COLUMN IF NOT EXISTS technical_score INTEGER DEFAULT 0")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS gd_rooms (
