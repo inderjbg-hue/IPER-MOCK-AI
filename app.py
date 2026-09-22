@@ -2904,6 +2904,45 @@ elif selected_nav == "Industry & Company Insights":
         "Diversified / Conglomerate": "Varies by business unit."
     }
 
+    # Company Report / Sector Report assignment framework. These are displayed
+    # inside the portal so students can research the company/sector using the
+    # official About Us page, annual reports, investor presentations, and the
+    # IBEF sector reference. The portal does not invent current financial or
+    # market-share figures where they have not been verified.
+    COMPANY_REPORT_FIELDS = [
+        ("Company Name", "Name of the company"),
+        ("Industry/Sector", "The industry in which the company operates"),
+        ("Company Size (Employees)", "Total number of employees working in the company"),
+        ("Current CEO", "Name of the current CEO"),
+        ("Annual Revenue", "Total revenue generated in the last financial year"),
+        ("Revenue Growth Rate", "Percentage increase in revenue over the past years"),
+        ("Annual Profit", "Net profit reported in the last financial year"),
+        ("Profit Growth Rate", "Percentage increase in profit over the past years"),
+        ("Key Products/Services", "Main products or services offered by the company"),
+        ("Target Customer Segments", "Who are the company’s primary customers (B2B/B2C)?"),
+        ("Pricing Strategy", "How the company prices its products/services (Premium, Affordable, Competitive, etc.)"),
+        ("Distribution Channels", "How the company sells its products (Retail, Online, Distributors, Direct Sales, etc.)"),
+        ("Market Share (%)", "The company’s market share in its industry"),
+        ("Primary Competitors", "Key companies competing in the same industry"),
+        ("Industry Growth Rate", "Growth rate of the overall industry the company operates in"),
+    ]
+
+    SECTOR_REPORT_FIELDS = [
+        ("Sector Name", "Name of the industry/sector"),
+        ("Market Size", "Total market valuation in terms of revenue or GDP contribution"),
+        ("Growth Rate", "Current and projected industry growth rate (%)"),
+        ("Major Players", "Leading companies operating in this industry"),
+        ("Key Products/Services", "Main offerings of this industry"),
+        ("Target Customer Segments", "Who are the primary consumers (B2B/B2C)?"),
+        ("Revenue Generation Model", "How does the industry generate revenue (subscription, direct sales, commission, etc.)?"),
+        ("Market Trends", "Emerging trends, innovations, or new technologies"),
+        ("Regulatory Environment", "Government policies, regulations, and compliance requirements"),
+        ("Challenges & Risks", "Major obstacles affecting industry growth"),
+        ("Opportunities", "Potential areas for expansion or investment"),
+        ("Future Outlook", "Expected industry performance in the coming years"),
+    ]
+
+
     def company_intelligence(row):
         company = row["Company"]
         sector = row["Sector"]
@@ -2963,44 +3002,6 @@ elif selected_nav == "Industry & Company Insights":
                 cols[1].markdown(f"**{parameter}**")
                 cols[2].write(profile.get(parameter, "Verify from an official source."))
             st.info("For CEO, employee count, revenue, profit and market-share figures, record the latest reporting period and source. The portal does not fabricate current figures when they are not verified.")
-
-    # Company Report / Sector Report assignment framework. These are displayed
-    # inside the portal so students can research the company/sector using the
-    # official About Us page, annual reports, investor presentations, and the
-    # IBEF sector reference. The portal does not invent current financial or
-    # market-share figures where they have not been verified.
-    COMPANY_REPORT_FIELDS = [
-        ("Company Name", "Name of the company"),
-        ("Industry/Sector", "The industry in which the company operates"),
-        ("Company Size (Employees)", "Total number of employees working in the company"),
-        ("Current CEO", "Name of the current CEO"),
-        ("Annual Revenue", "Total revenue generated in the last financial year"),
-        ("Revenue Growth Rate", "Percentage increase in revenue over the past years"),
-        ("Annual Profit", "Net profit reported in the last financial year"),
-        ("Profit Growth Rate", "Percentage increase in profit over the past years"),
-        ("Key Products/Services", "Main products or services offered by the company"),
-        ("Target Customer Segments", "Who are the company’s primary customers (B2B/B2C)?"),
-        ("Pricing Strategy", "How the company prices its products/services (Premium, Affordable, Competitive, etc.)"),
-        ("Distribution Channels", "How the company sells its products (Retail, Online, Distributors, Direct Sales, etc.)"),
-        ("Market Share (%)", "The company’s market share in its industry"),
-        ("Primary Competitors", "Key companies competing in the same industry"),
-        ("Industry Growth Rate", "Growth rate of the overall industry the company operates in"),
-    ]
-
-    SECTOR_REPORT_FIELDS = [
-        ("Sector Name", "Name of the industry/sector"),
-        ("Market Size", "Total market valuation in terms of revenue or GDP contribution"),
-        ("Growth Rate", "Current and projected industry growth rate (%)"),
-        ("Major Players", "Leading companies operating in this industry"),
-        ("Key Products/Services", "Main offerings of this industry"),
-        ("Target Customer Segments", "Who are the primary consumers (B2B/B2C)?"),
-        ("Revenue Generation Model", "How does the industry generate revenue (subscription, direct sales, commission, etc.)?"),
-        ("Market Trends", "Emerging trends, innovations, or new technologies"),
-        ("Regulatory Environment", "Government policies, regulations, and compliance requirements"),
-        ("Challenges & Risks", "Major obstacles affecting industry growth"),
-        ("Opportunities", "Potential areas for expansion or investment"),
-        ("Future Outlook", "Expected industry performance in the coming years"),
-    ]
 
     with st.expander("📋 Company Report — Research Sheet", expanded=False):
         st.caption("Use this sheet to prepare your company report. Verify current figures from the company's official sources before using them in an assignment or interview.")
