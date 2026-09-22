@@ -573,6 +573,12 @@ EXHAUSTIVE_QUESTIONS = {
 SPECIALIZATIONS = ["Marketing", "Finance", "Human Resource (HR)", "Banking and Finance", "Tourism and Services Industry"]
 IPER_RECRUITERS = ["Amul", "Asian Paints", "HDFC Bank", "ICICI Securities", "Deloitte", "Trident Group", "Berger Paints"]
 
+# Complete IPER recruiter list used across Interview Preparation.
+# Built from the same 2025-26 company source list used by Industry & Company Insights.
+IPER_INTERVIEW_COMPANIES = [('Axis Bank Ltd.', 'Banking & Financial Services'), ('Bajaj Life Insurance Ltd.', 'Insurance'), ('DCB Bank Ltd.', 'Banking & Financial Services'), ('HDFC Life Insurance Co. Ltd.', 'Insurance'), ('ICICI Prudential Life Insurance Co. Ltd.', 'Insurance'), ('Teleperformance India Pvt. Ltd.', 'Business & Professional Services'), ('Asian Paints', 'Paints & Building Materials'), ('Berger Paints India Ltd.', 'Paints & Building Materials'), ('Ceasefire Industries Pvt. Ltd.', 'Manufacturing & Engineering'), ('Home First Finance Co. India Ltd.', 'Real Estate & Housing Finance'), ('KMV Ventures Pvt. Ltd.', 'Business & Professional Services'), ('Havells India Ltd.', 'Consumer Durables & Electricals'), ('Indigo Paints Ltd.', 'Paints & Building Materials'), ('Methodex Systems Pvt. Ltd.', 'Manufacturing & Engineering'), ('The-H Digital Solutions Pvt. Ltd.', 'Technology & IT Services'), ('IndiaMART InterMESH Ltd.', 'Technology & IT Services'), ('CarWale (CarTrade Tech Ltd.)', 'Technology & IT Services'), ('Yash Technologies Pvt. Ltd.', 'Technology & IT Services'), ('AISECT Ltd.', 'EdTech & Education'), ('Bhanzu', 'EdTech & Education'), ('Edukyu Pvt. Ltd.', 'EdTech & Education'), ('Trounsoler Ed-Tech Services Pvt. Ltd.', 'EdTech & Education'), ('Jaro Education', 'EdTech & Education'), ('Learning Shala', 'EdTech & Education'), ('PlanetSpark', 'EdTech & Education'), ('PREPOCA (Limeam Eduserver)', 'EdTech & Education'), ('Step UP Academy', 'EdTech & Education'), ('Sygnific Careers Pvt. Ltd.', 'HR & Recruitment Services'), ('Tata ClassEdge Ltd.', 'EdTech & Education'), ('Toprankers Edtech Solutions Pvt. Ltd.', 'EdTech & Education'), ('Naukri.com (Info India Ltd.)', 'Technology & IT Services'), ('Eastman Auto', 'Automotive & Mobility'), ('XL Dynamics India Pvt. Ltd.', 'Financial Services'), ('Amul', 'FMCG & Food'), ('Haleon Plc', 'FMCG & Food'), ('Himalaya Wellness Co.', 'FMCG & Food'), ('Majestic Basmati Rice Pvt. Ltd.', 'FMCG & Food'), ('Mahindra Holidays & Resorts India Ltd.', 'Hospitality & Tourism'), ('Marriott International India', 'Hospitality & Tourism'), ('Artech Infosystems Pvt. Ltd.', 'HR & Recruitment Services'), ('Collabera Services Pvt. Ltd.', 'HR & Recruitment Services'), ('Futur Staffing Solutions Pvt. Ltd.', 'HR & Recruitment Services'), ('Sarthee Consultancy', 'HR & Recruitment Services'), ('American Chase', 'HR & Recruitment Services'), ('Anaxee Digital Runners Pvt. Ltd.', 'Business & Professional Services'), ('Cogent Infotech', 'Technology & IT Services'), ('Netlink Software Pvt. Ltd.', 'Technology & IT Services'), ('Tata Consultancy Services Ltd.', 'Technology & IT Services'), ('Bhaskar Industries Pvt. Ltd.', 'Manufacturing & Engineering'), ('Impression Furniture Industries Pvt. Ltd.', 'Manufacturing & Engineering'), ('Motilal Oswal', 'Financial Services'), ('MPM Ltd.', 'Manufacturing & Engineering'), ('Shakesteller Energy Solutions Pvt. Ltd.', 'Renewable Energy'), ('Trident Group', 'Textiles'), ('DB Corp Ltd. (Dainik Bhaskar)', 'Media & Entertainment'), ('The Times Group', 'Media & Entertainment'), ('Aditya Capital Pvt. Ltd.', 'Financial Services'), ('Bajaj Finserv Ltd.', 'Financial Services'), ('Bajaj Housing Finance Ltd.', 'Real Estate & Housing Finance'), ('ICICI Securities Ltd.', 'Financial Services'), ('India Shelter Finance Corporation Ltd.', 'Real Estate & Housing Finance'), ('NJ India Invest Pvt. Ltd.', 'Financial Services'), ('Ashiana Housing Ltd.', 'Real Estate & Housing Finance'), ('MoneyOne Consulting Pvt. Ltd.', 'Financial Services'), ('SCG Group', 'Business & Professional Services'), ('Deloitte Consulting India Pvt. Ltd.', 'Business & Professional Services'), ('Aditya Birla Lifestyle Brands Ltd.', 'Retail & E-commerce'), ('Avenue Supermarts (DMart)', 'Retail & E-commerce'), ('Avenue Supermarts Ltd. (DMart)', 'Retail & E-commerce'), ('Bluestone Jewellery & Lifestyle Ltd.', 'Retail & E-commerce'), ('Pantaloons Fashion & Retail Ltd.', 'Retail & E-commerce'), ('Parnalan Fashion & Retail Ltd. (Calvin Klein & Tommy Hilfiger)', 'Retail & E-commerce'), ('SolarSquare Energy Pvt. Ltd.', 'Renewable Energy')]
+IPER_INTERVIEW_COMPANY_NAMES = [name for name, _sector in IPER_INTERVIEW_COMPANIES]
+IPER_INTERVIEW_COMPANY_SECTOR = {name: sector for name, sector in IPER_INTERVIEW_COMPANIES}
+
 CORE_INTERVIEW_QUESTIONS = [
     "Tell me something about yourself.", "Walk me through your resume.", "Why did you choose MBA?",
     "Why did you choose your specialization?", "What have you learned during your MBA?",
@@ -3356,44 +3362,139 @@ elif selected_nav == "Career Development":
 # SECTION 2: INTERVIEW PREPARATION GUIDE
 elif selected_nav == "Interview Preparation Guide":
     st.title("Interview Preparation Guide")
-    st.caption("Prepare with simple, placement-focused questions, clear answer structures, and practical examples.")
-    tabs=st.tabs(["Core Placement Questions","Subject & Company Preparation","What Did I Learn?"])
-    with tabs[0]:
+    st.caption("Prepare separately for Core, Subject and Company questions — then build answers around your own profile.")
+
+    prep_tabs = st.tabs(["Core Questions", "Subject Questions", "Company Questions", "Personalised Interview"])
+
+    with prep_tabs[0]:
         st.markdown("### Essential Interview Questions")
-        st.info("Practise these questions in your own words. Do not memorise the model answer.")
-        core_q=st.selectbox("Select a core question",CORE_INTERVIEW_QUESTIONS,key="core_interview_q")
-        if st.button("Prepare This Question",key="prepare_core_q",use_container_width=True):
+        st.info("Practise these in your own words. Use the guide to understand what the interviewer is checking — do not memorise the answer.")
+        core_q = st.selectbox("Select a core question", CORE_INTERVIEW_QUESTIONS, key="core_interview_q")
+        if st.button("Prepare This Question", key="prepare_core_q", use_container_width=True):
             with st.spinner("Preparing a simple interview guide..."):
                 prompt=f"""Act as a supportive MBA placement mentor at IPER Bhopal. Question: {core_q}. Use very simple, natural Indian-English. Avoid jargon and textbook language. Explain: 1) what the interviewer wants to know, 2) a simple answer structure, 3) a short natural sample answer, 4) one mistake to avoid, 5) one follow-up question."""
                 st.markdown(get_groq_response(prompt))
-    with tabs[1]:
-        prep_category=st.selectbox("Select Study Domain:",["General and Core Skills"]+SPECIALIZATIONS+["Company Specific"],key="prep_category_main")
-        if prep_category=="Company Specific":
-            comp_choice=st.selectbox("Select Target Company:",IPER_RECRUITERS,key="prep_company_main")
-            if st.button("Load Top Recruiter Questions",key="load_recruiter_questions"):
-                with st.spinner(f"Retrieving placement-style questions for {comp_choice}..."):
-                    st.markdown(get_groq_response(f"Generate 5 simple, realistic technical and situational interview questions for {comp_choice} during campus hiring. Use clear MBA-student language."))
-        else:
-            q_list=EXHAUSTIVE_QUESTIONS.get(prep_category,["Describe a key challenge you faced and how you resolved it."])
-            selected_question=st.selectbox("Select Question to Study",q_list,key="prep_question_main")
-            st.markdown(f"### Study Guide: {selected_question}")
-            if st.button("Generate Simple Answer Framework & Model Answer",key="generate_simple_guide"):
-                with st.spinner("Preparing a simple answer breakdown..."):
-                    prompt=f"""Act as a senior MBA Placement Advisor at IPER Bhopal. Question: {selected_question}. Domain: {prep_category}. Use simple natural language and avoid unnecessary jargon. Provide: 1) what interviewers look for, 2) simple STAR/CAR structure where appropriate, 3) short natural model answer, 4) one mistake to avoid, 5) one follow-up question."""
-                    st.markdown(get_groq_response(prompt))
-    with tabs[2]:
-        st.markdown("### Turn Activities into Interview Stories")
-        activity_type=st.radio("Activity Type",["Curricular","Extra-Curricular"],horizontal=True)
-        activity_list=CURRICULAR_ACTIVITIES if activity_type=="Curricular" else EXTRA_CURRICULAR_ACTIVITIES
-        activity=st.selectbox("Select Activity",activity_list,key="learning_activity")
-        role=st.text_input("Your role",placeholder="Example: Team leader / participant / coordinator")
-        challenge=st.text_area("What challenge did you face?",height=90,key="learning_challenge")
-        learning=st.text_area("What did you learn?",height=90,key="learning_text")
-        if st.button("Create Interview-Ready Learning Story",key="create_learning_story",use_container_width=True):
-            if not role.strip() or not learning.strip(): st.warning("Please add your role and what you learned.")
-            else:
-                with st.spinner("Converting your experience into a simple interview answer..."):
-                    st.markdown(generate_learning_story(activity,activity_type,st.session_state.get("first_name","Student"),role,challenge,learning))
+
+    with prep_tabs[1]:
+        st.markdown("### Subject / Specialisation Questions")
+        st.caption("Questions are organised by the student's subject or specialisation. Select a domain and practise the fundamentals.")
+        subject_options = ["General and Core Skills"] + SPECIALIZATIONS
+        prep_category = st.selectbox("Select Subject / Domain", subject_options, key="prep_subject_category")
+        q_list = EXHAUSTIVE_QUESTIONS.get(prep_category, ["Describe a key challenge you faced and how you resolved it."])
+        selected_question = st.selectbox("Select Question to Study", q_list, key="prep_subject_question")
+        st.markdown(f"### Study Guide: {selected_question}")
+        if st.button("Generate Subject Answer Framework", key="generate_subject_guide", use_container_width=True):
+            with st.spinner("Preparing a simple subject answer breakdown..."):
+                prompt=f"""Act as a senior MBA Placement Advisor at IPER Bhopal. Question: {selected_question}. Subject/domain: {prep_category}. Use simple natural language suitable for an MBA student. Provide: 1) concept in simple words, 2) what the interviewer expects, 3) a short natural model answer, 4) one practical example, 5) one mistake to avoid, 6) one follow-up question."""
+                st.markdown(get_groq_response(prompt))
+
+    with prep_tabs[2]:
+        st.markdown("### Company Questions")
+        st.caption("All companies from the IPER 2025–26 company source list are available here. Select a company to prepare company-specific questions.")
+        company_choice = st.selectbox("Select Target Company", IPER_INTERVIEW_COMPANY_NAMES, key="prep_company_main")
+        company_sector = IPER_INTERVIEW_COMPANY_SECTOR.get(company_choice, "")
+        st.info(f"**Sector:** {company_sector}")
+
+        company_questions = [
+            f"What do you know about {company_choice}?",
+            f"Why do you want to work with {company_choice}?",
+            f"What interests you about the {company_sector} sector?",
+            f"Which product or service of {company_choice} interests you and why?",
+            f"Who are the major competitors of {company_choice}?",
+            f"What recent development or business trend related to {company_choice} have you noticed?",
+            f"How can your MBA specialisation add value to {company_choice}?",
+            f"Why should {company_choice} hire you for this role?",
+        ]
+        for i, question in enumerate(company_questions, 1):
+            st.markdown(f"**{i}. {question}**")
+
+        selected_company_q = st.selectbox("Choose one company question to practise", company_questions, key="selected_company_question")
+        if st.button("Build Company Answer Framework", key="build_company_answer", use_container_width=True):
+            with st.spinner("Building a company-focused answer guide..."):
+                prompt=f"""Act as an MBA placement mentor at IPER Bhopal. Company: {company_choice}. Sector: {company_sector}. Interview question: {selected_company_q}. Give a practical answer framework for a student. Include: what the interviewer wants, 4-5 points the student should research/mention, a short natural sample answer, one mistake to avoid, and one follow-up question. Do not invent company facts; clearly mark anything that must be verified from the company's official website or latest report."""
+                st.markdown(get_groq_response(prompt))
+
+    with prep_tabs[3]:
+        st.markdown("### Personalised Interview — Built Around You")
+        st.caption("This section uses the student's About Myself profile and resume context to create a more personal answer and identify missing skills.")
+
+        student_name = st.session_state.get("first_name", "Student")
+        student_id = st.session_state.get("student_id")
+        personal_profile = load_student_profile(student_id) if student_id else {}
+        resume_context = st.session_state.get("resume_details", {}) or {}
+
+        if not personal_profile and not resume_context:
+            st.warning("Complete **About Myself** and/or upload your resume in **Resume Checker & Job Matcher** first. The personalised answer becomes much stronger when your profile is available.")
+
+        personal_questions = [
+            "Tell me about yourself.",
+            "Why did you choose your MBA specialisation?",
+            "Why should we hire you?",
+            "What are your strengths?",
+            "What is one skill you are currently improving?",
+            "Why do you want to work with this company?",
+            "Where do you see yourself in five years?",
+        ]
+        personal_question = st.selectbox("Select a personalised question", personal_questions, key="personalised_question")
+        target_company = st.selectbox("Target company (optional)", ["No specific company"] + IPER_INTERVIEW_COMPANY_NAMES, key="personalised_company")
+
+        if personal_question == "Tell me about yourself." and personal_profile.get("about_yourself"):
+            st.markdown("#### Your Current About Yourself")
+            st.info(personal_profile.get("about_yourself"))
+
+        if st.button("Build My Personalised Answer + Skill Gap", key="build_personalised_answer", use_container_width=True):
+            profile_text = json.dumps(personal_profile, ensure_ascii=False, default=str)
+            resume_text = json.dumps(resume_context, ensure_ascii=False, default=str)
+            company_context = "No specific company selected"
+            if target_company != "No specific company":
+                company_context = f"{target_company} | Sector: {IPER_INTERVIEW_COMPANY_SECTOR.get(target_company, '')}"
+            prompt=f"""You are an experienced MBA placement mentor at IPER Bhopal. Build a personalised interview response for {student_name}.
+
+Question: {personal_question}
+Target company: {company_context}
+About Myself profile: {profile_text}
+Resume context: {resume_text}
+
+Requirements:
+- Make the answer sound like the student, not like AI.
+- Use simple, natural Indian-English.
+- Use only information present in the profile/resume; do not invent achievements, marks, experience or skills.
+- For 'Tell me about yourself', structure it as: present -> education/experience -> strengths/skills -> career interest -> why the target role/company if relevant.
+- Keep the main answer around 45-75 seconds unless a different length is clearly more suitable.
+- Identify 3-5 important skills that are missing, weak, or not evidenced in the supplied profile/resume for the chosen question/role. Do not call a skill 'missing' if there is clear evidence of it.
+- Give a practical action for each skill gap.
+
+Return ONLY valid JSON in this structure:
+{{
+  "PersonalisedAnswer": "...",
+  "WhyThisAnswerWorks": ["...", "..."],
+  "SkillGaps": [
+    {{"Skill":"...", "WhyItMatters":"...", "HowToBuild":"..."}}
+  ],
+  "FollowUpQuestions": ["...", "...", "..."]
+}}"""
+            with st.spinner("Building your personalised interview answer and checking skill gaps..."):
+                raw = get_groq_response(prompt)
+            try:
+                data = json.loads(raw.replace("```json", "").replace("```", "").strip())
+                st.markdown("### Your Personalised Answer")
+                st.success(data.get("PersonalisedAnswer", ""))
+                st.markdown("### Why This Answer Works")
+                for item in data.get("WhyThisAnswerWorks", []):
+                    st.markdown(f"- {item}")
+                st.markdown("### Skills to Build")
+                gaps = data.get("SkillGaps", [])
+                if gaps:
+                    for gap in gaps:
+                        st.markdown(f"**{gap.get('Skill','Skill')}** — {gap.get('WhyItMatters','')}")
+                        st.caption(f"Action: {gap.get('HowToBuild','')}")
+                else:
+                    st.success("No major skill gaps were identified from the information provided. Keep strengthening the skills already demonstrated.")
+                st.markdown("### Likely Follow-up Questions")
+                for item in data.get("FollowUpQuestions", []):
+                    st.markdown(f"- {item}")
+            except Exception:
+                st.markdown(raw)
 
 # SECTION 3: INTERVIEW PRACTICE ROOM
 elif selected_nav == "Interview Practice Room":
