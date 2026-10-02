@@ -2290,8 +2290,8 @@ else:
 
 # SECTION 0: PROGRESS
 if selected_nav == "Progress":
-    st.title("Progress")
-    st.caption("A quick view of your placement-practice journey, activity and next steps.")
+    st.title("Weekly Progress")
+    st.caption("A quick view of your weekly placement-practice journey, activity and next steps.")
 
     scholar_id = st.session_state.get("scholar_id", "")
     student_id = st.session_state.get("student_id")
@@ -2339,7 +2339,7 @@ if selected_nav == "Progress":
     target_attempts = 20
     progress_pct = min(100, round(((pi_attempts + gd_attempts) / target_attempts) * 100))
 
-    st.markdown("### Placement Readiness Progress")
+    st.markdown("### Weekly Progress")
     st.progress(progress_pct, text=f"{progress_pct}% of your first {target_attempts} practice assessments completed")
 
     m1, m2, m3, m4 = st.columns(4)
@@ -3689,6 +3689,8 @@ DETERMINISTIC COMMUNICATION METRICS:
 
 COMMUNICATION ASSESSMENT RULES:
 - Assess only what can be supported by the transcript and deterministic metrics.
+- RESPONSE SUFFICIENCY IS MANDATORY: a few words, a fragment, a one-line answer, or an answer too short to demonstrate structure must score very low. Do not infer communication ability from evidence the candidate did not provide.
+- Start communication scoring from 0 and add marks only for demonstrated clarity, grammar, structure, relevance and completeness.
 - Grammar: identify actual grammar errors; do not penalize normal Indian English accent/usage merely for being different.
 - Clarity: assess structure, coherence, relevance and ease of understanding.
 - Filler words: use the supplied counts; do not invent additional counts.
@@ -3708,6 +3710,8 @@ TECHNICAL KNOWLEDGE ASSESSMENT RULES:
 
 STRICT TECHNICAL KNOWLEDGE MARKING — BE DELIBERATELY MISELY:
 - Technical marks are NOT a reward for effort, length, confidence, fluency, or use of business buzzwords.
+- A very short response must remain very low technically because it provides too little evidence of knowledge, even when the few words stated are correct.
+- Do not treat naming a keyword, definition fragment, or isolated correct phrase as demonstration of the concept.
 - Start from 0 and add marks only for technically correct, relevant, clearly demonstrated knowledge.
 - A partially correct answer must remain low even if it sounds polished.
 - If a core concept is missing, the answer cannot receive a high technical score.
@@ -3818,6 +3822,41 @@ Return ONLY valid JSON matching this exact structure:
 
                         comm_score = max(0, min(100, int(eval_result.get("CommunicationScore", 0))))
                         tech_score = max(0, min(100, int(eval_result.get("TechnicalKnowledgeScore", 0))))
+
+                        # Deterministic evidence/completeness cap. Very short answers are still
+                        # evaluated, but they cannot earn inflated communication or technical marks.
+                        # This is enforced in Python after the AI assessment, so the model cannot
+                        # bypass it. Students can score anywhere from 0 up to the cap they earn.
+                        response_word_count = int(comm_metrics.get("word_count", 0) or 0)
+                        if response_word_count <= 0:
+                            evidence_cap = 0
+                        elif response_word_count <= 5:
+                            evidence_cap = 5
+                        elif response_word_count <= 10:
+                            evidence_cap = 10
+                        elif response_word_count <= 20:
+                            evidence_cap = 20
+                        elif response_word_count <= 35:
+                            evidence_cap = 35
+                        elif response_word_count <= 50:
+                            evidence_cap = 50
+                        elif response_word_count <= 75:
+                            evidence_cap = 65
+                        else:
+                            evidence_cap = 100
+
+                        comm_score = min(comm_score, evidence_cap)
+                        tech_score = min(tech_score, evidence_cap)
+
+                        if response_word_count <= 20:
+                            brevity_note = (
+                                f"The response contained only {response_word_count} words. "
+                                f"Both Communication and Technical Knowledge were capped at {evidence_cap}/100 "
+                                "because there was insufficient evidence for a fuller assessment."
+                            )
+                            eval_result["CommunicationAssessment"] = brevity_note + " " + eval_result.get("CommunicationAssessment", "")
+                            eval_result["TechnicalKnowledgeAssessment"] = brevity_note + " " + eval_result.get("TechnicalKnowledgeAssessment", "")
+
                         # Enforce the portal's scoring rule in Python, regardless of model output.
                         final_score = int(round((comm_score + tech_score) / 2.0))
                         eval_result["FinalScore"] = final_score
