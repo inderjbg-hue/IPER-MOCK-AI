@@ -34,11 +34,28 @@ os.makedirs(VIDEO_STORAGE_DIR, exist_ok=True)
 st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-        
+
+        :root {
+            --iper-navy: #0F172A;
+            --iper-blue: #1E3A5F;
+            --iper-steel: #334E68;
+            --iper-slate: #475569;
+            --iper-muted: #64748B;
+            --iper-border: #CBD5E1;
+            --iper-light: #F1F5F9;
+            --iper-soft-blue: #E8F0F7;
+            --iper-gold: #B08D57;
+            --iper-gold-soft: #F7F1E7;
+            --iper-success: #2F6B4F;
+            --iper-success-soft: #EDF6F1;
+            --iper-danger: #8B3A3A;
+            --iper-danger-soft: #FAF0F0;
+        }
+
         html, body, .stApp {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
             background-color: #FFFFFF !important;
-            color: #0F172A !important;
+            color: var(--iper-navy) !important;
         }
 
         .main .block-container {
@@ -47,9 +64,10 @@ st.markdown("""
         }
 
         h1, h2, h3, h4, h5, h6 {
-            color: #0F172A !important;
+            color: var(--iper-navy) !important;
             font-family: 'Inter', sans-serif !important;
             font-weight: 700 !important;
+            letter-spacing: -0.01em !important;
         }
 
         p, label, td, th {
@@ -57,39 +75,59 @@ st.markdown("""
             font-family: 'Inter', sans-serif !important;
         }
 
-        div[role="radiogroup"] label {
-            color: #0F172A !important;
+        .stCaption, small {
+            color: var(--iper-muted) !important;
         }
-        
+
+        div[role="radiogroup"] label {
+            color: var(--iper-navy) !important;
+        }
+
         div[role="radiogroup"] div[data-checked="true"] > div {
-            background-color: #0F172A !important;
-            border-color: #0F172A !important;
+            background-color: var(--iper-navy) !important;
+            border-color: var(--iper-navy) !important;
         }
 
         [data-testid="stSidebar"] {
             background-color: #FFFFFF !important;
-            border-right: 1px solid #E2E8F0 !important;
+            border-right: 1px solid var(--iper-border) !important;
+        }
+
+        [data-testid="stSidebar"]::before {
+            content: "";
+            display: block;
+            height: 4px;
+            background: var(--iper-navy);
+            margin: -1rem -1rem 1rem -1rem;
         }
 
         div[data-baseweb="select"] > div,
-        .stSelectbox select, 
-        .stTextArea textarea, 
+        .stSelectbox select,
+        .stTextArea textarea,
         .stTextInput input {
             background-color: #FFFFFF !important;
-            color: #0F172A !important;
-            border: 1px solid #94A3B8 !important;
+            color: var(--iper-navy) !important;
+            border: 1px solid var(--iper-border) !important;
             border-radius: 6px !important;
             font-family: 'Inter', sans-serif !important;
         }
 
+        div[data-baseweb="select"] > div:focus-within,
+        .stTextArea textarea:focus,
+        .stTextInput input:focus {
+            border-color: var(--iper-blue) !important;
+            box-shadow: 0 0 0 1px var(--iper-blue) !important;
+        }
+
         .stButton > button {
-            background-color: #0F172A !important;
+            background-color: var(--iper-navy) !important;
             color: #FFFFFF !important;
             font-weight: 600 !important;
             font-size: 14px !important;
             border-radius: 6px !important;
-            border: 1px solid #0F172A !important;
+            border: 1px solid var(--iper-navy) !important;
             padding: 0.5rem 1.4rem !important;
+            transition: all 0.15s ease !important;
         }
 
         .stButton > button p {
@@ -97,32 +135,76 @@ st.markdown("""
         }
 
         .stButton > button:hover {
-            background-color: #1E3A8A !important;
-            border-color: #433B86 !important;
+            background-color: var(--iper-blue) !important;
+            border-color: var(--iper-blue) !important;
         }
 
         [data-testid="stFileUploader"] {
-            border: 1px dashed #0F172A !important;
+            border: 1px dashed var(--iper-slate) !important;
             border-radius: 6px !important;
             padding: 12px !important;
-            background-color: #FFFFFF !important;
+            background-color: var(--iper-light) !important;
         }
 
         [data-testid="stSidebar"] div[role="radiogroup"] > label {
             background-color: #FFFFFF !important;
-            border: 1px solid #E2E8F0 !important;
+            border: 1px solid var(--iper-border) !important;
             border-radius: 6px !important;
             padding: 10px 14px !important;
             margin-bottom: 8px !important;
             font-weight: 500 !important;
             font-size: 14px !important;
-            color: #0F172A !important;
+            color: var(--iper-navy) !important;
         }
 
         [data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
-            border-color: #0F172A !important;
-            background-color: #F8FAFC !important;
+            border-color: var(--iper-blue) !important;
+            background-color: var(--iper-soft-blue) !important;
         }
+
+        [data-testid="stMetric"] {
+            background: var(--iper-light) !important;
+            border: 1px solid var(--iper-border) !important;
+            border-radius: 8px !important;
+            padding: 12px 14px !important;
+        }
+
+        [data-testid="stMetricLabel"] {
+            color: var(--iper-muted) !important;
+            font-weight: 600 !important;
+        }
+
+        [data-testid="stMetricValue"] {
+            color: var(--iper-navy) !important;
+        }
+
+        .stProgress > div > div > div > div {
+            background-color: var(--iper-blue) !important;
+        }
+
+        .stAlert {
+            border-radius: 6px !important;
+            border-left-width: 4px !important;
+        }
+
+        [data-testid="stExpander"] {
+            border: 1px solid var(--iper-border) !important;
+            border-radius: 7px !important;
+        }
+
+        [data-testid="stDataFrame"] {
+            border: 1px solid var(--iper-border) !important;
+            border-radius: 7px !important;
+        }
+
+        hr {
+            border-color: var(--iper-border) !important;
+        }
+
+        /* Reserved professional accents: use sparingly for status/highlight elements. */
+        .iper-accent-gold { color: var(--iper-gold) !important; }
+        .iper-accent-green { color: var(--iper-success) !important; }
+        .iper-accent-red { color: var(--iper-danger) !important; }
     </style>
 """, unsafe_allow_html=True)
 
