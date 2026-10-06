@@ -543,6 +543,60 @@ def communication_metrics(transcript, duration_seconds=0.0):
         'filler_counts': filler_counts
     }
 
+
+# ------------------------------------------------------------------------------
+# 3A. STRICT GRADE SYSTEM
+# ------------------------------------------------------------------------------
+GRADE_SLABS = [
+    (0, 20, "E Grade"),
+    (21, 40, "D Grade"),
+    (41, 60, "C Grade"),
+    (61, 80, "B Grade"),
+    (81, 100, "A Grade"),
+]
+
+def grade_from_score(score):
+    try:
+        value = max(0, min(100, int(round(float(score)))))
+    except (TypeError, ValueError):
+        value = 0
+    for low, high, grade in GRADE_SLABS:
+        if low <= value <= high:
+            return grade
+    return "E Grade"
+
+def grade_slab_text():
+    return "E Grade: 0–20  |  D Grade: 21–40  |  C Grade: 41–60  |  B Grade: 61–80  |  A Grade: 81–100"
+
+def detect_hindi_usage(text):
+    """Detect Hindi/Hinglish in an English-medium assessment without judging accent."""
+    raw = text or ""
+    devanagari_count = len(re.findall(r"[\u0900-\u097F]", raw))
+    words = re.findall(r"\b[a-zA-Z']+\b", raw.lower())
+    hindi_tokens = {
+        "hai", "haan", "nahi", "nahin", "mera", "meri", "mere", "mujhe",
+        "hum", "ham", "aap", "apna", "apni", "apne", "kyunki", "kyonki",
+        "lekin", "bahut", "bohot", "jaise", "matlab", "toh", "phir", "kuch",
+        "sab", "karna", "karta", "karti", "karte", "chahiye", "sakta",
+        "sakti", "sakte", "accha", "achha", "kyon", "kaise", "kya",
+        "yah", "yeh", "woh", "wo", "iska", "uska", "hamara", "hamari",
+        "aaj", "kal", "abhi", "sirf", "aur", "bhi", "nahiin"
+    }
+    found = [w for w in words if w in hindi_tokens]
+    count = len(found) + devanagari_count
+    if count <= 0:
+        penalty = 0
+    elif devanagari_count > 0 or count >= 6:
+        penalty = 15
+    elif count >= 3:
+        penalty = 10
+    else:
+        penalty = 5
+    return {"count": count, "tokens": found, "devanagari_count": devanagari_count, "penalty": penalty}
+
+def render_grade_slabs():
+    st.caption(grade_slab_text())
+
 # ------------------------------------------------------------------------------
 # 4. QUESTION REPOSITORY
 # ------------------------------------------------------------------------------
@@ -1702,7 +1756,7 @@ Evaluate ONLY what is supported by the transcript and objective statistics. Neve
 
 For each participant evaluate:
 - Participation: speaking share, number of meaningful interventions, balance, whether contributions add value.
-- Communication: English fluency, grammar, vocabulary, clarity, filler words, rate of speech based on transcript/timestamps.
+- Communication: English fluency, grammar, vocabulary, clarity, filler words, rate of speech based on transcript/timestamps. This is an English-medium placement assessment: Hindi/Hinglish code-switching is a communication weakness and should reduce the communication assessment. Do not penalize Indian English accent alone.
 - Knowledge: relevance, factual/business awareness, examples, depth, understanding of the topic.
 - Analytical Thinking: reasoning, cause-effect, comparison, trade-offs, originality.
 - Listening & Team Behaviour: building on others, respectful disagreement, avoiding repetition/dominance, inviting others when evidenced.
@@ -1717,6 +1771,14 @@ Also evaluate the group as a whole:
 - Team dynamics
 - Conclusion
 - Overall group score
+
+Grading calibration for this assessment:
+- E Grade (0–20): inadequate evidence, seriously weak or fundamentally incorrect performance.
+- D Grade (21–40): weak performance with substantial gaps.
+- C Grade (41–60): basic/partial performance with noticeable weaknesses.
+- B Grade (61–80): placement-ready performance that is clearly demonstrated, consistent and accurate; award only when evidence supports it.
+- A Grade (81–100): exceptional, highly consistent and unusually strong performance; very rare.
+Do not let fluent English, confidence, speaking volume, or business buzzwords compensate for weak substance.
 
 Return ONLY valid JSON in this exact structure:
 {{
@@ -1754,7 +1816,7 @@ Return ONLY valid JSON in this exact structure:
   ]
 }}
 
-All scores are integers from 0 to 10 except OverallScore fields, which are 0 to 100.
+Be deliberately strict. Do not reward fluency, length, confidence or business buzzwords without evidence. A strong B-level performance must be clearly demonstrated and A-level performance must be exceptional and rare. Hindi/Hinglish usage in the English-medium assessment should materially reduce CommunicationScore. Return internal numeric scores for calculation only; the portal will display grades, never marks.
 """
     raw = get_groq_response(prompt)
     try:
@@ -2364,7 +2426,7 @@ else:
         with st.sidebar.expander(f"Session #{len(st.session_state['history']) - idx + 1}: {session['Timestamp']}"):
             st.markdown(f"**Candidate:** {session.get('Candidate', 'N/A')}")
             st.markdown(f"**Topic:** {session['Domain']}")
-            st.markdown(f"**Score:** {session['Score']}/100")
+            st.markdown(f"**Grade:** {grade_from_score(session.get('Score', 0))}")
 
 # ------------------------------------------------------------------------------
 # 6. APPLICATION SECTIONS
@@ -2428,7 +2490,7 @@ if selected_nav == "Progress":
     m1.metric("Minutes Utilized", f"{total_minutes:.1f} min")
     m2.metric("PI Attempted", pi_attempts)
     m3.metric("GD Attempted", gd_attempts)
-    m4.metric("Average Score", f"{average_score:.1f} / 100" if all_scores else "—")
+    m4.metric("Average Grade", grade_from_score(average_score) if all_scores else "—")
 
     st.markdown("### Your Way Ahead")
     suggestions = []
@@ -2461,10 +2523,14 @@ if selected_nav == "Progress":
     with c2:
         st.metric("GD Assessment Minutes", f"{gd_minutes:.1f}")
 
+    render_grade_slabs()
     if history:
-        st.markdown("### PI Score Trend")
-        trend = pd.DataFrame({"Attempt": range(1, len(pi_scores) + 1), "Score": pi_scores})
-        st.line_chart(trend.set_index("Attempt"))
+        st.markdown("### PI Grade Trend")
+        grade_rows = [
+            {"Attempt": i, "Date & Time": item.get("Timestamp", ""), "Grade": grade_from_score(item.get("Score", 0)), "Domain": item.get("Domain", "")}
+            for i, item in enumerate(history, 1)
+        ]
+        st.dataframe(grade_rows, use_container_width=True, hide_index=True)
     else:
         st.info("Your progress will start building as soon as you complete your first PI or GD practice assessment.")
 
@@ -3379,7 +3445,8 @@ if selected_nav == "Resume Checker & Job Matcher":
                     
                     m1, m2 = st.columns(2)
                     with m1:
-                        st.metric("Overall Match Score", f"{score} / 100")
+                        st.metric("Overall Match Grade", grade_from_score(score))
+                        render_grade_slabs()
                     with m2:
                         st.metric("Fit Status", category_rating)
                     
@@ -3769,11 +3836,15 @@ RESUME CONTEXT (use only as context; do not reward claims not supported by the r
 DETERMINISTIC COMMUNICATION METRICS:
 {json.dumps(comm_metrics)}
 
+DETERMINISTIC LANGUAGE CHECK:
+{json.dumps(detect_hindi_usage(final_response_text))}
+
 COMMUNICATION ASSESSMENT RULES:
 - Assess only what can be supported by the transcript and deterministic metrics.
 - RESPONSE SUFFICIENCY IS MANDATORY: a few words, a fragment, a one-line answer, or an answer too short to demonstrate structure must score very low. Do not infer communication ability from evidence the candidate did not provide.
 - Start communication scoring from 0 and add marks only for demonstrated clarity, grammar, structure, relevance and completeness.
-- Grammar: identify actual grammar errors; do not penalize normal Indian English accent/usage merely for being different.
+- Grammar: identify actual grammar errors; do not penalize normal Indian English accent/pronunciation merely for being different.
+- English-medium requirement: the assessment is conducted in English. If the response uses Hindi or sustained Hindi-English code-switching (including Hindi words detected in the transcript), treat that as a communication weakness and reduce the communication assessment accordingly. Do not use insulting or culturally loaded language; describe it professionally as a need to maintain English consistently in placement interviews.
 - Clarity: assess structure, coherence, relevance and ease of understanding.
 - Filler words: use the supplied counts; do not invent additional counts.
 - Rate of speech: use WPM only when duration is available.
@@ -3829,7 +3900,7 @@ COMMUNICATION SCORE ANCHORS:
 80-89 = strong communication; uncommon
 90-100 = exceptional communication; very rare
 
-IMPORTANT: Do not inflate scores. Use integers only. The FINAL SCORE must be the simple arithmetic average of Communication Score and Technical Knowledge Score, rounded to the nearest whole number. Do not use any other weighting.
+IMPORTANT: Do not inflate scores. Use integers only for internal calculation. The final internal score is the arithmetic average of Communication and Technical Knowledge, but the displayed Final Grade must not exceed the weaker of the two dimensions. This conservative rule makes B Grade difficult and A Grade rare.
 
 Return ONLY valid JSON matching this exact structure:
 {{
@@ -3860,7 +3931,7 @@ Return ONLY valid JSON matching this exact structure:
                         response = client.chat.completions.create(
                             model=GROQ_MODEL,
                             messages=[
-                                {"role": "system", "content": "You are an exceptionally strict, evidence-based MBA interview assessor. Technical marks must be earned from demonstrated correctness; when in doubt, award less technical credit. Return only the requested JSON."},
+                                {"role": "system", "content": "You are an exceptionally strict, evidence-based MBA interview assessor for an English-medium placement assessment. Technical marks must be earned from demonstrated correctness; when in doubt, award less technical credit. Communication must be assessed strictly for professional English usage. Hindi/Hinglish code-switching is a communication weakness in this English assessment and should reduce the communication score; never penalize accent alone. Return only the requested JSON."},
                                 {"role": "user", "content": eval_prompt},
                             ],
                             temperature=0.15,
@@ -3905,6 +3976,19 @@ Return ONLY valid JSON matching this exact structure:
                         comm_score = max(0, min(100, int(eval_result.get("CommunicationScore", 0))))
                         tech_score = max(0, min(100, int(eval_result.get("TechnicalKnowledgeScore", 0))))
 
+                        # Deterministic English-language penalty. Accent is never penalized;
+                        # actual Hindi/Hinglish usage in this English-medium assessment is.
+                        language_check = detect_hindi_usage(final_response_text)
+                        if language_check["penalty"]:
+                            comm_score = max(0, comm_score - language_check["penalty"])
+                            eval_result["CommunicationImprovements"] = [
+                                f"Maintain English consistently throughout the interview. The response contained Hindi/Hinglish usage; this reduced the communication grade by {language_check['penalty']} internal points."
+                            ] + list(eval_result.get("CommunicationImprovements", []))
+                            eval_result["CommunicationAssessment"] = (
+                                "The response did not maintain English consistently. Hindi/Hinglish usage was treated as a communication weakness for this English-medium placement assessment. "
+                                + eval_result.get("CommunicationAssessment", "")
+                            )
+
                         # Deterministic evidence/completeness cap. Very short answers are still
                         # evaluated, but they cannot earn inflated communication or technical marks.
                         # This is enforced in Python after the AI assessment, so the model cannot
@@ -3933,28 +4017,33 @@ Return ONLY valid JSON matching this exact structure:
                         if response_word_count <= 20:
                             brevity_note = (
                                 f"The response contained only {response_word_count} words. "
-                                f"Both Communication and Technical Knowledge were capped at {evidence_cap}/100 "
-                                "because there was insufficient evidence for a fuller assessment."
+                                "Both Communication and Technical Knowledge were restricted because there was insufficient evidence for a fuller assessment."
                             )
                             eval_result["CommunicationAssessment"] = brevity_note + " " + eval_result.get("CommunicationAssessment", "")
                             eval_result["TechnicalKnowledgeAssessment"] = brevity_note + " " + eval_result.get("TechnicalKnowledgeAssessment", "")
 
-                        # Enforce the portal's scoring rule in Python, regardless of model output.
-                        final_score = int(round((comm_score + tech_score) / 2.0))
+                        # Final assessment is deliberately conservative: the overall result cannot
+                        # exceed the weaker of Communication and Technical Knowledge. This makes B
+                        # difficult to earn and A genuinely rare.
+                        final_score = min(int(round((comm_score + tech_score) / 2.0)), comm_score, tech_score)
                         eval_result["FinalScore"] = final_score
+                        comm_grade = grade_from_score(comm_score)
+                        tech_grade = grade_from_score(tech_score)
+                        final_grade = grade_from_score(final_score)
 
                         st.subheader(f"Interview Feedback for {c_name}")
                         sc1, sc2, sc3 = st.columns(3)
-                        sc1.metric("Communication", f"{comm_score} / 100")
-                        sc2.metric("Technical Knowledge", f"{tech_score} / 100")
-                        sc3.metric("Final Score", f"{final_score} / 100")
-                        st.caption("Final Score = average of Communication and Technical Knowledge. Scores are intentionally strict and evidence-based.")
+                        sc1.metric("Communication Grade", comm_grade)
+                        sc2.metric("Technical Knowledge Grade", tech_grade)
+                        sc3.metric("Final Grade", final_grade)
+                        render_grade_slabs()
+                        st.caption("Grading is deliberately strict and evidence-based. A B Grade requires sustained placement-ready performance; A Grade is reserved for exceptional performance.")
 
                         st.markdown("### 1. Communication Feedback")
                         st.write(eval_result.get("CommunicationAssessment", ""))
                         metrics = comm_metrics
                         m1, m2, m3, m4 = st.columns(4)
-                        m1.metric("Grammar", f"{max(0, min(10, round(comm_score/10)))} / 10")
+                        m1.metric("Language", "English-medium assessment")
                         m2.metric("Rate of Speech", f"{metrics.get('wpm', 0)} WPM")
                         m3.metric("Filler Words", str(metrics.get('filler_total', 0)))
                         m4.metric("Duration", f"{metrics.get('duration_minutes', 0)} min")
@@ -4215,6 +4304,7 @@ elif selected_nav == "Group Discussion Hub":
     with gd_feedback_tab:
         st.markdown("### 📊 My GD Feedback")
         st.caption("Your uploaded GD recordings are converted into objective speaker statistics and a comprehensive placement-style assessment.")
+        render_grade_slabs()
 
         assessments = get_gd_video_assessments(st.session_state["scholar_id"])
         latest = assessments[0] if assessments else None
@@ -4231,7 +4321,7 @@ elif selected_nav == "Group Discussion Hub":
                 ["Overall", "Topic", "Discussion", "Balance", "Team Dynamics"],
                 ["OverallScore", "TopicHandling", "DiscussionQuality", "ParticipationBalance", "TeamDynamics"]
             ):
-                col.metric(label, f"{group.get(key, 0)}/100")
+                col.metric(f"{label} Grade", grade_from_score(float(group.get(key, 0) or 0) * 10 if float(group.get(key, 0) or 0) <= 10 else float(group.get(key, 0) or 0)))
 
             if group.get("Strengths"):
                 st.markdown("#### 🟢 Group Strengths")
@@ -4244,17 +4334,20 @@ elif selected_nav == "Group Discussion Hub":
 
             st.markdown("### 👤 Individual Performance")
             for person in report.get("Participants", []):
-                with st.expander(f"{person.get('Name', 'Participant')} — {person.get('OverallScore', 0)}/100", expanded=False):
+                person_overall = float(person.get('OverallScore', 0) or 0)
+                person_overall_100 = person_overall * 10 if person_overall <= 10 else person_overall
+                with st.expander(f"{person.get('Name', 'Participant')} — {grade_from_score(person_overall_100)}", expanded=False):
                     c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Participation", f"{person.get('ParticipationScore', 0)}/10")
-                    c2.metric("Communication", f"{person.get('CommunicationScore', 0)}/10")
-                    c3.metric("Knowledge", f"{person.get('KnowledgeScore', 0)}/10")
-                    c4.metric("Leadership", f"{person.get('LeadershipScore', 0)}/10")
+                    c1.metric("Participation Grade", grade_from_score(float(person.get('ParticipationScore', 0) or 0) * 10))
+                    c2.metric("Communication Grade", grade_from_score(float(person.get('CommunicationScore', 0) or 0) * 10))
+                    c3.metric("Knowledge Grade", grade_from_score(float(person.get('KnowledgeScore', 0) or 0) * 10))
+                    c4.metric("Leadership Grade", grade_from_score(float(person.get('LeadershipScore', 0) or 0) * 10))
 
                     c5, c6, c7 = st.columns(3)
-                    c5.metric("Analytical Thinking", f"{person.get('AnalyticalThinkingScore', 0)}/10")
-                    c6.metric("Listening & Teamwork", f"{person.get('ListeningTeamworkScore', 0)}/10")
+                    c5.metric("Analytical Thinking Grade", grade_from_score(float(person.get('AnalyticalThinkingScore', 0) or 0) * 10))
+                    c6.metric("Listening & Teamwork Grade", grade_from_score(float(person.get('ListeningTeamworkScore', 0) or 0) * 10))
                     c7.metric("WPM", person.get("WPM", 0))
+                    render_grade_slabs()
 
                     st.write(
                         f"**Speaking time:** {person.get('SpeakingTimeSeconds', 0):.0f}s  • "
@@ -4316,12 +4409,13 @@ elif selected_nav == "Performance Dashboard":
         with m1:
             st.metric("Attempts", len(history))
         with m2:
-            st.metric("Average Score", f"{average_score:.1f} / 100")
+            st.metric("Average Grade", grade_from_score(average_score))
         with m3:
-            st.metric("Best Score", f"{best_score} / 100")
+            st.metric("Best Grade", grade_from_score(best_score))
 
         st.markdown("### Latest Attempt")
-        st.metric("Latest Score", f"{latest_score} / 100")
+        st.metric("Latest Grade", grade_from_score(latest_score))
+        render_grade_slabs()
 
         dashboard_rows = []
         for index, item in enumerate(history, 1):
@@ -4331,11 +4425,14 @@ elif selected_nav == "Performance Dashboard":
                 "Candidate": st.session_state.get("first_name", item.get("Candidate", "Student")),
                 "Domain": item.get("Domain", ""),
                 "Mode": item.get("Mode", ""),
-                "Score": item.get("Score", 0)
+                "Grade": grade_from_score(item.get("Score", 0))
             })
 
         st.dataframe(dashboard_rows, use_container_width=True, hide_index=True)
 
-        st.markdown("### Progress")
-        chart_data = pd.DataFrame({"Attempt": range(1, len(scores) + 1), "Score": scores})
-        st.line_chart(chart_data.set_index("Attempt"))
+        st.markdown("### Grade Progression")
+        grade_progression = [
+            {"Attempt": i, "Date & Time": item.get("Timestamp", ""), "Grade": grade_from_score(item.get("Score", 0))}
+            for i, item in enumerate(history, 1)
+        ]
+        st.dataframe(grade_progression, use_container_width=True, hide_index=True)
