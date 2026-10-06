@@ -1214,15 +1214,24 @@ def save_student_profile(student_id, profile, about_yourself, profile_hash):
         conn.close()
 
 
+def clean_generated_about_yourself(text):
+    """Remove common AI preambles/markdown wrappers before a generated introduction is saved."""
+    text = (text or "").strip()
+    text = re.sub(r"^```(?:text|markdown)?\s*", "", text, flags=re.I)
+    text = re.sub(r"\s*```$", "", text)
+    text = re.sub(r"^(sure[,!]?|certainly[,!]?|here(?:'s| is) (?:a|the) (?:concise )?(?:answer|response|introduction)[:\-]?\s*)", "", text, flags=re.I)
+    text = re.sub(r"^about (?:myself|yourself)[:\-]?\s*", "", text, flags=re.I)
+    return text.strip(" \n-:")
+
+
 def generate_about_yourself(profile):
     if not client:
-        return "GROQ API Key is missing. Add GROQ_API_KEY in Streamlit App Settings → Secrets to generate your personalized About Yourself response."
+        return ""
     prompt = f"""Create a professional, natural and interview-ready 'About Yourself' response for an MBA placement student at IPER Bhopal.
-Use ONLY the information supplied below. Do not invent companies, roles, percentages, achievements, skills or experience.
+Use ONLY the information supplied below. Do not invent companies, roles, percentages, achievements, skills, responsibilities or experience.
 Write in first person, confident but not exaggerated, suitable for a 60-90 second interview answer.
-Integrate education, internship, certifications, activities, achievements and professional interests into one coherent story.
-If some fields are blank, do not mention them. Avoid sounding like a resume being read aloud.
-The response should be easy to speak naturally and should end with a forward-looking statement about the kind of professional opportunity the student seeks.
+Integrate only the student's supplied education, internship, certifications, activities, achievements and professional interests.
+If a field is blank, do not mention it. Do not add an AI preamble, heading, quotation marks, bullets or commentary. Return ONLY the spoken response.
 
 Student profile:
 10th Percentage: {profile.get('tenth_percentage','')}
@@ -1238,15 +1247,15 @@ Professional Interest: {profile.get('professional_interest','')}
     try:
         response = client.chat.completions.create(
             messages=[
-                {"role":"system","content":"You are an expert MBA placement interview coach. Produce polished spoken English while staying strictly factual to the student's supplied profile."},
+                {"role":"system","content":"You are an expert MBA placement interview coach. Produce only a factual spoken response using the student's supplied information. Never invent facts."},
                 {"role":"user","content":prompt}
             ],
             model=GROQ_MODEL,
-            temperature=0.25
+            temperature=0.15
         )
-        return response.choices[0].message.content.strip()
-    except Exception as exc:
-        return f"AI generation could not be completed: {exc}"
+        return clean_generated_about_yourself(response.choices[0].message.content)
+    except Exception:
+        return ""
 
 
 def database_status_message():
@@ -3300,7 +3309,7 @@ elif selected_nav == "Industry & Company Insights":
 # SECTION: ABOUT MYSELF
 elif selected_nav == "About Myself":
     st.title("About Myself")
-    st.caption("Build your personal interview introduction and keep it progressively updated as you add new skills, experiences and achievements.")
+    st.caption("Enter your own information, edit your introduction and save it. AI generation is optional — your personal wording always remains under your control.")
 
     student_id = st.session_state.get("student_id")
     existing_profile = load_student_profile(student_id) if student_id else {}
@@ -3321,30 +3330,51 @@ elif selected_nav == "About Myself":
     profile_hash = hashlib.sha256(json.dumps(profile_payload, sort_keys=True).encode("utf-8")).hexdigest()
     previous_hash = existing_profile.get("profile_hash", "")
 
-    st.markdown("### Your AI-Generated About Yourself")
-    if existing_profile.get("about_yourself"):
-        st.markdown(f"<div style='background:#F8FAFC;border:1px solid #CBD5E1;border-radius:10px;padding:18px;line-height:1.75;'>{existing_profile['about_yourself'].replace(chr(10), '<br>')}</div>", unsafe_allow_html=True)
-        if existing_profile.get("updated_at"):
-            st.caption(f"Last revised: {existing_profile['updated_at']}")
-    else:
-        st.info("Complete your profile and click Generate / Revise About Yourself. Your introduction will be stored for future sessions.")
+    # Editable introduction: never show a preset response when the student has not created one.
+    if "about_yourself_editor" not in st.session_state:
+        st.session_state["about_yourself_editor"] = existing_profile.get("about_yourself", "") or ""
 
-    changed = profile_hash != previous_hash
-    col1, col2 = st.columns([1, 1])
+    st.markdown("### Your About Yourself")
+    st.caption("Write or edit this in your own words. You can use AI to generate a draft, but nothing is saved until you click Save About Myself.")
+    about_text = st.text_area(
+        "About Yourself",
+        key="about_yourself_editor",
+        height=190,
+        placeholder="Write your introduction here in your own words. Example structure: present status → education → internship/projects → strengths/skills → career interest. No preset answer is provided.",
+        label_visibility="collapsed",
+    )
+
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
-        generate_clicked = st.button("Generate / Revise About Yourself", use_container_width=True)
+        save_about_clicked = st.button("Save About Myself", use_container_width=True)
     with col2:
-        st.markdown("**Progressive profile:** Add a new skill, certification, achievement or experience and generate again. The AI will revise the complete introduction using your latest profile.")
+        generate_about_clicked = st.button("Generate Draft with AI", use_container_width=True)
+    with col3:
+        if existing_profile.get("updated_at"):
+            st.caption(f"Last saved: {existing_profile['updated_at']}")
+        else:
+            st.caption("Not saved yet")
 
-    if generate_clicked or (changed and any(profile_payload.values()) and not existing_profile.get("about_yourself")):
-        with st.spinner("Building your personalized About Yourself response..."):
-            about = generate_about_yourself(profile_payload)
-        save_student_profile(student_id, profile_payload, about, profile_hash)
-        st.success("Your About Yourself has been updated with your latest profile details.")
-        st.rerun()
+    if save_about_clicked:
+        if not about_text.strip():
+            st.warning("Please write your About Yourself response before saving.")
+        else:
+            save_student_profile(student_id, profile_payload, about_text.strip(), profile_hash)
+            st.success("Your About Myself profile and introduction have been saved.")
+            st.rerun()
 
-    st.markdown("### Recommended Interview Structure")
-    st.write("Education → Internship / practical exposure → Certifications & skills → Activities & achievements → Professional interest → Career direction")
+    if generate_about_clicked:
+        with st.spinner("Preparing a factual draft from your profile..."):
+            generated_about = generate_about_yourself(profile_payload)
+        if generated_about:
+            st.session_state["about_yourself_editor"] = generated_about
+            st.info("AI draft prepared in the editable box above. Review it, personalise it if needed, and click **Save About Myself**.")
+            st.rerun()
+        else:
+            st.error("The AI draft could not be generated. Your existing introduction was not changed or overwritten.")
+
+    st.markdown("### Profile Editing")
+    st.caption("You can return to this page anytime, change any profile field or introduction, and save the updated version. AI generation never replaces your saved text automatically.")
 
 if selected_nav == "Resume Checker & Job Matcher":
     st.title("Resume Checker & Job Matcher")
@@ -3528,7 +3558,7 @@ elif selected_nav == "Interview Preparation Guide":
         core_q = st.selectbox("Select a core question", CORE_INTERVIEW_QUESTIONS, key="core_interview_q")
         if st.button("Prepare This Question", key="prepare_core_q", use_container_width=True):
             with st.spinner("Preparing a simple interview guide..."):
-                prompt=f"""Act as a supportive MBA placement mentor at IPER Bhopal. Question: {core_q}. Use very simple, natural Indian-English. Avoid jargon and textbook language. Explain: 1) what the interviewer wants to know, 2) a simple answer structure, 3) a short natural sample answer, 4) one mistake to avoid, 5) one follow-up question."""
+                prompt=f"""Act as a supportive MBA placement mentor at IPER Bhopal. Question: {core_q}. Use very simple, natural Indian-English. Avoid jargon and textbook language. Explain: 1) what the interviewer wants to know, 2) a simple answer structure, 3) a clearly labelled **Suggested Answer** that the student can adapt in their own words, 4) one mistake to avoid, 5) one follow-up question. The Suggested Answer must be practical and realistic, not a generic motivational paragraph."""
                 st.markdown(get_groq_response(prompt))
 
     with prep_tabs[1]:
@@ -3541,7 +3571,7 @@ elif selected_nav == "Interview Preparation Guide":
         st.markdown(f"### Study Guide: {selected_question}")
         if st.button("Generate Subject Answer Framework", key="generate_subject_guide", use_container_width=True):
             with st.spinner("Preparing a simple subject answer breakdown..."):
-                prompt=f"""Act as a senior MBA Placement Advisor at IPER Bhopal. Question: {selected_question}. Subject/domain: {prep_category}. Use simple natural language suitable for an MBA student. Provide: 1) concept in simple words, 2) what the interviewer expects, 3) a short natural model answer, 4) one practical example, 5) one mistake to avoid, 6) one follow-up question."""
+                prompt=f"""Act as a senior MBA Placement Advisor at IPER Bhopal. Question: {selected_question}. Subject/domain: {prep_category}. Use simple natural language suitable for an MBA student. Provide: 1) concept in simple words, 2) what the interviewer expects, 3) a clearly labelled **Suggested Answer** the student can adapt, 4) one practical example, 5) one mistake to avoid, 6) one follow-up question. The Suggested Answer must demonstrate the concept accurately and should not be presented as something to memorise."""
                 st.markdown(get_groq_response(prompt))
 
     with prep_tabs[2]:
@@ -3567,7 +3597,7 @@ elif selected_nav == "Interview Preparation Guide":
         selected_company_q = st.selectbox("Choose one company question to practise", company_questions, key="selected_company_question")
         if st.button("Build Company Answer Framework", key="build_company_answer", use_container_width=True):
             with st.spinner("Building a company-focused answer guide..."):
-                prompt=f"""Act as an MBA placement mentor at IPER Bhopal. Company: {company_choice}. Sector: {company_sector}. Interview question: {selected_company_q}. Give a practical answer framework for a student. Include: what the interviewer wants, 4-5 points the student should research/mention, a short natural sample answer, one mistake to avoid, and one follow-up question. Do not invent company facts; clearly mark anything that must be verified from the company's official website or latest report."""
+                prompt=f"""Act as an MBA placement mentor at IPER Bhopal. Company: {company_choice}. Sector: {company_sector}. Interview question: {selected_company_q}. Give a practical answer framework for a student. Include: what the interviewer wants, 4-5 points the student should research/mention, a clearly labelled **Suggested Answer** the student can adapt in their own words, one mistake to avoid, and one follow-up question. Keep company facts conservative and mark anything requiring verification. Do not invent company facts; clearly mark anything that must be verified from the company's official website or latest report."""
                 st.markdown(get_groq_response(prompt))
 
     with prep_tabs[3]:
@@ -3891,6 +3921,13 @@ CALIBRATION RULES:
 - A fluent but technically shallow answer should score lower technically than a simple but accurate answer.
 - 90+ should be used only when the response is exceptionally accurate and complete; normal good student answers should not receive it.
 
+SUGGESTED ANSWER REQUIREMENT:
+- Always provide a useful Suggested Answer in BenchmarkAnswer.
+- The Suggested Answer must directly answer the exact question asked, use only established/general business knowledge appropriate to the question, and be realistic for an MBA student.
+- Do not copy the candidate's response merely to make it look better. Show a materially improved version that addresses the important gaps identified.
+- For company-specific questions, do not invent current company facts; clearly use placeholders such as [verify latest company fact] where necessary.
+- The Suggested Answer is a learning aid, not a script to memorise.
+
 COMMUNICATION SCORE ANCHORS:
 0-29 = seriously inadequate communication
 30-49 = weak communication with substantial problems
@@ -4078,8 +4115,12 @@ Return ONLY valid JSON matching this exact structure:
                         st.markdown("**Key Corrections**")
                         for item in eval_result.get("KeyCorrections", []): st.markdown(f"- {item}")
 
-                        st.markdown("### Benchmark Answer")
-                        st.write(eval_result.get("BenchmarkAnswer", ""))
+                        st.markdown("### Suggested Answer")
+                        suggested_answer = eval_result.get("BenchmarkAnswer", "")
+                        if suggested_answer:
+                            st.write(suggested_answer)
+                        else:
+                            st.info("A suggested answer was not returned for this attempt. Use the Key Corrections and Next Practice Focus above to rebuild the response in your own words.")
                         st.markdown("### Next Practice Focus")
                         st.info(eval_result.get("NextPracticeFocus", ""))
 
