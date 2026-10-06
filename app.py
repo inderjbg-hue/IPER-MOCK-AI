@@ -3331,7 +3331,13 @@ elif selected_nav == "About Myself":
     previous_hash = existing_profile.get("profile_hash", "")
 
     # Editable introduction: never show a preset response when the student has not created one.
-    if "about_yourself_editor" not in st.session_state:
+    # If an AI draft was generated on the previous run, load it BEFORE the
+    # text_area widget is instantiated. Streamlit forbids changing a widget
+    # key after that widget has already been created in the same run.
+    pending_about = st.session_state.pop("pending_about_yourself_draft", None)
+    if pending_about:
+        st.session_state["about_yourself_editor"] = pending_about
+    elif "about_yourself_editor" not in st.session_state:
         st.session_state["about_yourself_editor"] = existing_profile.get("about_yourself", "") or ""
 
     st.markdown("### Your About Yourself")
@@ -3367,8 +3373,10 @@ elif selected_nav == "About Myself":
         with st.spinner("Preparing a factual draft from your profile..."):
             generated_about = generate_about_yourself(profile_payload)
         if generated_about:
-            st.session_state["about_yourself_editor"] = generated_about
-            st.info("AI draft prepared in the editable box above. Review it, personalise it if needed, and click **Save About Myself**.")
+            # Do not write directly to the text_area's session-state key after
+            # the widget has been instantiated. Store the draft and rerun; the
+            # draft will be loaded into the widget key at the top of the next run.
+            st.session_state["pending_about_yourself_draft"] = generated_about
             st.rerun()
         else:
             st.error("The AI draft could not be generated. Your existing introduction was not changed or overwritten.")
