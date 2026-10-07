@@ -751,12 +751,23 @@ import wave
 from pathlib import Path
 from io import BytesIO
 
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import mm
-from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak)
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak)
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    colors = None
+    TA_CENTER = None
+    A4 = None
+    getSampleStyleSheet = None
+    ParagraphStyle = None
+    mm = None
+    SimpleDocTemplate = Paragraph = Spacer = Table = TableStyle = PageBreak = None
+    REPORTLAB_AVAILABLE = False
 
 try:
     import webrtcvad
@@ -1334,6 +1345,8 @@ def build_feedback_report_docx(student_name, scholar_id, current_feedback, histo
 
 def build_feedback_report_pdf(student_name, scholar_id, current_feedback, historical_attempts):
     """Build a printable A4 PDF feedback report with handwritten mentor space and signature line."""
+    if not REPORTLAB_AVAILABLE:
+        return None
     out = BytesIO()
     doc = SimpleDocTemplate(out, pagesize=A4, rightMargin=16*mm, leftMargin=16*mm, topMargin=14*mm, bottomMargin=14*mm)
     styles = getSampleStyleSheet()
@@ -4394,14 +4407,17 @@ Return ONLY valid JSON matching this exact structure:
                                 key="download_interview_feedback_word",
                             )
                         with dl2:
-                            st.download_button(
-                                "⬇️ Download PDF Feedback",
-                                data=pdf_report,
-                                file_name=f"{report_filename}.pdf",
-                                mime="application/pdf",
-                                use_container_width=True,
-                                key="download_interview_feedback_pdf",
-                            )
+                            if pdf_report is not None:
+                                st.download_button(
+                                    "⬇️ Download PDF Feedback",
+                                    data=pdf_report,
+                                    file_name=f"{report_filename}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    key="download_interview_feedback_pdf",
+                                )
+                            else:
+                                st.warning("PDF export requires the 'reportlab' package. Add it to requirements.txt and redeploy.")
 
                         attempt_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                         attempt = {

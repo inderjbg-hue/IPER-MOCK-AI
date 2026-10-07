@@ -1,8 +1,10 @@
 streamlit
 pandas
-pypdf
 python-docx
-openai-whisper
 groq
 openai
 psycopg2-binary
+pypdf
+reportlab>=4.2,<5
+webrtcvad-wheels
+openai-whisper
