@@ -749,6 +749,14 @@ import re
 import subprocess
 import wave
 from pathlib import Path
+from io import BytesIO
+
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak)
 
 try:
     import webrtcvad
@@ -915,6 +923,7 @@ def init_database():
                 duration_seconds REAL DEFAULT 0,
                 communication_score INTEGER DEFAULT 0,
                 technical_score INTEGER DEFAULT 0,
+                feedback_json TEXT,
                 FOREIGN KEY(student_id) REFERENCES students(id)
             )
         """)
@@ -924,6 +933,7 @@ def init_database():
         conn.execute("ALTER TABLE interview_attempts ADD COLUMN IF NOT EXISTS duration_seconds REAL DEFAULT 0")
         conn.execute("ALTER TABLE interview_attempts ADD COLUMN IF NOT EXISTS communication_score INTEGER DEFAULT 0")
         conn.execute("ALTER TABLE interview_attempts ADD COLUMN IF NOT EXISTS technical_score INTEGER DEFAULT 0")
+        conn.execute("ALTER TABLE interview_attempts ADD COLUMN IF NOT EXISTS feedback_json TEXT")
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS gd_rooms (
@@ -1129,7 +1139,7 @@ def load_student_attempts(student_id):
         rows = conn.execute(
             """
             SELECT timestamp, domain, score, mode, question, duration_seconds,
-                   communication_score, technical_score
+                   communication_score, technical_score, feedback_json
             FROM interview_attempts
             WHERE student_id = ?
             ORDER BY id ASC
@@ -1138,37 +1148,256 @@ def load_student_attempts(student_id):
         ).fetchall()
     finally:
         conn.close()
-    return [
-        {
+    attempts = []
+    for row in rows:
+        feedback = {}
+        try:
+            feedback = json.loads(row["feedback_json"] or "{}")
+        except Exception:
+            feedback = {}
+        attempts.append({
             "Timestamp": row["timestamp"], "Candidate": "Student",
             "Domain": row["domain"] or "", "Score": row["score"] or 0,
             "Mode": row["mode"] or "", "Question": row["question"] or "",
             "DurationSeconds": float(row["duration_seconds"] or 0),
             "CommunicationScore": int(row["communication_score"] or 0),
             "TechnicalScore": int(row["technical_score"] or 0),
-        }
-        for row in rows
-    ]
+            "Feedback": feedback,
+        })
+    return attempts
 
 
-def save_student_attempt(student_id, domain, score, mode, question, duration_seconds=0, communication_score=0, technical_score=0):
+def save_student_attempt(student_id, domain, score, mode, question, duration_seconds=0, communication_score=0, technical_score=0, feedback=None):
     conn = get_db_connection()
     try:
         conn.execute(
             """
             INSERT INTO interview_attempts
-            (student_id, timestamp, domain, score, mode, question, duration_seconds, communication_score, technical_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (student_id, timestamp, domain, score, mode, question, duration_seconds, communication_score, technical_score, feedback_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 student_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 domain, int(score), mode, question, float(duration_seconds or 0),
                 int(communication_score or 0), int(technical_score or 0),
+                json.dumps(feedback or {}, ensure_ascii=False),
             ),
         )
         conn.commit()
     finally:
         conn.close()
+
+
+def _report_text(value):
+    """Convert report values to clean human-readable text."""
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "\n".join(f"• {str(item)}" for item in value) if value else "None recorded."
+    if isinstance(value, dict):
+        return "\n".join(f"{k}: {v}" for k, v in value.items()) if value else "None recorded."
+    return str(value)
+
+
+def _report_bullets(value):
+    if isinstance(value, list):
+        return [str(x) for x in value if str(x).strip()]
+    if value:
+        return [str(value)]
+    return []
+
+
+def build_feedback_report_docx(student_name, scholar_id, current_feedback, historical_attempts, mentor_title="Mentor Feedback"):
+    """Build a professional Word feedback report with current + historical feedback and mentor sign-off space."""
+    document = docx.Document()
+    section = document.sections[0]
+    section.top_margin = docx.shared.Inches(0.65)
+    section.bottom_margin = docx.shared.Inches(0.65)
+    section.left_margin = docx.shared.Inches(0.7)
+    section.right_margin = docx.shared.Inches(0.7)
+
+    styles = document.styles
+    styles["Normal"].font.name = "Aptos"
+    styles["Normal"].font.size = docx.shared.Pt(10.5)
+
+    title = document.add_paragraph()
+    title.alignment = 1
+    run = title.add_run("IPER UG\nPLACEMENT & INTERVIEW FEEDBACK REPORT")
+    run.bold = True
+    run.font.size = docx.shared.Pt(18)
+    run.font.color.rgb = docx.shared.RGBColor(15, 23, 42)
+
+    p = document.add_paragraph()
+    p.alignment = 1
+    r = p.add_run(f"Prepared for {student_name} • {datetime.now().strftime('%d %B %Y')}")
+    r.italic = True
+    r.font.size = docx.shared.Pt(9)
+
+    table = document.add_table(rows=2, cols=2)
+    table.style = "Table Grid"
+    table.cell(0,0).text = "Name"
+    table.cell(0,1).text = student_name or "—"
+    table.cell(1,0).text = "Scholar ID"
+    table.cell(1,1).text = scholar_id or "—"
+    for row in table.rows:
+        row.cells[0].paragraphs[0].runs[0].bold = True
+
+    document.add_heading("1. Present Feedback", level=1)
+    present_rows = [
+        ("Question / Assessment", current_feedback.get("Question", "—")),
+        ("Mode", current_feedback.get("Mode", "—")),
+        ("Communication Grade", current_feedback.get("CommunicationGrade", "—")),
+        ("Technical Knowledge Grade", current_feedback.get("TechnicalGrade", "—")),
+        ("Final Grade", current_feedback.get("FinalGrade", "—")),
+        ("Communication Assessment", current_feedback.get("CommunicationAssessment", "—")),
+        ("Technical Knowledge Assessment", current_feedback.get("TechnicalKnowledgeAssessment", "—")),
+        ("Technical Correctness", current_feedback.get("TechnicalCorrectness", "—")),
+        ("Rate of Speech", current_feedback.get("RateOfSpeechAssessment", "—")),
+        ("Tone", current_feedback.get("ToneAssessment", "—")),
+        ("Clarity", current_feedback.get("ClarityAssessment", "—")),
+    ]
+    t = document.add_table(rows=0, cols=2)
+    t.style = "Table Grid"
+    for label, value in present_rows:
+        cells = t.add_row().cells
+        cells[0].text = label
+        cells[1].text = str(value or "—")
+        cells[0].paragraphs[0].runs[0].bold = True
+
+    sections = [
+        ("Communication Strengths", current_feedback.get("CommunicationStrengths", [])),
+        ("Communication Improvements", current_feedback.get("CommunicationImprovements", [])),
+        ("Grammar Issues", current_feedback.get("GrammarIssues", [])),
+        ("Filler Words Detected", current_feedback.get("FillerWordsUsed", [])),
+        ("Technical Strengths", current_feedback.get("TechnicalStrengths", [])),
+        ("Technical Improvements", current_feedback.get("TechnicalImprovements", [])),
+        ("What You Got Right", current_feedback.get("CorrectPoints", [])),
+        ("Technical Errors / Knowledge Gaps", current_feedback.get("TechnicalErrorsOrGaps", [])),
+        ("Key Corrections", current_feedback.get("KeyCorrections", [])),
+        ("Suggestions & Recommendations", current_feedback.get("NextPracticeFocus", "")),
+        ("Suggested Answer", current_feedback.get("SuggestedAnswer", "")),
+    ]
+    for heading, value in sections:
+        document.add_heading(heading, level=2)
+        items = _report_bullets(value)
+        if items and isinstance(value, list):
+            for item in items:
+                document.add_paragraph(item, style="List Bullet")
+        else:
+            document.add_paragraph(_report_text(value) or "None recorded.")
+
+    document.add_page_break()
+    document.add_heading("2. Historical Feedback", level=1)
+    prior = [a for a in historical_attempts if a.get("Question") != current_feedback.get("Question") or a.get("Timestamp") != current_feedback.get("Timestamp")]
+    if prior:
+        ht = document.add_table(rows=1, cols=6)
+        ht.style = "Table Grid"
+        headers = ["Date", "Domain", "Mode", "Question", "Communication", "Technical / Final"]
+        for i,h in enumerate(headers):
+            ht.cell(0,i).text = h
+            ht.cell(0,i).paragraphs[0].runs[0].bold = True
+        for a in reversed(prior[-10:]):
+            row = ht.add_row().cells
+            row[0].text = str(a.get("Timestamp", "—"))[:16]
+            row[1].text = str(a.get("Domain", "—"))
+            row[2].text = str(a.get("Mode", "—"))
+            row[3].text = str(a.get("Question", "—"))[:100]
+            row[4].text = grade_from_score(a.get("CommunicationScore", 0))
+            row[5].text = f"{grade_from_score(a.get('TechnicalScore', 0))} / {grade_from_score(a.get('Score', 0))}"
+            feedback = a.get("Feedback") or {}
+            if feedback:
+                para = document.add_paragraph()
+                rr = para.add_run(f"Previous feedback — {a.get('Timestamp', '')}: ")
+                rr.bold = True
+                para.add_run(str(feedback.get("NextPracticeFocus", "")) or "Feedback stored without a next-practice note.")
+    else:
+        document.add_paragraph("No earlier interview feedback is available in the portal yet. Historical feedback will build automatically as the student completes more assessed practice sessions.")
+
+    document.add_heading("3. Mentor Feedback", level=1)
+    document.add_paragraph("Mentor comments / observations (handwritten):")
+    for _ in range(7):
+        document.add_paragraph("________________________________________________________________________________")
+    document.add_paragraph("\nMentor Sign: ____________________________________________")
+    document.add_paragraph("Mentor Name: ___________________________________________")
+    document.add_paragraph("Date: ____________________")
+
+    note = document.add_paragraph()
+    note.alignment = 1
+    rr = note.add_run("This report is intended as a placement-development record. Mentor comments may be added after review.")
+    rr.italic = True
+    rr.font.size = docx.shared.Pt(8)
+
+    out = BytesIO()
+    document.save(out)
+    return out.getvalue()
+
+
+def build_feedback_report_pdf(student_name, scholar_id, current_feedback, historical_attempts):
+    """Build a printable A4 PDF feedback report with handwritten mentor space and signature line."""
+    out = BytesIO()
+    doc = SimpleDocTemplate(out, pagesize=A4, rightMargin=16*mm, leftMargin=16*mm, topMargin=14*mm, bottomMargin=14*mm)
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="ReportTitle", parent=styles["Title"], alignment=TA_CENTER, fontSize=17, leading=21, textColor=colors.HexColor("#0F172A"), spaceAfter=4))
+    styles.add(ParagraphStyle(name="ReportSub", parent=styles["Normal"], alignment=TA_CENTER, fontSize=8.5, textColor=colors.HexColor("#64748B"), spaceAfter=10))
+    styles.add(ParagraphStyle(name="Section", parent=styles["Heading2"], fontSize=12, leading=15, textColor=colors.HexColor("#1E3A5F"), spaceBefore=8, spaceAfter=6))
+    styles.add(ParagraphStyle(name="Small", parent=styles["Normal"], fontSize=8.5, leading=12))
+    story = [
+        Paragraph("IPER UG", styles["ReportTitle"]),
+        Paragraph("PLACEMENT & INTERVIEW FEEDBACK REPORT", styles["ReportTitle"]),
+        Paragraph(f"Prepared for {student_name} • {datetime.now().strftime('%d %B %Y')}", styles["ReportSub"]),
+    ]
+    info = Table([["Name", student_name or "—"], ["Scholar ID", scholar_id or "—"]], colWidths=[38*mm, 125*mm])
+    info.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")), ("BACKGROUND", (0,0),(0,-1), colors.HexColor("#F1F5F9")), ("FONTNAME", (0,0),(0,-1), "Helvetica-Bold"), ("VALIGN", (0,0),(-1,-1), "TOP"), ("LEFTPADDING", (0,0),(-1,-1), 6), ("RIGHTPADDING", (0,0),(-1,-1), 6)]))
+    story += [info, Spacer(1, 8), Paragraph("1. Present Feedback", styles["Section"])]
+    rows = []
+    for label, value in [
+        ("Question / Assessment", current_feedback.get("Question", "—")), ("Mode", current_feedback.get("Mode", "—")),
+        ("Communication Grade", current_feedback.get("CommunicationGrade", "—")), ("Technical Knowledge Grade", current_feedback.get("TechnicalGrade", "—")),
+        ("Final Grade", current_feedback.get("FinalGrade", "—")), ("Communication Assessment", current_feedback.get("CommunicationAssessment", "—")),
+        ("Technical Knowledge Assessment", current_feedback.get("TechnicalKnowledgeAssessment", "—")), ("Technical Correctness", current_feedback.get("TechnicalCorrectness", "—")),
+        ("Rate of Speech", current_feedback.get("RateOfSpeechAssessment", "—")), ("Tone", current_feedback.get("ToneAssessment", "—")), ("Clarity", current_feedback.get("ClarityAssessment", "—")),
+    ]:
+        rows.append([Paragraph(f"<b>{label}</b>", styles["Small"]), Paragraph(str(value or "—").replace("&", "&amp;").replace("<", "&lt;"), styles["Small"])])
+    ft = Table(rows, colWidths=[47*mm, 116*mm])
+    ft.setStyle(TableStyle([("GRID", (0,0), (-1,-1), 0.35, colors.HexColor("#CBD5E1")), ("BACKGROUND", (0,0),(0,-1), colors.HexColor("#F8FAFC")), ("VALIGN", (0,0),(-1,-1), "TOP"), ("LEFTPADDING", (0,0),(-1,-1), 5), ("RIGHTPADDING", (0,0),(-1,-1), 5), ("TOPPADDING", (0,0),(-1,-1), 4), ("BOTTOMPADDING", (0,0),(-1,-1), 4)]))
+    story += [ft]
+    for heading, value in [
+        ("Communication Strengths", current_feedback.get("CommunicationStrengths", [])), ("Communication Improvements", current_feedback.get("CommunicationImprovements", [])),
+        ("Grammar Issues", current_feedback.get("GrammarIssues", [])), ("Filler Words Detected", current_feedback.get("FillerWordsUsed", [])),
+        ("Technical Strengths", current_feedback.get("TechnicalStrengths", [])), ("Technical Improvements", current_feedback.get("TechnicalImprovements", [])),
+        ("What You Got Right", current_feedback.get("CorrectPoints", [])), ("Technical Errors / Knowledge Gaps", current_feedback.get("TechnicalErrorsOrGaps", [])),
+        ("Key Corrections", current_feedback.get("KeyCorrections", [])), ("Suggestions & Recommendations", current_feedback.get("NextPracticeFocus", "")),
+        ("Suggested Answer", current_feedback.get("SuggestedAnswer", "")),
+    ]:
+        story.append(Paragraph(heading, styles["Section"]))
+        if isinstance(value, list) and value:
+            for item in value:
+                story.append(Paragraph("• " + str(item).replace("&", "&amp;").replace("<", "&lt;"), styles["Small"]))
+        else:
+            story.append(Paragraph((_report_text(value) or "None recorded.").replace("&", "&amp;").replace("<", "&lt;").replace("\n", "<br/>"), styles["Small"]))
+    story += [PageBreak(), Paragraph("2. Historical Feedback", styles["Section"])]
+    prior = [a for a in historical_attempts if a.get("Question") != current_feedback.get("Question") or a.get("Timestamp") != current_feedback.get("Timestamp")]
+    if prior:
+        data = [[Paragraph("<b>Date</b>", styles["Small"]), Paragraph("<b>Domain</b>", styles["Small"]), Paragraph("<b>Question</b>", styles["Small"]), Paragraph("<b>Grades</b>", styles["Small"])]]
+        for a in reversed(prior[-10:]):
+            data.append([Paragraph(str(a.get("Timestamp", "—"))[:16], styles["Small"]), Paragraph(str(a.get("Domain", "—")), styles["Small"]), Paragraph(str(a.get("Question", "—"))[:90], styles["Small"]), Paragraph(f"C: {grade_from_score(a.get('CommunicationScore', 0))}<br/>T: {grade_from_score(a.get('TechnicalScore', 0))}<br/>F: {grade_from_score(a.get('Score', 0))}", styles["Small"])])
+        ht = Table(data, colWidths=[30*mm, 27*mm, 80*mm, 26*mm], repeatRows=1)
+        ht.setStyle(TableStyle([("GRID", (0,0),(-1,-1),0.35,colors.HexColor("#CBD5E1")), ("BACKGROUND", (0,0),(-1,0),colors.HexColor("#F1F5F9")), ("VALIGN", (0,0),(-1,-1),"TOP"), ("LEFTPADDING", (0,0),(-1,-1),4), ("RIGHTPADDING", (0,0),(-1,-1),4)]))
+        story.append(ht)
+        for a in reversed(prior[-10:]):
+            fb=a.get("Feedback") or {}
+            if fb.get("NextPracticeFocus"):
+                story.append(Paragraph(f"<b>{a.get('Timestamp','')} — Next Practice Focus:</b> {str(fb.get('NextPracticeFocus')).replace('&','&amp;').replace('<','&lt;')}", styles["Small"]))
+    else:
+        story.append(Paragraph("No earlier interview feedback is available in the portal yet. Historical feedback will build automatically as the student completes more assessed practice sessions.", styles["Small"]))
+    story += [Paragraph("3. Mentor Feedback", styles["Section"]), Paragraph("Mentor comments / observations (handwritten):", styles["Small"]), Spacer(1,4)]
+    for _ in range(8):
+        line = Table([[" "]], colWidths=[163*mm], rowHeights=[8*mm])
+        line.setStyle(TableStyle([("LINEBELOW", (0,0),(-1,-1),0.45,colors.HexColor("#94A3B8"))]))
+        story.append(line)
+    story += [Spacer(1,8), Paragraph("Mentor Sign: ________________________________________________", styles["Small"]), Spacer(1,5), Paragraph("Mentor Name: _______________________________________________", styles["Small"]), Spacer(1,5), Paragraph("Date: ____________________", styles["Small"]), Spacer(1,8), Paragraph("This report is intended as a placement-development record. Mentor comments may be added after review.", styles["ReportSub"])]
+    doc.build(story)
+    return out.getvalue()
 
 
 def load_student_profile(student_id):
@@ -4132,6 +4361,48 @@ Return ONLY valid JSON matching this exact structure:
                         st.markdown("### Next Practice Focus")
                         st.info(eval_result.get("NextPracticeFocus", ""))
 
+                        # Downloadable mentor-ready feedback report. Historical attempts are
+                        # included so the student can share a single development record with a mentor.
+                        current_feedback_report = {
+                            "Timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "Question": st.session_state.get("current_question", ""),
+                            "Mode": mode,
+                            "CommunicationGrade": comm_grade,
+                            "TechnicalGrade": tech_grade,
+                            "FinalGrade": final_grade,
+                            **eval_result,
+                            "SuggestedAnswer": eval_result.get("BenchmarkAnswer", ""),
+                        }
+                        historical_attempts_for_report = load_student_attempts(st.session_state["student_id"])
+                        word_report = build_feedback_report_docx(
+                            c_name, st.session_state.get("scholar_id", ""), current_feedback_report, historical_attempts_for_report
+                        )
+                        pdf_report = build_feedback_report_pdf(
+                            c_name, st.session_state.get("scholar_id", ""), current_feedback_report, historical_attempts_for_report
+                        )
+                        report_filename = re.sub(r"[^A-Za-z0-9_-]+", "_", f"{c_name}_{st.session_state.get('scholar_id','')}_Feedback_Report").strip("_") or "IPER_Feedback_Report"
+                        st.markdown("### Download & Share Feedback")
+                        st.caption("Your report includes present feedback, available historical feedback, suggestions/recommendations, and a blank mentor handwritten-feedback/signature section.")
+                        dl1, dl2 = st.columns(2)
+                        with dl1:
+                            st.download_button(
+                                "⬇️ Download Word Feedback",
+                                data=word_report,
+                                file_name=f"{report_filename}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True,
+                                key="download_interview_feedback_word",
+                            )
+                        with dl2:
+                            st.download_button(
+                                "⬇️ Download PDF Feedback",
+                                data=pdf_report,
+                                file_name=f"{report_filename}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key="download_interview_feedback_pdf",
+                            )
+
                         attempt_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
                         attempt = {
                             "Timestamp": attempt_timestamp,
@@ -4154,6 +4425,7 @@ Return ONLY valid JSON matching this exact structure:
                             st.session_state.get("communication_duration", 0.0),
                             comm_score,
                             tech_score,
+                            eval_result,
                         )
                     except Exception as err:
                         st.error(f"Interview assessment error: {err}")
