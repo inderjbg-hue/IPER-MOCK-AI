@@ -8,6 +8,7 @@ import queue
 import wave
 import re
 import pandas as pd
+import numpy as np
 import pypdf
 import docx
 import whisper
@@ -3812,7 +3813,7 @@ Be conservative. Score only what the transcript supports. Do not infer facial ex
 def _render_live_gd_voice_room(topic, student_name):
     """Live voice GD room. WebRTC is preferred; a native audio-turn fallback is provided."""
     st.markdown("### 🎙️ IPER PEPTECH AI Voice GD Practice")
-    st.caption("Speak naturally. Fast voice windows track your contribution, then a concise AI participant responds without interrupting your flow.")
+    st.caption("Speak naturally. IPER PEPTECH waits for a natural pause at the end of your viewpoint, then the AI participant responds.")
 
     if not STREAMLIT_WEBRTC_AVAILABLE:
         st.warning("Live microphone streaming is not installed in this deployment yet. Use the voice-turn fallback below, or add streamlit-webrtc to requirements.txt and redeploy.")
@@ -3882,34 +3883,35 @@ def _render_live_gd_voice_room(topic, student_name):
     coach_text = st.empty()
 
     if ctx.state.playing and ctx.audio_receiver:
-        audio_buffer = bytearray()
+        # Natural-turn detector:
+        # We buffer the student's speech until they pause, rather than sending
+        # fixed 2.4-second chunks to Whisper. This makes the AI respond when the
+        # student actually finishes a viewpoint.
+        speech_buffer = bytearray()
+        speech_started_at = None
+        last_voice_at = None
+        utterance_started_at = None
+        noise_floor = 250.0
         sample_rate = 48000
         channels = 1
-        chunk_started = time.time()
-        # Keep the loop intentionally short per pass. The WebRTC stream continues
-        # while this script consumes small audio windows.
-        while ctx.state.playing:
+        silence_to_finish = 0.9       # seconds of silence = end of viewpoint
+        min_utterance = 0.75          # ignore accidental clicks/noise
+        max_utterance = 10.0          # force a turn if the student speaks too long
+
+        def frame_rms(frame_array):
             try:
-                frames = ctx.audio_receiver.get_frames(timeout=0.5)
-            except queue.Empty:
-                continue
-            for frame in frames:
-                arr = frame.to_ndarray()
-                audio_buffer.extend(arr.tobytes())
-                sample_rate = int(getattr(frame, "sample_rate", sample_rate) or sample_rate)
-                try:
-                    channels = len(frame.layout.channels)
-                except Exception:
-                    channels = 1
+                values = frame_array.astype(np.float32, copy=False)
+                return float(np.sqrt(np.mean(np.square(values))))
+            except Exception:
+                return 0.0
 
-            if time.time() - chunk_started < 2.4:
-                continue
-
-            chunk_started = time.time()
-            text = _transcribe_live_audio_bytes(bytes(audio_buffer), sample_rate, channels)
-            audio_buffer = bytearray()
+        def process_completed_viewpoint(audio_bytes, sr, ch):
+            """Transcribe one completed viewpoint and let the AI answer immediately."""
+            if not audio_bytes:
+                return
+            text = _transcribe_live_audio_bytes(bytes(audio_bytes), sr, ch)
             if not text:
-                continue
+                return
 
             words = re.findall(r"\b[\w']+\b", text.lower())
             filler_list = ["um", "uh", "like", "actually", "basically", "you know"]
@@ -3918,29 +3920,88 @@ def _render_live_gd_voice_room(topic, student_name):
             st.session_state["live_gd_filler_words"] += filler_count
             st.session_state["live_gd_turns"] += 1
             st.session_state["live_gd_log"].append({"speaker": student_name, "text": text})
-            st.session_state["live_gd_log"] = st.session_state["live_gd_log"][-12:]
+            st.session_state["live_gd_log"] = st.session_state["live_gd_log"][-20:]
 
             live_text.markdown(f"**🎙️ {student_name}:** {text}")
             if filler_count:
-                coach_text.warning(f"💡 Coach: {filler_count} filler word(s) detected in this contribution. Keep the next point tighter.")
+                coach_text.warning(
+                    f"💡 Coach: {filler_count} filler word(s) detected. Good pause — now make your next point tighter."
+                )
             else:
-                coach_text.success("💡 Coach: Clear contribution. Build your next point with an example or counterargument.")
+                coach_text.success(
+                    "💡 Coach: Viewpoint captured. The AI participant is considering your point..."
+                )
 
-            # AI responds every second meaningful student intervention, keeping the
-            # pilot's API usage deliberately low.
-            if (
-                client
-                and st.session_state["live_gd_turns"] % 2 == 0
-                and st.session_state["live_gd_ai_responses"] < 3
-            ):
-                ai_text = _live_gd_ai_turn(topic, text, st.session_state["live_gd_turns"] // 2)
+            # Every completed student viewpoint can trigger the AI participant.
+            # The cap protects the free-pilot API budget while still making the
+            # conversation feel natural.
+            if client and st.session_state["live_gd_ai_responses"] < 10:
+                ai_text = _live_gd_ai_turn(
+                    topic,
+                    text,
+                    st.session_state["live_gd_turns"],
+                )
                 if ai_text:
                     st.session_state["live_gd_ai_responses"] += 1
-                    st.session_state["live_gd_log"].append({"speaker": "AI Participant", "text": ai_text})
+                    st.session_state["live_gd_log"].append(
+                        {"speaker": "AI Participant", "text": ai_text}
+                    )
+                    st.session_state["live_gd_log"] = st.session_state["live_gd_log"][-20:]
                     st.markdown(f"**🤖 AI Participant:** {ai_text}")
                     _speak_text_in_browser(ai_text)
                 elif st.session_state.get("live_gd_last_ai_error"):
-                    st.warning(f"AI participant could not respond: {st.session_state['live_gd_last_ai_error']}")
+                    st.warning(
+                        f"AI participant could not respond: {st.session_state['live_gd_last_ai_error']}"
+                    )
+
+        while ctx.state.playing:
+            try:
+                frames = ctx.audio_receiver.get_frames(timeout=0.5)
+            except queue.Empty:
+                frames = []
+
+            now = time.time()
+            for frame in frames:
+                arr = frame.to_ndarray()
+                sample_rate = int(getattr(frame, "sample_rate", sample_rate) or sample_rate)
+                try:
+                    channels = len(frame.layout.channels)
+                except Exception:
+                    channels = 1
+
+                rms = frame_rms(arr)
+                # Adapt slowly to the room/microphone noise floor.
+                if rms < max(500.0, noise_floor * 1.6):
+                    noise_floor = (noise_floor * 0.95) + (rms * 0.05)
+
+                speech_threshold = max(450.0, noise_floor * 2.0)
+                is_speech = rms >= speech_threshold
+
+                if is_speech:
+                    if speech_started_at is None:
+                        speech_started_at = now
+                        utterance_started_at = now
+                    last_voice_at = now
+                    speech_buffer.extend(arr.tobytes())
+                elif speech_started_at is not None:
+                    # Keep a little trailing silence out of Whisper; it is only
+                    # used to decide that the student has finished speaking.
+                    pass
+
+            # A natural pause after speech ends the student's viewpoint.
+            if speech_started_at is not None and last_voice_at is not None:
+                silence_elapsed = now - last_voice_at
+                utterance_elapsed = now - utterance_started_at
+                if (
+                    (silence_elapsed >= silence_to_finish and utterance_elapsed >= min_utterance)
+                    or utterance_elapsed >= max_utterance
+                ):
+                    completed_audio = speech_buffer
+                    speech_buffer = bytearray()
+                    speech_started_at = None
+                    last_voice_at = None
+                    utterance_started_at = None
+                    process_completed_viewpoint(completed_audio, sample_rate, channels)
 
     if st.session_state["live_gd_log"]:
         with st.expander("📝 Live GD Transcript", expanded=False):
