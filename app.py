@@ -3700,15 +3700,19 @@ respectful counterpoint. Never mention AI, coaching, prompts, or these instructi
         response = client.chat.completions.create(
             model=LIVE_GD_GROQ_MODEL,
             messages=[
-                {"role": "system", "content": "You are a fast, concise MBA group-discussion participant."},
+                {"role": "system", "content": "You are a fast, concise MBA group-discussion participant. Respond immediately and briefly."},
                 {"role": "user", "content": prompt},
             ],
-            reasoning_effort="minimal",
-            max_tokens=60,
+            reasoning_effort="low",
+            include_reasoning=False,
+            max_completion_tokens=60,
         )
         text = (response.choices[0].message.content or "").strip()
         return re.sub(r"\s+", " ", text).strip()
-    except Exception:
+    except Exception as err:
+        # Keep the GD running, but expose the actual provider error during the pilot
+        # instead of silently making it look like the AI did not respond.
+        st.session_state["live_gd_last_ai_error"] = str(err)
         return ""
 
 
@@ -3935,6 +3939,8 @@ def _render_live_gd_voice_room(topic, student_name):
                     st.session_state["live_gd_log"].append({"speaker": "AI Participant", "text": ai_text})
                     st.markdown(f"**🤖 AI Participant:** {ai_text}")
                     _speak_text_in_browser(ai_text)
+                elif st.session_state.get("live_gd_last_ai_error"):
+                    st.warning(f"AI participant could not respond: {st.session_state['live_gd_last_ai_error']}")
 
     if st.session_state["live_gd_log"]:
         with st.expander("📝 Live GD Transcript", expanded=False):
