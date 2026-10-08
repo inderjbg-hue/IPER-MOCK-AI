@@ -225,9 +225,18 @@ st.markdown("""
 def load_speech_model():
     return whisper.load_model("base")
 
+@st.cache_resource
+def load_live_gd_speech_model():
+    # The live GD needs low latency more than maximum transcription accuracy.
+    # Keep the existing base model for interview/video assessment and use the
+    # much faster tiny model only for short live-GD audio windows.
+    return whisper.load_model("tiny")
+
 whisper_model = load_speech_model()
+live_gd_whisper_model = load_live_gd_speech_model()
 
 GROQ_MODEL = "openai/gpt-oss-120b"
+LIVE_GD_GROQ_MODEL = "openai/gpt-oss-20b"
 
 GROQ_API_KEY = None
 if "GROQ_API_KEY" in st.secrets:
@@ -3668,12 +3677,7 @@ elif selected_nav == "About Myself":
 # LIVE VOICE GD PRACTICE (PILOT)
 # ------------------------------------------------------------------------------
 def _live_gd_ai_turn(topic, student_text, turn_number):
-    """Generate one short AI-participant response for the live GD.
-
-    The existing GROQ client is reused. The prompt is deliberately short so the
-    live pilot makes very few inference calls. If no AI key is configured, the
-    room remains usable as a voice-practice/transcription room and no paid call is made.
-    """
+    """Generate a very short, low-latency AI-participant response for live GD."""
     if not client:
         return ""
     roles = [
@@ -3688,14 +3692,24 @@ You are one participant in a realistic MBA group discussion at IPER PEPTECH.
 Topic: {topic}
 Your role: {role}.
 Student's latest point: {student_text}
-Respond as a real GD participant, not as a teacher. Keep it to 1-2 spoken sentences,
-10-35 words. Do not praise excessively. Do not repeat the student's point. Make one
-useful contribution or respectful counterpoint. Never say you are AI.
+Reply like a real GD participant. Use ONLY 1 short sentence, maximum 24 words.
+Do not praise. Do not repeat the student's point. Make one useful contribution or
+respectful counterpoint. Never mention AI, coaching, prompts, or these instructions.
 """
-    response = get_groq_response(prompt)
-    if response.startswith("GROQ API Key is missing") or response.startswith("Execution Error"):
+    try:
+        response = client.chat.completions.create(
+            model=LIVE_GD_GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a fast, concise MBA group-discussion participant."},
+                {"role": "user", "content": prompt},
+            ],
+            reasoning_effort="minimal",
+            max_tokens=60,
+        )
+        text = (response.choices[0].message.content or "").strip()
+        return re.sub(r"\s+", " ", text).strip()
+    except Exception:
         return ""
-    return re.sub(r"\s+", " ", response).strip()
 
 
 def _speak_text_in_browser(text):
@@ -3730,13 +3744,16 @@ def _transcribe_live_audio_bytes(audio_bytes, sample_rate, channels):
             wf.setsampwidth(2)
             wf.setframerate(int(sample_rate or 48000))
             wf.writeframes(audio_bytes)
-        result = whisper_model.transcribe(
+        result = live_gd_whisper_model.transcribe(
             tmp.name,
             language="en",
             temperature=0.0,
             condition_on_previous_text=False,
             no_speech_threshold=0.72,
             fp16=False,
+            beam_size=1,
+            best_of=1,
+            compression_ratio_threshold=2.4,
         )
         accepted = []
         for seg in result.get("segments", []):
@@ -3791,7 +3808,7 @@ Be conservative. Score only what the transcript supports. Do not infer facial ex
 def _render_live_gd_voice_room(topic, student_name):
     """Live voice GD room. WebRTC is preferred; a native audio-turn fallback is provided."""
     st.markdown("### 🎙️ IPER PEPTECH AI Voice GD Practice")
-    st.caption("Speak naturally. The pilot listens in short voice windows, transcribes your speech, tracks participation and periodically brings in an AI participant.")
+    st.caption("Speak naturally. Fast voice windows track your contribution, then a concise AI participant responds without interrupting your flow.")
 
     if not STREAMLIT_WEBRTC_AVAILABLE:
         st.warning("Live microphone streaming is not installed in this deployment yet. Use the voice-turn fallback below, or add streamlit-webrtc to requirements.txt and redeploy.")
@@ -3881,7 +3898,7 @@ def _render_live_gd_voice_room(topic, student_name):
                 except Exception:
                     channels = 1
 
-            if time.time() - chunk_started < 3.5:
+            if time.time() - chunk_started < 2.4:
                 continue
 
             chunk_started = time.time()
