@@ -3678,41 +3678,70 @@ elif selected_nav == "About Myself":
 # LIVE VOICE GD PRACTICE (PILOT)
 # ------------------------------------------------------------------------------
 def _live_gd_ai_turn(topic, student_text, turn_number):
-    """Generate a very short, low-latency AI-participant response for live GD."""
+    """Generate one simple, natural AI-participant sentence for the live GD."""
     if not client:
         return ""
-    roles = [
-        "supportive participant who agrees and adds a fresh dimension",
-        "constructive challenger who respectfully questions the student's point",
-        "business-focused participant who brings an economic or employer perspective",
-        "social-impact participant who brings an Indian/social perspective",
-    ]
-    role = roles[(turn_number - 1) % len(roles)]
+
+    # Keep the AI grounded in the recent discussion so the GD develops naturally
+    # instead of sounding like a sequence of unrelated mini-answers.
+    recent_log = st.session_state.get("live_gd_log", [])[-8:]
+    recent_discussion = "\n".join(
+        f"{item.get('speaker', 'Participant')}: {item.get('text', '')}"
+        for item in recent_log
+        if item.get("text")
+    )
+
     prompt = f"""
-You are one participant in a realistic MBA group discussion at IPER PEPTECH.
+You are a student in a realistic MBA group discussion at IPER PEPTECH.
 Topic: {topic}
-Your role: {role}.
-Student's latest point: {student_text}
-Reply like a real GD participant. Use ONLY 1 short sentence, maximum 24 words.
-Do not praise. Do not repeat the student's point. Make one useful contribution or
-respectful counterpoint. Never mention AI, coaching, prompts, or these instructions.
+This is turn {turn_number} of an ongoing discussion.
+
+LATEST STUDENT POINT:
+{student_text}
+
+RECENT DISCUSSION:
+{recent_discussion or 'This is the first point in the discussion.'}
+
+Your job is to behave like a REAL GD participant and keep the discussion moving.
+Choose the most natural next move from the discussion: agree and add a point, give a simple counterpoint,
+ask one short question, give a practical example, or bring a new useful angle.
+
+LANGUAGE RULES — VERY IMPORTANT:
+- Use very simple everyday English that an MBA student from a small town or village in India can easily understand.
+- Use common words. Avoid difficult vocabulary, corporate jargon, fancy phrases and long sentences.
+- Do not sound like a textbook, professor, speech or AI.
+- Say ONLY ONE sentence.
+- Keep it to about 8–15 words and never more than 18 words.
+- Do not praise the student.
+- Do not repeat the student's sentence.
+- Do not mention AI, coaching, prompts or these instructions.
+- Make the sentence useful for the GD and connected to the previous discussion.
 """
     try:
         response = client.chat.completions.create(
             model=LIVE_GD_GROQ_MODEL,
             messages=[
-                {"role": "system", "content": "You are a fast, concise MBA group-discussion participant. Respond immediately and briefly."},
+                {"role": "system", "content": "You are a natural MBA GD participant who speaks simple Indian classroom English. One short sentence only."},
                 {"role": "user", "content": prompt},
             ],
             reasoning_effort="low",
             include_reasoning=False,
-            max_completion_tokens=60,
+            max_completion_tokens=45,
         )
         text = (response.choices[0].message.content or "").strip()
-        return re.sub(r"\s+", " ", text).strip()
+        text = re.sub(r"\s+", " ", text).strip()
+        # Remove accidental quotation marks/markdown and enforce the one-sentence rule.
+        text = re.sub(r"^[\"'`]+|[\"'`]+$", "", text).strip()
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        if len(sentences) > 1:
+            text = sentences[0].strip()
+        words = text.split()
+        if len(words) > 18:
+            text = " ".join(words[:18]).rstrip(" ,;:") + "."
+        if text and text[-1] not in ".!?":
+            text += "."
+        return text
     except Exception as err:
-        # Keep the GD running, but expose the actual provider error during the pilot
-        # instead of silently making it look like the AI did not respond.
         st.session_state["live_gd_last_ai_error"] = str(err)
         return ""
 
@@ -3776,26 +3805,60 @@ def _transcribe_live_audio_bytes(audio_bytes, sample_rate, channels):
             pass
 
 
-def _generate_live_gd_final_feedback(topic, student_name, transcript, turns, words, fillers):
+def _generate_live_gd_final_feedback(topic, student_name, transcript, turns, words, fillers, turn_details=None, discussion_log=None):
     if not client or not transcript.strip():
         return None
+
+    turn_details = turn_details or []
+    discussion_log = discussion_log or []
     prompt = f"""
-You are a strict MBA placement mentor at IPER PEPTECH.
-Evaluate this student's short AI voice-GD practice.
+You are a strict but supportive MBA placement mentor at IPER PEPTECH.
+Evaluate a student's live AI voice group discussion practice.
+The student is mainly being trained for placement GDs, so feedback must be practical and easy to understand.
+Do not reward difficult English. Reward clear thinking, useful participation and understandable speaking.
+
 Student: {student_name}
 Topic: {topic}
-Interventions: {turns}
-Words spoken: {words}
-Common filler words detected: {fillers}
-Transcript:
+Student viewpoints/interventions: {turns}
+Total words spoken: {words}
+Common filler words: {fillers}
+
+STUDENT TRANSCRIPT:
 {transcript}
 
-Return ONLY valid JSON with keys:
-OverallScore (0-100), CommunicationScore (0-100), ContentScore (0-100),
-ParticipationScore (0-100), AnalyticalScore (0-100),
-Strengths (array of 3 short strings), Improvements (array of 3 short strings),
-NextActionPlan (array of 3 short strings).
-Be conservative. Score only what the transcript supports. Do not infer facial expressions, gestures, confidence, or factual correctness that is not evident.
+TURN-BY-TURN AUDIO/SPEAKING DATA:
+{json.dumps(turn_details, ensure_ascii=False)}
+
+RECENT GD FLOW (student + AI participant):
+{json.dumps(discussion_log[-30:], ensure_ascii=False)}
+
+Assess these EXACT FIVE areas:
+1. Participation — Did the student enter the discussion naturally, speak enough, stay relevant, and add useful points?
+2. Knowledge — Did the student show understanding of the topic, give reasons/examples, use practical or Indian context, and avoid unsupported claims?
+3. Voice Clarity — Was the speech understandable from the available audio/transcription evidence? Consider speaking pace, volume consistency and clarity of words. Do not judge accent as wrong.
+4. Tone — Assess the available vocal evidence such as steadiness, energy and variation. Do not claim to detect emotions that the audio cannot support.
+5. Counter Response — Did the student respond to, challenge, build on, or connect with another participant's point? Do not require disagreement; a useful agreement with a new point also counts.
+
+IMPORTANT:
+- Use simple language in the feedback.
+- Give detailed evidence from the student's actual discussion.
+- Do not invent points the student never made.
+- If evidence is limited, say exactly what could and could not be judged.
+- Scores are internal 0-100 values. They will be shown to the student only as readiness grades.
+- Do not give high marks just because the student spoke a lot.
+
+Return ONLY valid JSON with this structure:
+{{
+  "OverallScore": 0,
+  "Participation": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
+  "Knowledge": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
+  "VoiceClarity": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
+  "Tone": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
+  "CounterResponse": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
+  "OverallStrengths": ["...", "...", "..."],
+  "PriorityImprovements": ["...", "...", "..."],
+  "NextActionPlan": ["...", "...", "..."]
+}}
 """
     raw = get_groq_response(prompt)
     if raw.startswith("GROQ API Key is missing") or raw.startswith("Execution Error"):
@@ -3808,6 +3871,39 @@ Be conservative. Score only what the transcript supports. Do not infer facial ex
         return json.loads(cleaned)
     except Exception:
         return None
+
+
+def _estimate_live_voice_features(audio_bytes, sample_rate, channels):
+    """Extract lightweight, non-diagnostic speaking features for GD feedback."""
+    if not audio_bytes:
+        return {"duration_sec": 0.0, "volume_mean": 0.0, "volume_variation": 0.0, "pitch_proxy": 0.0}
+    try:
+        arr = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+        if channels > 1:
+            arr = arr.reshape(-1, channels).mean(axis=1)
+        if arr.size < 100:
+            return {"duration_sec": 0.0, "volume_mean": 0.0, "volume_variation": 0.0, "pitch_proxy": 0.0}
+        duration = arr.size / float(sample_rate or 48000)
+        arr = arr / 32768.0
+        frame_len = max(160, int((sample_rate or 48000) * 0.03))
+        usable = arr[: (arr.size // frame_len) * frame_len]
+        frames = usable.reshape(-1, frame_len) if usable.size else arr.reshape(1, -1)
+        rms = np.sqrt(np.mean(frames * frames, axis=1) + 1e-10)
+        active = rms[rms > max(0.008, float(np.percentile(rms, 25)) * 1.5)]
+        volume_mean = float(np.mean(active)) if active.size else float(np.mean(rms))
+        volume_variation = float(np.std(active) / (volume_mean + 1e-6)) if active.size else 0.0
+        # A simple zero-crossing based pitch proxy. It is used only as a rough
+        # variation signal, never as a medical/emotional diagnosis.
+        zc = np.mean(np.abs(np.diff(np.sign(frames), axis=1)) > 0, axis=1)
+        pitch_proxy = float(np.mean(zc[zc > 0])) if zc.size else 0.0
+        return {
+            "duration_sec": round(float(duration), 2),
+            "volume_mean": round(volume_mean, 4),
+            "volume_variation": round(volume_variation, 3),
+            "pitch_proxy": round(pitch_proxy, 4),
+        }
+    except Exception:
+        return {"duration_sec": 0.0, "volume_mean": 0.0, "volume_variation": 0.0, "pitch_proxy": 0.0}
 
 
 def _render_live_gd_voice_room(topic, student_name):
@@ -3847,6 +3943,8 @@ def _render_live_gd_voice_room(topic, student_name):
         st.session_state["live_gd_turns"] = 0
     if "live_gd_ai_responses" not in st.session_state:
         st.session_state["live_gd_ai_responses"] = 0
+    if "live_gd_turn_details" not in st.session_state:
+        st.session_state["live_gd_turn_details"] = []
 
     st.info("Click START below and allow microphone access. For the pilot, Chrome/Edge on HTTPS is recommended.")
     # WebRTC connection configuration. On remote hosting, STUN is required;
@@ -3913,10 +4011,20 @@ def _render_live_gd_voice_room(topic, student_name):
             if not text:
                 return
 
+            voice_features = _estimate_live_voice_features(bytes(audio_bytes), sr, ch)
+            actual_duration = max(float(duration_sec or 0.0), float(voice_features.get("duration_sec", 0.0)))
             words = re.findall(r"\b[\w']+\b", text.lower())
             filler_list = ["um", "uh", "like", "actually", "basically", "you know"]
             filler_count = sum(words.count(x) for x in filler_list)
+            speaking_rate = round((len(words) / actual_duration) * 60.0, 1) if actual_duration > 0 else 0.0
             st.session_state["live_gd_total_words"] += len(words)
+            st.session_state["live_gd_turn_details"].append({
+                "turn": st.session_state["live_gd_turns"] + 1,
+                "words": len(words),
+                "duration_sec": round(actual_duration, 2),
+                "speaking_rate_wpm": speaking_rate,
+                **voice_features,
+            })
             st.session_state["live_gd_filler_words"] += filler_count
             st.session_state["live_gd_turns"] += 1
             st.session_state["live_gd_log"].append({"speaker": student_name, "text": text})
@@ -3933,9 +4041,9 @@ def _render_live_gd_voice_room(topic, student_name):
                 )
 
             # Every completed student viewpoint can trigger the AI participant.
-            # The cap protects the free-pilot API budget while still making the
-            # conversation feel natural.
-            if client and st.session_state["live_gd_ai_responses"] < 10:
+            # There is intentionally no response-count cap: the AI follows the
+            # natural GD flow for as many viewpoints as the student contributes.
+            if client:
                 ai_text = _live_gd_ai_turn(
                     topic,
                     text,
@@ -4001,7 +4109,7 @@ def _render_live_gd_voice_room(topic, student_name):
                     speech_started_at = None
                     last_voice_at = None
                     utterance_started_at = None
-                    process_completed_viewpoint(completed_audio, sample_rate, channels)
+                    process_completed_viewpoint(completed_audio, sample_rate, channels, utterance_elapsed)
 
     if st.session_state["live_gd_log"]:
         with st.expander("📝 Live GD Transcript", expanded=False):
@@ -4022,30 +4130,50 @@ def _render_live_gd_voice_room(topic, student_name):
                 st.session_state["live_gd_turns"],
                 st.session_state["live_gd_total_words"],
                 st.session_state["live_gd_filler_words"],
+                st.session_state.get("live_gd_turn_details", []),
+                st.session_state.get("live_gd_log", []),
             )
         if feedback:
             overall = float(feedback.get("OverallScore", 0) or 0)
             st.session_state["last_live_gd_report"] = feedback
             st.markdown(f"### Overall Readiness — {grade_from_score(overall)}")
-            cols = st.columns(4)
-            for col, label in zip(cols, ["Communication", "Content", "Participation", "Analytical Thinking"]):
-                score = float(feedback.get(label.replace(" ", "") + "Score", feedback.get({
-                    "Communication": "CommunicationScore",
-                    "Content": "ContentScore",
-                    "Participation": "ParticipationScore",
-                    "Analytical Thinking": "AnalyticalScore",
-                }[label], 0)) or 0)
-                col.metric(label, grade_from_score(score))
-            if feedback.get("Strengths"):
-                st.markdown("#### 🟢 What you did well")
-                for item in feedback["Strengths"]:
+            st.caption("Detailed feedback is based on the student's actual GD transcript and available speaking/audio evidence; accent is not penalised.")
+
+            dimensions = [
+                ("Participation", "Participation", "How naturally and usefully you entered and continued the GD."),
+                ("Knowledge", "Knowledge", "How well you understood the topic and supported your points."),
+                ("Voice Clarity", "VoiceClarity", "How clearly and steadily your speech could be understood."),
+                ("Tone", "Tone", "How steady, active and varied your speaking delivery sounded."),
+                ("Counter Response", "CounterResponse", "How well you responded to, built on or challenged other points."),
+            ]
+            for title, key, help_text in dimensions:
+                section = feedback.get(key, {}) or {}
+                score = float(section.get("Score", 0) or 0)
+                with st.expander(f"### {title} — {grade_from_score(score)}", expanded=True):
+                    st.caption(help_text)
+                    if section.get("Evidence"):
+                        st.markdown("**Evidence from your GD**")
+                        for item in section["Evidence"]:
+                            st.write(f"• {item}")
+                    if section.get("WhatWentWell"):
+                        st.markdown("**What you did well**")
+                        for item in section["WhatWentWell"]:
+                            st.write(f"• {item}")
+                    if section.get("WhatToImprove"):
+                        st.markdown("**What to improve**")
+                        for item in section["WhatToImprove"]:
+                            st.write(f"• {item}")
+
+            if feedback.get("OverallStrengths"):
+                st.markdown("#### 🟢 Overall strengths")
+                for item in feedback["OverallStrengths"]:
                     st.write(f"• {item}")
-            if feedback.get("Improvements"):
-                st.markdown("#### 🟠 What to improve")
-                for item in feedback["Improvements"]:
+            if feedback.get("PriorityImprovements"):
+                st.markdown("#### 🟠 Priority improvements")
+                for item in feedback["PriorityImprovements"]:
                     st.write(f"• {item}")
             if feedback.get("NextActionPlan"):
-                st.markdown("#### 🎯 Next GD action plan")
+                st.markdown("#### 🎯 Your next GD practice plan")
                 for item in feedback["NextActionPlan"]:
                     st.write(f"• {item}")
         else:
