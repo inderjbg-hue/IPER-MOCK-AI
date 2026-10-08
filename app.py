@@ -4003,7 +4003,7 @@ def _render_live_gd_voice_room(topic, student_name):
             except Exception:
                 return 0.0
 
-        def process_completed_viewpoint(audio_bytes, sr, ch):
+        def process_completed_viewpoint(audio_bytes, sr, ch, duration_sec=0.0):
             """Transcribe one completed viewpoint and let the AI answer immediately."""
             if not audio_bytes:
                 return
