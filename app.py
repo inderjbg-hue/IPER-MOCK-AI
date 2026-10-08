@@ -23,7 +23,7 @@ import streamlit.components.v1 as components
 os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin" + os.pathsep + "/usr/local/bin" + os.pathsep + "/usr/bin"
 ssl._create_default_https_context = ssl._create_unverified_context
 
-st.set_page_config(page_title="IPER Placement & Interview Portal", layout="wide")
+st.set_page_config(page_title="IPER PEPTECH", layout="wide")
 
 VIDEO_STORAGE_DIR = "saved_videos"
 os.makedirs(VIDEO_STORAGE_DIR, exist_ok=True)
@@ -548,11 +548,11 @@ def communication_metrics(transcript, duration_seconds=0.0):
 # 3A. STRICT GRADE SYSTEM
 # ------------------------------------------------------------------------------
 GRADE_SLABS = [
-    (0, 20, "E Grade"),
-    (21, 40, "D Grade"),
-    (41, 60, "C Grade"),
-    (61, 80, "B Grade"),
-    (81, 100, "A Grade"),
+    (0, 20, "E — Needs Significant Improvement"),
+    (21, 40, "D — Limited Placement Readiness"),
+    (41, 60, "C — Developing Placement Readiness"),
+    (61, 80, "B — Good Placement Readiness"),
+    (81, 100, "A — Strong Placement Readiness"),
 ]
 
 def grade_from_score(score):
@@ -566,7 +566,7 @@ def grade_from_score(score):
     return "E Grade"
 
 def grade_slab_text():
-    return "E Grade: 0–20  |  D Grade: 21–40  |  C Grade: 41–60  |  B Grade: 61–80  |  A Grade: 81–100"
+    return "A — Strong Placement Readiness  |  B — Good Placement Readiness  |  C — Developing Placement Readiness  |  D — Limited Placement Readiness  |  E — Needs Significant Improvement"
 
 def detect_hindi_usage(text):
     """Detect Hindi/Hinglish in an English-medium assessment without judging accent."""
@@ -1250,7 +1250,7 @@ def build_feedback_report_docx(student_name, scholar_id, current_feedback, histo
 
     title = document.add_paragraph()
     title.alignment = 1
-    run = title.add_run("IPER UG\nPLACEMENT & INTERVIEW FEEDBACK REPORT")
+    run = title.add_run("IPER PEPTECH\nPLACEMENT & INTERVIEW FEEDBACK REPORT")
     run.bold = True
     run.font.size = docx.shared.Pt(18)
     run.font.color.rgb = docx.shared.RGBColor(15, 23, 42)
@@ -1372,7 +1372,7 @@ def build_feedback_report_pdf(student_name, scholar_id, current_feedback, histor
     styles.add(ParagraphStyle(name="Section", parent=styles["Heading2"], fontSize=12, leading=15, textColor=colors.HexColor("#1E3A5F"), spaceBefore=8, spaceAfter=6))
     styles.add(ParagraphStyle(name="Small", parent=styles["Normal"], fontSize=8.5, leading=12))
     story = [
-        Paragraph("IPER UG", styles["ReportTitle"]),
+        Paragraph("IPER PEPTECH", styles["ReportTitle"]),
         Paragraph("PLACEMENT & INTERVIEW FEEDBACK REPORT", styles["ReportTitle"]),
         Paragraph(f"Prepared for {student_name} • {datetime.now().strftime('%d %B %Y')}", styles["ReportSub"]),
     ]
@@ -2041,11 +2041,11 @@ Also evaluate the group as a whole:
 - Overall group score
 
 Grading calibration for this assessment:
-- E Grade (0–20): inadequate evidence, seriously weak or fundamentally incorrect performance.
-- D Grade (21–40): weak performance with substantial gaps.
-- C Grade (41–60): basic/partial performance with noticeable weaknesses.
-- B Grade (61–80): placement-ready performance that is clearly demonstrated, consistent and accurate; award only when evidence supports it.
-- A Grade (81–100): exceptional, highly consistent and unusually strong performance; very rare.
+- E — Needs Significant Improvement (internal 0–20): inadequate evidence, seriously weak or fundamentally incorrect performance.
+- D — Limited Placement Readiness (internal 21–40): weak performance with substantial gaps.
+- C — Developing Placement Readiness (internal 41–60): basic/partial performance with noticeable weaknesses.
+- B — Good Placement Readiness (internal 61–80): placement-ready performance that is clearly demonstrated, consistent and accurate; award only when evidence supports it.
+- A — Strong Placement Readiness (internal 81–100): exceptional, highly consistent and unusually strong performance; very rare.
 Do not let fluent English, confidence, speaking volume, or business buzzwords compensate for weak substance.
 
 Return ONLY valid JSON in this exact structure:
@@ -2084,7 +2084,7 @@ Return ONLY valid JSON in this exact structure:
   ]
 }}
 
-Be deliberately strict. Do not reward fluency, length, confidence or business buzzwords without evidence. A strong B-level performance must be clearly demonstrated and A-level performance must be exceptional and rare. Hindi/Hinglish usage in the English-medium assessment should materially reduce CommunicationScore. Return internal numeric scores for calculation only; the portal will display grades, never marks.
+Be deliberately strict. Do not reward fluency, length, confidence or business buzzwords without evidence. A strong B-level performance must be clearly demonstrated and A-level performance must be exceptional and rare; use the readiness labels rather than exposing numeric marks to students. Hindi/Hinglish usage in the English-medium assessment should materially reduce CommunicationScore. Return internal numeric scores for calculation only; the portal will display grades, never marks.
 """
     raw = get_groq_response(prompt)
     try:
@@ -2208,13 +2208,13 @@ def render_inbuilt_gd_room(room_code, student, is_host=False, started_at=None):
     st.markdown(f"""
     <div style="font-family:Inter,Arial,sans-serif;border:1px solid #CBD5E1;border-radius:12px;overflow:hidden;background:#0F172A;">
       <div style="padding:13px 16px;color:white;background:#0F172A;display:flex;justify-content:space-between;align-items:center;gap:12px;">
-        <div><b>IPER Virtual GD Room</b><br><span style="font-size:12px;opacity:.85">{role_label} • {display_name} • maximum 7 students • maximum 10 minutes</span></div>
-        <div style="font-size:12px;font-weight:700;color:#93C5FD;">IPER WebRTC</div>
+        <div><b>IPER PEPTECH Virtual GD Room</b><br><span style="font-size:12px;opacity:.85">{role_label} • {display_name} • maximum 7 students • maximum 10 minutes</span></div>
+        <div style="font-size:12px;font-weight:700;color:#93C5FD;">IPER PEPTECH WebRTC</div>
       </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.link_button("↗ Open IPER Virtual GD Room", room_url, use_container_width=True)
+    st.link_button("↗ Open IPER PEPTECH Virtual GD Room", room_url, use_container_width=True)
     st.caption("The secure room opens in a new browser tab so the camera and microphone can be granted directly to the IPER video service. Your name and Scholar ID are taken from your logged-in profile.")
 
     # Also provide an embedded view for browsers that allow camera/microphone access
@@ -2223,7 +2223,7 @@ def render_inbuilt_gd_room(room_code, student, is_host=False, started_at=None):
     <div style="width:100%;height:720px;border:1px solid #CBD5E1;border-radius:12px;overflow:hidden;background:#0B1020;">
       <iframe
         src="{room_url}"
-        title="IPER Virtual GD Room"
+        title="IPER PEPTECH Virtual GD Room"
         allow="camera; microphone; fullscreen; display-capture"
         style="width:100%;height:100%;border:0;"
         allowfullscreen>
@@ -2484,7 +2484,7 @@ def render_authentication_panel():
     st.markdown(
         """
         <div class="auth-page-title">
-            <h1>IPER Student Placement Portal</h1>
+            <h1>IPER PEPTECH</h1>
             <p>Student Login & Career Readiness Hub</p>
         </div>
         """,
@@ -2625,7 +2625,7 @@ def render_authentication_panel():
                         else:
                             st.error(message)
 
-            st.markdown('<div class="auth-footer">IPER Student Placement & Career Readiness Portal</div></div>', unsafe_allow_html=True)
+            st.markdown('<div class="auth-footer">IPER PEPTECH • Placement & Career Readiness</div></div>', unsafe_allow_html=True)
 
 
 init_database()
@@ -2646,6 +2646,17 @@ if not st.session_state["authenticated"]:
 # Keep the logged-in student's full name as the permanent personalized display name.
 st.session_state["candidate_name"] = st.session_state.get("first_name", "Student")
 
+# IPER PEPTECH is the portal's new name and is shown consistently across authenticated screens.
+st.markdown(
+    """
+    <div style='border:1px solid #CBD5E1; border-radius:10px; padding:10px 16px; margin:0 0 14px 0; background:#F8FAFC;'>
+        <div style='font-size:20px; font-weight:800; letter-spacing:0.01em; color:#0F172A;'>IPER PEPTECH</div>
+        <div style='font-size:12px; color:#64748B; margin-top:2px;'>Placement • Employability • Practice • Technology-Enabled Career Readiness</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 # Personalized header shown throughout the logged-in student panel.
 st.markdown(
     f"<div style='padding:8px 0 2px 0; font-size:18px; font-weight:600; color:#0F172A;'>Welcome, {st.session_state.get("first_name", "Student")}</div>",
@@ -2656,7 +2667,7 @@ st.markdown(
 # 6. SIDEBAR NAVIGATION CONTROLS
 # ------------------------------------------------------------------------------
 
-st.sidebar.markdown("## IPER Student Portal")
+st.sidebar.markdown("## IPER PEPTECH")
 st.sidebar.markdown(f"### Welcome, {st.session_state.get('first_name', 'Student')}")
 st.sidebar.caption(f"Scholar ID: {st.session_state.get('scholar_id', 'N/A')}")
 st.sidebar.markdown("Career Readiness & Interview Hub")
@@ -4204,7 +4215,7 @@ COMMUNICATION SCORE ANCHORS:
 80-89 = strong communication; uncommon
 90-100 = exceptional communication; very rare
 
-IMPORTANT: Do not inflate scores. Use integers only for internal calculation. The final internal score is the arithmetic average of Communication and Technical Knowledge, but the displayed Final Grade must not exceed the weaker of the two dimensions. This conservative rule makes B Grade difficult and A Grade rare.
+IMPORTANT: Do not inflate scores. Use integers only for internal calculation. The final internal score is the arithmetic average of Communication and Technical Knowledge, but the displayed Final Grade must not exceed the weaker of the two dimensions. This conservative rule makes B-level readiness difficult and A-level readiness rare.
 
 Return ONLY valid JSON matching this exact structure:
 {{
@@ -4341,7 +4352,7 @@ Return ONLY valid JSON matching this exact structure:
                         sc2.metric("Technical Knowledge Grade", tech_grade)
                         sc3.metric("Final Grade", final_grade)
                         render_grade_slabs()
-                        st.caption("Grading is deliberately strict and evidence-based. A B Grade requires sustained placement-ready performance; A Grade is reserved for exceptional performance.")
+                        st.caption("Grading is deliberately strict and evidence-based. B-level readiness requires sustained placement-ready performance; A-level readiness is reserved for exceptional performance.")
 
                         st.markdown("### 1. Communication Feedback")
                         st.write(eval_result.get("CommunicationAssessment", ""))
@@ -4487,13 +4498,28 @@ elif selected_nav == "Group Discussion Hub":
 
         st.markdown("---")
         st.markdown("### 100+ GD Topics")
-        topic = st.selectbox("Select a GD topic for AI perspective guidance:", GD_TOPICS)
-        if st.button("Get AI Perspective Guidance", use_container_width=True):
+        st.caption("Search the topic bank or enter your own topic. If the topic is not in the list, IPER PEPTECH will still generate the same complete AI guidance for it.")
+        gd_topic_search = st.text_input(
+            "🔎 Search or enter a GD topic",
+            placeholder="Example: Is artificial intelligence a threat to jobs?",
+            key="gd_topic_search",
+        )
+        search_term = gd_topic_search.strip().lower()
+        matching_topics = [topic_item for topic_item in GD_TOPICS if search_term and search_term in topic_item.lower()]
+        if matching_topics:
+            topic = st.selectbox("Matching GD topics", matching_topics, key="gd_topic_match")
+        elif search_term:
+            topic = gd_topic_search.strip()
+            st.info(f"No exact topic found in the list. Using your custom topic: **{topic}**")
+        else:
+            topic = st.selectbox("Select a GD topic for AI perspective guidance:", GD_TOPICS, key="gd_topic_bank")
+
+        if st.button("Get AI Perspective Guidance", use_container_width=True, key="get_gd_guidance_searchable"):
             with st.spinner("Preparing balanced perspectives..."):
                 st.markdown(get_gd_ai_guidance(topic, st.session_state.get("first_name", "Student")))
 
     with gd_practice_tab:
-        st.markdown("### 🎥 IPER AI GD Assessment")
+        st.markdown("### 🎥 IPER PEPTECH AI GD Assessment")
         st.info("Conduct your GD on any third-party platform, download the recording as MP4, then upload it here. The portal analyses participation, communication, knowledge, analytical thinking, teamwork and leadership.")
 
         if not OPENAI_API_KEY:
