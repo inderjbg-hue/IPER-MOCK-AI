@@ -2114,7 +2114,7 @@ Be deliberately strict. Do not reward fluency, length, confidence or business bu
         return None, raw
 
 
-def save_gd_video_assessment(scholar_id, topic, participants, segments, report, video_filename):
+def save_gd_video_assessment(scholar_id, topic, participants, segments, report, video_filename, source_type="Video GD"):
     conn = get_db_connection()
     duration_seconds = 0.0
     try:
@@ -2124,6 +2124,9 @@ def save_gd_video_assessment(scholar_id, topic, participants, segments, report, 
             duration_seconds = max(0.0, max(ends) - (min(starts) if starts else 0.0))
     except Exception:
         duration_seconds = 0.0
+    stored_report = dict(report or {})
+    stored_report.setdefault("SourceType", source_type)
+
     conn.execute("""
         INSERT INTO gd_assessments
         (scholar_id, topic, participant_names, transcript_json, report_json, video_filename, duration_seconds, created_at)
@@ -2132,7 +2135,7 @@ def save_gd_video_assessment(scholar_id, topic, participants, segments, report, 
         scholar_id, topic,
         json.dumps(participants, ensure_ascii=False),
         json.dumps(segments, ensure_ascii=False),
-        json.dumps(report, ensure_ascii=False),
+        json.dumps(stored_report, ensure_ascii=False),
         video_filename,
         duration_seconds,
         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -2814,6 +2817,19 @@ if selected_nav == "Progress":
 
     for suggestion in suggestions[:3]:
         st.markdown(f"• {suggestion}")
+
+    # GD feedback is now part of the weekly progress view, not only the GD tab.
+    if scholar_id:
+        try:
+            weekly_gd_assessments = get_gd_video_assessments(scholar_id)
+            if weekly_gd_assessments:
+                _render_live_gd_feedback_summary(
+                    weekly_gd_assessments[0],
+                    st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")),
+                    heading="### Latest GD Feedback"
+                )
+        except Exception as gd_feedback_error:
+            st.info(f"GD feedback could not be loaded right now: {gd_feedback_error}")
 
     st.markdown("### Activity Snapshot")
     c1, c2 = st.columns(2)
@@ -3925,6 +3941,72 @@ def _estimate_live_voice_features(audio_bytes, sample_rate, channels):
         return {"duration_sec": 0.0, "volume_mean": 0.0, "volume_variation": 0.0, "pitch_proxy": 0.0}
 
 
+
+def _live_gd_report_for_student(assessment, student_name):
+    """Return a normalized live-GD feedback payload for one saved assessment."""
+    report = assessment.get("report_json") or {}
+    live_feedback = report.get("LiveFeedback")
+    if live_feedback:
+        return live_feedback
+    for person in report.get("Participants", []) or []:
+        if str(person.get("Name", "")).strip().lower() == str(student_name or "").strip().lower():
+            def _score100(value):
+                value = float(value or 0)
+                return value * 10 if value <= 10 else value
+            return {
+                "OverallScore": _score100(person.get("OverallScore", 0)),
+                "Participation": {"Score": _score100(person.get("ParticipationScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
+                "Knowledge": {"Score": _score100(person.get("KnowledgeScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
+                "VoiceClarity": {"Score": _score100(person.get("CommunicationScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
+                "Tone": {"Score": _score100(person.get("CommunicationScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
+                "CounterResponse": {"Score": _score100(person.get("ListeningTeamworkScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
+                "OverallStrengths": person.get("Strengths", []),
+                "PriorityImprovements": person.get("AreasToImprove", []),
+                "NextActionPlan": person.get("NextGDActionPlan", []),
+            }
+    return None
+
+
+def _render_live_gd_feedback_summary(assessment, student_name, heading="### Latest GD Feedback"):
+    feedback = _live_gd_report_for_student(assessment, student_name)
+    if not feedback:
+        return False
+
+    st.markdown(heading)
+    st.caption(
+        f"{assessment.get('topic', 'GD Practice')} • {assessment.get('created_at', '')} • "
+        f"{assessment.get('source_type', 'GD Assessment')}"
+    )
+    overall = float(feedback.get("OverallScore", 0) or 0)
+    st.markdown(f"**Overall Readiness — {grade_from_score(overall)}**")
+
+    dimensions = [
+        ("Participation", "Participation", "How naturally and usefully you entered and continued the GD."),
+        ("Knowledge", "Knowledge", "How well you understood the topic and supported your points."),
+        ("Voice Clarity", "VoiceClarity", "How clearly and steadily your speech could be understood."),
+        ("Tone", "Tone", "How steady, active and varied your speaking delivery sounded."),
+        ("Counter Response", "CounterResponse", "How well you responded to, built on or challenged other points."),
+    ]
+    for title, key, help_text in dimensions:
+        section = feedback.get(key, {}) or {}
+        score = float(section.get("Score", 0) or 0)
+        with st.expander(f"{title} — {grade_from_score(score)}", expanded=False):
+            st.caption(help_text)
+            for label, field in (("Evidence from your GD", "Evidence"), ("What you did well", "WhatWentWell"), ("What to improve", "WhatToImprove")):
+                values = section.get(field) or []
+                if values:
+                    st.markdown(f"**{label}**")
+                    for item in values:
+                        st.write(f"• {item}")
+
+    for label, key in (("Overall strengths", "OverallStrengths"), ("Priority improvements", "PriorityImprovements"), ("Next action plan", "NextActionPlan")):
+        values = feedback.get(key) or []
+        if values:
+            st.markdown(f"**{label}**")
+            for item in values:
+                st.write(f"• {item}")
+    return True
+
 def _render_live_gd_voice_room(topic, student_name):
     """Live voice GD room. WebRTC is preferred; a native audio-turn fallback is provided."""
     st.markdown("### 🎙️ IPER PEPTECH AI Voice GD Practice")
@@ -4155,6 +4237,41 @@ def _render_live_gd_voice_room(topic, student_name):
         if feedback:
             overall = float(feedback.get("OverallScore", 0) or 0)
             st.session_state["last_live_gd_report"] = feedback
+
+            # Persist live AI Voice GD feedback so it appears in Weekly Progress,
+            # Performance Dashboard and My GD Feedback just like uploaded GDs.
+            try:
+                live_report = {
+                    "SourceType": "AI Voice GD",
+                    "LiveFeedback": feedback,
+                    "Participants": [{
+                        "Name": student_name,
+                        "OverallScore": feedback.get("OverallScore", 0),
+                        "ParticipationScore": (feedback.get("Participation") or {}).get("Score", 0),
+                        "KnowledgeScore": (feedback.get("Knowledge") or {}).get("Score", 0),
+                        "CommunicationScore": (feedback.get("VoiceClarity") or {}).get("Score", 0),
+                        "LeadershipScore": (feedback.get("CounterResponse") or {}).get("Score", 0),
+                        "Strengths": feedback.get("OverallStrengths", []),
+                        "AreasToImprove": feedback.get("PriorityImprovements", []),
+                        "NextGDActionPlan": feedback.get("NextActionPlan", []),
+                    }]
+                }
+                save_signature = hashlib.sha256(json.dumps({"topic": topic, "report": live_report}, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+                if st.session_state.get("last_live_gd_saved_signature") != save_signature:
+                    total_duration = sum(float(x.get("duration_sec", 0) or 0) for x in st.session_state.get("live_gd_turn_details", []))
+                    live_segments = [{"speaker": item.get("speaker"), "text": item.get("text", "")} for item in st.session_state.get("live_gd_log", [])]
+                    save_gd_video_assessment(
+                        st.session_state.get("scholar_id", ""),
+                        topic,
+                        [student_name, "AI Participant"],
+                        live_segments,
+                        live_report,
+                        "AI Voice GD Practice",
+                        source_type="AI Voice GD",
+                    )
+                    st.session_state["last_live_gd_saved_signature"] = save_signature
+            except Exception as save_error:
+                st.warning(f"GD feedback was generated, but could not be added to your dashboard: {save_error}")
             st.markdown(f"### Overall Readiness — {grade_from_score(overall)}")
             st.caption("Detailed feedback is based on the student's actual GD transcript and available speaking/audio evidence; accent is not penalised.")
 
@@ -5337,179 +5454,196 @@ elif selected_nav == "Performance Dashboard":
     st.caption("Review your previous interview practice attempts, read the subjective feedback from each performance, and download mentor-ready reports.")
 
     history = st.session_state.get("history", [])
+    dashboard_gd_assessments = get_gd_video_assessments(st.session_state.get("scholar_id", "")) if st.session_state.get("scholar_id") else []
 
-    if not history:
-        st.info("No practice attempts recorded yet. Complete an interview practice session to see your performance here.")
+    if not history and not dashboard_gd_assessments:
+        st.info("No practice attempts or GD assessments recorded yet. Complete an interview or GD practice session to see your performance here.")
     else:
         scores = [int(item.get("Score", 0) or 0) for item in history]
-        average_score = sum(scores) / len(scores)
-        best_score = max(scores)
-        latest_score = scores[-1]
+        if history:
+            average_score = sum(scores) / len(scores)
+            best_score = max(scores)
+            latest_score = scores[-1]
 
-        m1, m2, m3 = st.columns(3)
-        with m1:
-            st.metric("Attempts", len(history))
-        with m2:
-            st.metric("Average Grade", grade_from_score(average_score))
-        with m3:
-            st.metric("Best Grade", grade_from_score(best_score))
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.metric("PI Attempts", len(history))
+            with m2:
+                st.metric("PI Average Grade", grade_from_score(average_score))
+            with m3:
+                st.metric("PI Best Grade", grade_from_score(best_score))
 
-        st.markdown("### Latest Performance")
-        st.metric("Latest Grade", grade_from_score(latest_score))
-        render_grade_slabs()
+            st.markdown("### Latest Interview Performance")
+            st.metric("Latest Grade", grade_from_score(latest_score))
+            render_grade_slabs()
 
-        latest = history[-1]
-        latest_feedback = latest.get("Feedback") or {}
-        if latest_feedback:
-            st.markdown("### Latest Subjective Feedback")
-            latest_cols = st.columns(2)
-            with latest_cols[0]:
-                st.markdown("**Communication Feedback**")
-                st.write(latest_feedback.get("CommunicationAssessment", "No communication assessment was stored for this attempt."))
-                st.markdown("**Communication Strengths**")
-                strengths = latest_feedback.get("CommunicationStrengths", [])
-                if strengths:
-                    for item in strengths:
-                        st.markdown(f"- {item}")
-                else:
-                    st.write("No specific strengths recorded.")
-                st.markdown("**Communication Improvements**")
-                improvements = latest_feedback.get("CommunicationImprovements", [])
-                if improvements:
-                    for item in improvements:
-                        st.markdown(f"- {item}")
-                else:
-                    st.write("No specific communication improvements recorded.")
-            with latest_cols[1]:
-                st.markdown("**Technical Feedback**")
-                st.write(latest_feedback.get("TechnicalKnowledgeAssessment", "No technical assessment was stored for this attempt."))
-                st.markdown("**Technical Errors / Knowledge Gaps**")
-                gaps = latest_feedback.get("TechnicalErrorsOrGaps", [])
-                if gaps:
-                    for item in gaps:
-                        st.markdown(f"- {item}")
-                else:
-                    st.write("No specific technical gaps recorded.")
-                st.markdown("**Suggestions & Recommendations**")
-                st.info(latest_feedback.get("NextPracticeFocus", "No next-practice recommendation was stored."))
-
-        st.markdown("### Performance History & Subjective Feedback")
-        st.caption("Open any attempt to review the actual feedback generated for that performance. Feedback is retained with the attempt so students can discuss it with mentors.")
-
-        for index, item in reversed(list(enumerate(history, 1))):
-            fb = item.get("Feedback") or {}
-            attempt_grade = grade_from_score(item.get("Score", 0))
-            label = f"Attempt {index} • {item.get('Timestamp', '—')} • {item.get('Domain', 'Interview')} • {attempt_grade}"
-            with st.expander(label, expanded=(index == len(history))):
-                top = st.columns(4)
-                top[0].metric("Final Grade", attempt_grade)
-                top[1].metric("Communication", grade_from_score(item.get("CommunicationScore", 0)))
-                top[2].metric("Technical", grade_from_score(item.get("TechnicalScore", 0)))
-                top[3].write(f"**Mode**\n{item.get('Mode', '—')}")
-
-                st.markdown(f"**Question / Assessment:** {item.get('Question', '—')}")
-
-                if not fb:
-                    st.warning("Subjective feedback was not stored for this older attempt. New attempts will retain the full AI feedback here.")
-                else:
-                    st.markdown("#### Communication")
-                    st.write(fb.get("CommunicationAssessment", "No communication assessment recorded."))
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.markdown("**Strengths**")
-                        vals = fb.get("CommunicationStrengths", [])
-                        if vals:
-                            for val in vals: st.markdown(f"- {val}")
-                        else: st.write("—")
-                    with c2:
-                        st.markdown("**Improvements**")
-                        vals = fb.get("CommunicationImprovements", [])
-                        if vals:
-                            for val in vals: st.markdown(f"- {val}")
-                        else: st.write("—")
-
-                    st.markdown("#### Technical Knowledge")
-                    st.write(fb.get("TechnicalKnowledgeAssessment", "No technical assessment recorded."))
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.markdown("**What You Got Right**")
-                        vals = fb.get("CorrectPoints", [])
-                        if vals:
-                            for val in vals: st.markdown(f"- {val}")
-                        else: st.write("—")
-                    with c2:
-                        st.markdown("**Technical Errors / Knowledge Gaps**")
-                        vals = fb.get("TechnicalErrorsOrGaps", [])
-                        if vals:
-                            for val in vals: st.markdown(f"- {val}")
-                        else: st.write("—")
-
-                    st.markdown("#### Key Corrections")
-                    vals = fb.get("KeyCorrections", [])
-                    if vals:
-                        for val in vals: st.markdown(f"- {val}")
+            latest = history[-1]
+            latest_feedback = latest.get("Feedback") or {}
+            if latest_feedback:
+                st.markdown("### Latest Subjective Feedback")
+                latest_cols = st.columns(2)
+                with latest_cols[0]:
+                    st.markdown("**Communication Feedback**")
+                    st.write(latest_feedback.get("CommunicationAssessment", "No communication assessment was stored for this attempt."))
+                    st.markdown("**Communication Strengths**")
+                    strengths = latest_feedback.get("CommunicationStrengths", [])
+                    if strengths:
+                        for item in strengths:
+                            st.markdown(f"- {item}")
                     else:
-                        st.write("—")
+                        st.write("No specific strengths recorded.")
+                    st.markdown("**Communication Improvements**")
+                    improvements = latest_feedback.get("CommunicationImprovements", [])
+                    if improvements:
+                        for item in improvements:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.write("No specific communication improvements recorded.")
+                with latest_cols[1]:
+                    st.markdown("**Technical Feedback**")
+                    st.write(latest_feedback.get("TechnicalKnowledgeAssessment", "No technical assessment was stored for this attempt."))
+                    st.markdown("**Technical Errors / Knowledge Gaps**")
+                    gaps = latest_feedback.get("TechnicalErrorsOrGaps", [])
+                    if gaps:
+                        for item in gaps:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.write("No specific technical gaps recorded.")
+                    st.markdown("**Suggestions & Recommendations**")
+                    st.info(latest_feedback.get("NextPracticeFocus", "No next-practice recommendation was stored."))
 
-                    st.markdown("#### Suggestions & Recommendations")
-                    st.info(fb.get("NextPracticeFocus", "No recommendation recorded."))
+            st.markdown("### Performance History & Subjective Feedback")
+            st.caption("Open any attempt to review the actual feedback generated for that performance. Feedback is retained with the attempt so students can discuss it with mentors.")
 
-                    suggested = fb.get("BenchmarkAnswer", fb.get("SuggestedAnswer", ""))
-                    if suggested:
-                        st.markdown("#### Suggested Answer")
-                        st.write(suggested)
+            for index, item in reversed(list(enumerate(history, 1))):
+                fb = item.get("Feedback") or {}
+                attempt_grade = grade_from_score(item.get("Score", 0))
+                label = f"Attempt {index} • {item.get('Timestamp', '—')} • {item.get('Domain', 'Interview')} • {attempt_grade}"
+                with st.expander(label, expanded=(index == len(history))):
+                    top = st.columns(4)
+                    top[0].metric("Final Grade", attempt_grade)
+                    top[1].metric("Communication", grade_from_score(item.get("CommunicationScore", 0)))
+                    top[2].metric("Technical", grade_from_score(item.get("TechnicalScore", 0)))
+                    top[3].write(f"**Mode**\n{item.get('Mode', '—')}")
 
-                # Every saved attempt can be exported from the dashboard. This is
-                # intentionally here as well as on the assessment screen so the
-                # student can return later and share an older performance with a mentor.
-                report_feedback = attempt_to_feedback_report(item)
-                report_history = history
-                report_base = re.sub(
-                    r"[^A-Za-z0-9_-]+", "_",
-                    f"{st.session_state.get('first_name', 'Student')}_{st.session_state.get('scholar_id', '')}_Attempt_{index}_Feedback"
-                ).strip("_") or f"IPER_Attempt_{index}_Feedback"
-                st.markdown("#### Download & Share This Feedback")
-                st.caption("The report contains this performance as Present Feedback, other saved attempts as Historical Feedback, plus blank Mentor Feedback and Mentor Sign sections.")
-                d1, d2 = st.columns(2)
-                with d1:
-                    try:
-                        word_report = build_feedback_report_docx(
-                            st.session_state.get("first_name", item.get("Candidate", "Student")),
-                            st.session_state.get("scholar_id", ""),
-                            report_feedback,
-                            report_history,
-                        )
-                        st.download_button(
-                            "⬇️ Download Word Feedback",
-                            data=word_report,
-                            file_name=f"{report_base}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True,
-                            key=f"dashboard_word_feedback_{index}",
-                        )
-                    except Exception as report_error:
-                        st.error(f"Word report could not be prepared: {report_error}")
-                with d2:
-                    if REPORTLAB_AVAILABLE:
+                    st.markdown(f"**Question / Assessment:** {item.get('Question', '—')}")
+
+                    if not fb:
+                        st.warning("Subjective feedback was not stored for this older attempt. New attempts will retain the full AI feedback here.")
+                    else:
+                        st.markdown("#### Communication")
+                        st.write(fb.get("CommunicationAssessment", "No communication assessment recorded."))
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown("**Strengths**")
+                            vals = fb.get("CommunicationStrengths", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
+                        with c2:
+                            st.markdown("**Improvements**")
+                            vals = fb.get("CommunicationImprovements", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
+
+                        st.markdown("#### Technical Knowledge")
+                        st.write(fb.get("TechnicalKnowledgeAssessment", "No technical assessment recorded."))
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown("**What You Got Right**")
+                            vals = fb.get("CorrectPoints", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
+                        with c2:
+                            st.markdown("**Technical Errors / Knowledge Gaps**")
+                            vals = fb.get("TechnicalErrorsOrGaps", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
+
+                        st.markdown("#### Key Corrections")
+                        vals = fb.get("KeyCorrections", [])
+                        if vals:
+                            for val in vals: st.markdown(f"- {val}")
+                        else:
+                            st.write("—")
+
+                        st.markdown("#### Suggestions & Recommendations")
+                        st.info(fb.get("NextPracticeFocus", "No recommendation recorded."))
+
+                        suggested = fb.get("BenchmarkAnswer", fb.get("SuggestedAnswer", ""))
+                        if suggested:
+                            st.markdown("#### Suggested Answer")
+                            st.write(suggested)
+
+                    # Every saved attempt can be exported from the dashboard. This is
+                    # intentionally here as well as on the assessment screen so the
+                    # student can return later and share an older performance with a mentor.
+                    report_feedback = attempt_to_feedback_report(item)
+                    report_history = history
+                    report_base = re.sub(
+                        r"[^A-Za-z0-9_-]+", "_",
+                        f"{st.session_state.get('first_name', 'Student')}_{st.session_state.get('scholar_id', '')}_Attempt_{index}_Feedback"
+                    ).strip("_") or f"IPER_Attempt_{index}_Feedback"
+                    st.markdown("#### Download & Share This Feedback")
+                    st.caption("The report contains this performance as Present Feedback, other saved attempts as Historical Feedback, plus blank Mentor Feedback and Mentor Sign sections.")
+                    d1, d2 = st.columns(2)
+                    with d1:
                         try:
-                            pdf_report = build_feedback_report_pdf(
+                            word_report = build_feedback_report_docx(
                                 st.session_state.get("first_name", item.get("Candidate", "Student")),
                                 st.session_state.get("scholar_id", ""),
                                 report_feedback,
                                 report_history,
                             )
                             st.download_button(
-                                "⬇️ Download PDF Feedback",
-                                data=pdf_report,
-                                file_name=f"{report_base}.pdf",
-                                mime="application/pdf",
+                                "⬇️ Download Word Feedback",
+                                data=word_report,
+                                file_name=f"{report_base}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                 use_container_width=True,
-                                key=f"dashboard_pdf_feedback_{index}",
+                                key=f"dashboard_word_feedback_{index}",
                             )
                         except Exception as report_error:
-                            st.error(f"PDF report could not be prepared: {report_error}")
-                    else:
-                        st.warning("PDF export is unavailable in this deployment. Ensure reportlab>=4.2,<5 is present in requirements.txt and redeploy the app.")
+                            st.error(f"Word report could not be prepared: {report_error}")
+                    with d2:
+                        if REPORTLAB_AVAILABLE:
+                            try:
+                                pdf_report = build_feedback_report_pdf(
+                                    st.session_state.get("first_name", item.get("Candidate", "Student")),
+                                    st.session_state.get("scholar_id", ""),
+                                    report_feedback,
+                                    report_history,
+                                )
+                                st.download_button(
+                                    "⬇️ Download PDF Feedback",
+                                    data=pdf_report,
+                                    file_name=f"{report_base}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    key=f"dashboard_pdf_feedback_{index}",
+                                )
+                            except Exception as report_error:
+                                st.error(f"PDF report could not be prepared: {report_error}")
+                        else:
+                            st.warning("PDF export is unavailable in this deployment. Ensure reportlab>=4.2,<5 is present in requirements.txt and redeploy the app.")
+
+        # GD feedback is a first-class part of the Performance Dashboard.
+        if dashboard_gd_assessments:
+            st.markdown("### Group Discussion Performance")
+            latest_gd = dashboard_gd_assessments[0]
+            student_name = st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))
+            _render_live_gd_feedback_summary(latest_gd, student_name, heading="#### Latest GD Feedback")
+
+            st.markdown("#### GD Feedback History")
+            for gd_index, gd_item in enumerate(dashboard_gd_assessments[:10], 1):
+                gd_feedback = _live_gd_report_for_student(gd_item, student_name)
+                if gd_feedback:
+                    gd_score = float(gd_feedback.get("OverallScore", 0) or 0)
+                    with st.expander(f"GD {gd_index} • {gd_item.get('created_at', '—')} • {gd_item.get('topic', 'GD')} • {grade_from_score(gd_score)}", expanded=(gd_index == 1)):
+                        _render_live_gd_feedback_summary(gd_item, student_name, heading="")
 
         st.markdown("### Grade Progression")
         grade_progression = [
