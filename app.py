@@ -3827,13 +3827,29 @@ def _render_live_gd_voice_room(topic, student_name):
         st.session_state["live_gd_ai_responses"] = 0
 
     st.info("Click START below and allow microphone access. For the pilot, Chrome/Edge on HTTPS is recommended.")
-    ctx = webrtc_streamer(
-        key="iper-peptech-live-gd",
-        mode=WebRtcMode.SENDONLY,
-        media_stream_constraints={"video": False, "audio": True},
-        audio_receiver_size=4096,
-        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+    # WebRTC connection configuration. On remote hosting, STUN is required;
+    # if Cloudflare Realtime TURN credentials are supplied as Streamlit Secrets,
+    # streamlit-webrtc will automatically obtain TURN credentials.
+    webrtc_kwargs = {
+        "key": "iper-peptech-live-gd",
+        "mode": WebRtcMode.SENDONLY,
+        "media_stream_constraints": {"video": False, "audio": True},
+        "audio_receiver_size": 4096,
+    }
+    cloudflare_turn_ready = bool(
+        os.getenv("CLOUDFLARE_TURN_KEY_ID") and os.getenv("CLOUDFLARE_TURN_KEY_API_TOKEN")
     )
+    if not cloudflare_turn_ready:
+        # Multiple public STUN servers improve the chance of successful ICE
+        # negotiation when one STUN endpoint is slow or unreachable.
+        webrtc_kwargs["rtc_configuration"] = {
+            "iceServers": [
+                {"urls": ["stun:stun.l.google.com:19302"]},
+                {"urls": ["stun:stun.cloudflare.com:3478"]},
+            ]
+        }
+
+    ctx = webrtc_streamer(**webrtc_kwargs)
 
     metric_cols = st.columns(4)
     metric_cols[0].metric("Interventions", st.session_state["live_gd_turns"])
