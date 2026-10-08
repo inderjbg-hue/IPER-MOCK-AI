@@ -2120,10 +2120,12 @@ def save_gd_video_assessment(scholar_id, topic, participants, segments, report, 
     try:
         ends = [float(seg.get("end", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
         starts = [float(seg.get("start", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
-        if ends:
-            duration_seconds = max(0.0, max(ends) - (min(starts) if starts else 0.0))
-        elif source_type == "AI Voice GD":
+        if source_type == "AI Voice GD":
+            # AI Voice GD stores measured speaking duration per student turn.
+            # Sum those values so Progress and the GD room show real practice time.
             duration_seconds = sum(float(seg.get("duration_sec", 0) or 0) for seg in (segments or []) if isinstance(seg, dict))
+        elif ends:
+            duration_seconds = max(0.0, max(ends) - (min(starts) if starts else 0.0))
     except Exception:
         duration_seconds = 0.0
     stored_report = dict(report or {})
@@ -2784,13 +2786,18 @@ if selected_nav == "Progress":
             gd_attempts = len(gd_assessments)
             for assessment in gd_assessments:
                 report = assessment.get("report_json") or {}
-                participant_report = next(
-                    (p for p in (report.get("Participants") or [])
-                     if str(p.get("Name", "")).strip().lower() == str(st.session_state.get("candidate_name", "")).strip().lower()),
-                    None
-                )
-                if participant_report and participant_report.get("OverallScore") is not None:
-                    gd_scores.append(float(participant_report.get("OverallScore", 0) or 0) * 10 if float(participant_report.get("OverallScore", 0) or 0) <= 10 else float(participant_report.get("OverallScore", 0) or 0))
+                live_feedback = report.get("LiveFeedback") or {}
+                overall_value = live_feedback.get("OverallScore")
+                if overall_value is None:
+                    participant_report = next(
+                        (p for p in (report.get("Participants") or [])
+                         if str(p.get("Name", "")).strip().lower() == str(st.session_state.get("candidate_name", "")).strip().lower()),
+                        None
+                    )
+                    overall_value = participant_report.get("OverallScore") if participant_report else None
+                if overall_value is not None:
+                    numeric_score = float(overall_value or 0)
+                    gd_scores.append(numeric_score * 10 if numeric_score <= 10 else numeric_score)
                 gd_minutes += float(assessment.get("duration_seconds", 0) or 0) / 60.0
         except Exception:
             pass
@@ -4090,11 +4097,19 @@ def _render_live_gd_voice_room(topic, student_name):
 
     ctx = webrtc_streamer(**webrtc_kwargs)
 
-    metric_cols = st.columns(4)
-    metric_cols[0].metric("Interventions", st.session_state["live_gd_turns"])
-    metric_cols[1].metric("Words", st.session_state["live_gd_total_words"])
-    metric_cols[2].metric("Filler Words", st.session_state["live_gd_filler_words"])
-    metric_cols[3].metric("Status", "LIVE" if ctx.state.playing else "READY")
+    # Persisted AI Voice GD practice totals. These are read from the database so
+    # students see their complete practice history, not only the current browser session.
+    persisted_voice_gd = get_ai_voice_gd_assessments(st.session_state.get("scholar_id", "")) if st.session_state.get("scholar_id") else []
+    persisted_gd_minutes = sum(float(item.get("duration_seconds", 0) or 0) for item in persisted_voice_gd) / 60.0
+    persisted_gd_sessions = len(persisted_voice_gd)
+
+    metric_cols = st.columns(6)
+    metric_cols[0].metric("GD Sessions", persisted_gd_sessions)
+    metric_cols[1].metric("Total Practice Minutes", f"{persisted_gd_minutes:.1f}")
+    metric_cols[2].metric("Interventions", st.session_state["live_gd_turns"])
+    metric_cols[3].metric("Words", st.session_state["live_gd_total_words"])
+    metric_cols[4].metric("Filler Words", st.session_state["live_gd_filler_words"])
+    metric_cols[5].metric("Status", "LIVE" if ctx.state.playing else "READY")
 
     live_text = st.empty()
     coach_text = st.empty()
@@ -4277,7 +4292,20 @@ def _render_live_gd_voice_room(topic, student_name):
                 save_signature = hashlib.sha256(json.dumps({"topic": topic, "report": live_report}, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
                 if st.session_state.get("last_live_gd_saved_signature") != save_signature:
                     total_duration = sum(float(x.get("duration_sec", 0) or 0) for x in st.session_state.get("live_gd_turn_details", []))
-                    live_segments = [{"speaker": item.get("speaker"), "text": item.get("text", "")} for item in st.session_state.get("live_gd_log", [])]
+                    # Keep each student's measured speaking duration with the saved
+                    # assessment. The database uses these duration_sec values to
+                    # calculate Total Practice Minutes for Progress and dashboards.
+                    live_segments = []
+                    student_turn_details = list(st.session_state.get("live_gd_turn_details", []))
+                    student_turn_index = 0
+                    for item in st.session_state.get("live_gd_log", []):
+                        segment = {"speaker": item.get("speaker"), "text": item.get("text", "")}
+                        if item.get("speaker") == student_name and student_turn_index < len(student_turn_details):
+                            detail = student_turn_details[student_turn_index]
+                            segment["duration_sec"] = float(detail.get("duration_sec", 0) or 0)
+                            segment["speaking_rate_wpm"] = float(detail.get("speaking_rate_wpm", 0) or 0)
+                            student_turn_index += 1
+                        live_segments.append(segment)
                     save_gd_video_assessment(
                         st.session_state.get("scholar_id", ""),
                         topic,
@@ -5405,6 +5433,20 @@ elif selected_nav == "Performance Dashboard":
 
         # GD feedback is a first-class part of the Performance Dashboard.
         if dashboard_gd_assessments:
+            gd_total_sessions = len(dashboard_gd_assessments)
+            gd_total_minutes = sum(float(item.get("duration_seconds", 0) or 0) for item in dashboard_gd_assessments) / 60.0
+            gd_latest_feedback = _live_gd_report_for_student(
+                dashboard_gd_assessments[0],
+                st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")),
+            ) or {}
+            gd_latest_score = float(gd_latest_feedback.get("OverallScore", 0) or 0)
+
+            st.markdown("### AI Voice GD Practice Summary")
+            gd_metric_cols = st.columns(3)
+            gd_metric_cols[0].metric("GD Sessions", gd_total_sessions)
+            gd_metric_cols[1].metric("Total GD Practice Minutes", f"{gd_total_minutes:.1f}")
+            gd_metric_cols[2].metric("Latest GD Grade", grade_from_score(gd_latest_score) if gd_latest_feedback else "—")
+
             st.markdown("### Group Discussion Performance")
             latest_gd = dashboard_gd_assessments[0]
             student_name = st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))
