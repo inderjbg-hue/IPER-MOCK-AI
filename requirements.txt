@@ -8,3 +8,4 @@ pypdf
 reportlab>=4.2,<5
 webrtcvad-wheels
 openai-whisper
+streamlit-webrtc>=0.71.1,<0.72

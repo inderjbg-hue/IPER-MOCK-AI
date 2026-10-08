@@ -4,6 +4,8 @@ import ssl
 import tempfile
 import time
 import json
+import queue
+import wave
 import re
 import pandas as pd
 import pypdf
@@ -16,6 +18,14 @@ except Exception:
     OpenAI = None
 import streamlit as st
 import streamlit.components.v1 as components
+
+try:
+    from streamlit_webrtc import webrtc_streamer, WebRtcMode
+    STREAMLIT_WEBRTC_AVAILABLE = True
+except Exception:
+    webrtc_streamer = None
+    WebRtcMode = None
+    STREAMLIT_WEBRTC_AVAILABLE = False
 
 # ------------------------------------------------------------------------------
 # 1. ENVIRONMENT & STREAMLIT CONFIGURATION
@@ -3654,6 +3664,297 @@ elif selected_nav == "About Myself":
     st.markdown("### Profile Editing")
     st.caption("You can return to this page anytime, change any profile field or introduction, and save the updated version. AI generation never replaces your saved text automatically.")
 
+# ------------------------------------------------------------------------------
+# LIVE VOICE GD PRACTICE (PILOT)
+# ------------------------------------------------------------------------------
+def _live_gd_ai_turn(topic, student_text, turn_number):
+    """Generate one short AI-participant response for the live GD.
+
+    The existing GROQ client is reused. The prompt is deliberately short so the
+    live pilot makes very few inference calls. If no AI key is configured, the
+    room remains usable as a voice-practice/transcription room and no paid call is made.
+    """
+    if not client:
+        return ""
+    roles = [
+        "supportive participant who agrees and adds a fresh dimension",
+        "constructive challenger who respectfully questions the student's point",
+        "business-focused participant who brings an economic or employer perspective",
+        "social-impact participant who brings an Indian/social perspective",
+    ]
+    role = roles[(turn_number - 1) % len(roles)]
+    prompt = f"""
+You are one participant in a realistic MBA group discussion at IPER PEPTECH.
+Topic: {topic}
+Your role: {role}.
+Student's latest point: {student_text}
+Respond as a real GD participant, not as a teacher. Keep it to 1-2 spoken sentences,
+10-35 words. Do not praise excessively. Do not repeat the student's point. Make one
+useful contribution or respectful counterpoint. Never say you are AI.
+"""
+    response = get_groq_response(prompt)
+    if response.startswith("GROQ API Key is missing") or response.startswith("Execution Error"):
+        return ""
+    return re.sub(r"\s+", " ", response).strip()
+
+
+def _speak_text_in_browser(text):
+    """Use the browser's built-in speech synthesis; no TTS API is required."""
+    safe = json.dumps(text, ensure_ascii=False)
+    components.html(
+        f"""
+        <script>
+        const text = {safe};
+        if ('speechSynthesis' in window && text) {{
+            window.speechSynthesis.cancel();
+            const u = new SpeechSynthesisUtterance(text);
+            u.rate = 0.98;
+            u.pitch = 1.0;
+            window.speechSynthesis.speak(u);
+        }}
+        </script>
+        """,
+        height=1,
+    )
+
+
+def _transcribe_live_audio_bytes(audio_bytes, sample_rate, channels):
+    """Transcribe a short WebRTC audio chunk with the already-installed Whisper model."""
+    if not audio_bytes:
+        return ""
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    tmp.close()
+    try:
+        with wave.open(tmp.name, "wb") as wf:
+            wf.setnchannels(max(1, int(channels)))
+            wf.setsampwidth(2)
+            wf.setframerate(int(sample_rate or 48000))
+            wf.writeframes(audio_bytes)
+        result = whisper_model.transcribe(
+            tmp.name,
+            language="en",
+            temperature=0.0,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.72,
+            fp16=False,
+        )
+        accepted = []
+        for seg in result.get("segments", []):
+            text = (seg.get("text") or "").strip()
+            no_speech = float(seg.get("no_speech_prob", 1.0) or 1.0)
+            if text and no_speech < 0.70:
+                accepted.append(text)
+        return re.sub(r"\s+", " ", " ".join(accepted)).strip()
+    except Exception:
+        return ""
+    finally:
+        try:
+            os.remove(tmp.name)
+        except OSError:
+            pass
+
+
+def _generate_live_gd_final_feedback(topic, student_name, transcript, turns, words, fillers):
+    if not client or not transcript.strip():
+        return None
+    prompt = f"""
+You are a strict MBA placement mentor at IPER PEPTECH.
+Evaluate this student's short AI voice-GD practice.
+Student: {student_name}
+Topic: {topic}
+Interventions: {turns}
+Words spoken: {words}
+Common filler words detected: {fillers}
+Transcript:
+{transcript}
+
+Return ONLY valid JSON with keys:
+OverallScore (0-100), CommunicationScore (0-100), ContentScore (0-100),
+ParticipationScore (0-100), AnalyticalScore (0-100),
+Strengths (array of 3 short strings), Improvements (array of 3 short strings),
+NextActionPlan (array of 3 short strings).
+Be conservative. Score only what the transcript supports. Do not infer facial expressions, gestures, confidence, or factual correctness that is not evident.
+"""
+    raw = get_groq_response(prompt)
+    if raw.startswith("GROQ API Key is missing") or raw.startswith("Execution Error"):
+        return None
+    try:
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+        return json.loads(cleaned)
+    except Exception:
+        return None
+
+
+def _render_live_gd_voice_room(topic, student_name):
+    """Live voice GD room. WebRTC is preferred; a native audio-turn fallback is provided."""
+    st.markdown("### 🎙️ IPER PEPTECH AI Voice GD Practice")
+    st.caption("Speak naturally. The pilot listens in short voice windows, transcribes your speech, tracks participation and periodically brings in an AI participant.")
+
+    if not STREAMLIT_WEBRTC_AVAILABLE:
+        st.warning("Live microphone streaming is not installed in this deployment yet. Use the voice-turn fallback below, or add streamlit-webrtc to requirements.txt and redeploy.")
+        voice = st.audio_input("🎙️ Record your GD contribution", key="live_gd_voice_turn")
+        if voice:
+            text = _transcribe_live_audio_bytes(voice.getvalue(), 16000, 1)
+            if text:
+                st.markdown(f"**You:** {text}")
+                words = re.findall(r"\b[\w']+\b", text.lower())
+                fillers = sum(words.count(x) for x in ["um", "uh", "like", "actually", "basically", "you know"])
+                st.info(f"Live contribution: {len(words)} words • {fillers} common filler words")
+                if client:
+                    with st.spinner("AI participant is responding..."):
+                        ai_text = _live_gd_ai_turn(topic, text, 1)
+                    if ai_text:
+                        st.markdown(f"**🤖 AI Participant:** {ai_text}")
+                        _speak_text_in_browser(ai_text)
+            else:
+                st.warning("I couldn't detect clear speech. Please try again in a quiet environment.")
+        return
+
+    # Session state is only used by the Streamlit main thread. WebRTC itself is
+    # responsible for moving audio frames to the receiver queue.
+    if "live_gd_log" not in st.session_state:
+        st.session_state["live_gd_log"] = []
+    if "live_gd_total_words" not in st.session_state:
+        st.session_state["live_gd_total_words"] = 0
+    if "live_gd_filler_words" not in st.session_state:
+        st.session_state["live_gd_filler_words"] = 0
+    if "live_gd_turns" not in st.session_state:
+        st.session_state["live_gd_turns"] = 0
+    if "live_gd_ai_responses" not in st.session_state:
+        st.session_state["live_gd_ai_responses"] = 0
+
+    st.info("Click START below and allow microphone access. For the pilot, Chrome/Edge on HTTPS is recommended.")
+    ctx = webrtc_streamer(
+        key="iper-peptech-live-gd",
+        mode=WebRtcMode.SENDONLY,
+        media_stream_constraints={"video": False, "audio": True},
+        audio_receiver_size=4096,
+        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+    )
+
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Interventions", st.session_state["live_gd_turns"])
+    metric_cols[1].metric("Words", st.session_state["live_gd_total_words"])
+    metric_cols[2].metric("Filler Words", st.session_state["live_gd_filler_words"])
+    metric_cols[3].metric("Status", "LIVE" if ctx.state.playing else "READY")
+
+    live_text = st.empty()
+    coach_text = st.empty()
+
+    if ctx.state.playing and ctx.audio_receiver:
+        audio_buffer = bytearray()
+        sample_rate = 48000
+        channels = 1
+        chunk_started = time.time()
+        # Keep the loop intentionally short per pass. The WebRTC stream continues
+        # while this script consumes small audio windows.
+        while ctx.state.playing:
+            try:
+                frames = ctx.audio_receiver.get_frames(timeout=0.5)
+            except queue.Empty:
+                continue
+            for frame in frames:
+                arr = frame.to_ndarray()
+                audio_buffer.extend(arr.tobytes())
+                sample_rate = int(getattr(frame, "sample_rate", sample_rate) or sample_rate)
+                try:
+                    channels = len(frame.layout.channels)
+                except Exception:
+                    channels = 1
+
+            if time.time() - chunk_started < 3.5:
+                continue
+
+            chunk_started = time.time()
+            text = _transcribe_live_audio_bytes(bytes(audio_buffer), sample_rate, channels)
+            audio_buffer = bytearray()
+            if not text:
+                continue
+
+            words = re.findall(r"\b[\w']+\b", text.lower())
+            filler_list = ["um", "uh", "like", "actually", "basically", "you know"]
+            filler_count = sum(words.count(x) for x in filler_list)
+            st.session_state["live_gd_total_words"] += len(words)
+            st.session_state["live_gd_filler_words"] += filler_count
+            st.session_state["live_gd_turns"] += 1
+            st.session_state["live_gd_log"].append({"speaker": student_name, "text": text})
+            st.session_state["live_gd_log"] = st.session_state["live_gd_log"][-12:]
+
+            live_text.markdown(f"**🎙️ {student_name}:** {text}")
+            if filler_count:
+                coach_text.warning(f"💡 Coach: {filler_count} filler word(s) detected in this contribution. Keep the next point tighter.")
+            else:
+                coach_text.success("💡 Coach: Clear contribution. Build your next point with an example or counterargument.")
+
+            # AI responds every second meaningful student intervention, keeping the
+            # pilot's API usage deliberately low.
+            if (
+                client
+                and st.session_state["live_gd_turns"] % 2 == 0
+                and st.session_state["live_gd_ai_responses"] < 3
+            ):
+                ai_text = _live_gd_ai_turn(topic, text, st.session_state["live_gd_turns"] // 2)
+                if ai_text:
+                    st.session_state["live_gd_ai_responses"] += 1
+                    st.session_state["live_gd_log"].append({"speaker": "AI Participant", "text": ai_text})
+                    st.markdown(f"**🤖 AI Participant:** {ai_text}")
+                    _speak_text_in_browser(ai_text)
+
+    if st.session_state["live_gd_log"]:
+        with st.expander("📝 Live GD Transcript", expanded=False):
+            for item in st.session_state["live_gd_log"]:
+                st.write(f"**{item['speaker']}:** {item['text']}")
+
+    if st.session_state["live_gd_log"] and st.button("📊 Generate Final Voice GD Feedback", use_container_width=True, key="generate_live_gd_feedback"):
+        student_lines = [
+            item["text"] for item in st.session_state["live_gd_log"]
+            if item.get("speaker") == student_name
+        ]
+        transcript = " ".join(student_lines).strip()
+        with st.spinner("Preparing your GD readiness feedback..."):
+            feedback = _generate_live_gd_final_feedback(
+                topic,
+                student_name,
+                transcript,
+                st.session_state["live_gd_turns"],
+                st.session_state["live_gd_total_words"],
+                st.session_state["live_gd_filler_words"],
+            )
+        if feedback:
+            overall = float(feedback.get("OverallScore", 0) or 0)
+            st.session_state["last_live_gd_report"] = feedback
+            st.markdown(f"### Overall Readiness — {grade_from_score(overall)}")
+            cols = st.columns(4)
+            for col, label in zip(cols, ["Communication", "Content", "Participation", "Analytical Thinking"]):
+                score = float(feedback.get(label.replace(" ", "") + "Score", feedback.get({
+                    "Communication": "CommunicationScore",
+                    "Content": "ContentScore",
+                    "Participation": "ParticipationScore",
+                    "Analytical Thinking": "AnalyticalScore",
+                }[label], 0)) or 0)
+                col.metric(label, grade_from_score(score))
+            if feedback.get("Strengths"):
+                st.markdown("#### 🟢 What you did well")
+                for item in feedback["Strengths"]:
+                    st.write(f"• {item}")
+            if feedback.get("Improvements"):
+                st.markdown("#### 🟠 What to improve")
+                for item in feedback["Improvements"]:
+                    st.write(f"• {item}")
+            if feedback.get("NextActionPlan"):
+                st.markdown("#### 🎯 Next GD action plan")
+                for item in feedback["NextActionPlan"]:
+                    st.write(f"• {item}")
+        else:
+            st.info("Final AI feedback is unavailable right now. Your live transcript and speaking metrics are still available above.")
+
+    if not client:
+        st.caption("Pilot note: voice capture, transcription and speaking metrics work without a paid AI key. AI participant responses and final AI feedback require the existing Groq connection.")
+
+
 if selected_nav == "Resume Checker & Job Matcher":
     st.title("Resume Checker & Job Matcher")
     st.caption("Upload your resume and a target job description to get clarity on your match level, key strengths, and areas to polish.")
@@ -4481,8 +4782,8 @@ elif selected_nav == "Group Discussion Hub":
     st.title("Group Discussion Hub")
     st.caption("Conduct the GD on Google Meet, Zoom, Teams or a phone. Upload the completed video here and let AI evaluate the discussion.")
 
-    gd_prep_tab, gd_practice_tab, gd_feedback_tab = st.tabs([
-        "📚 GD Preparation", "🎥 Upload GD Video", "📊 My GD Feedback"
+    gd_prep_tab, gd_practice_tab, gd_video_tab, gd_feedback_tab = st.tabs([
+        "📚 GD Preparation", "🎙️ AI Voice GD", "🎥 Video Assessment", "📊 My GD Feedback"
     ])
 
     with gd_prep_tab:
@@ -4519,8 +4820,24 @@ elif selected_nav == "Group Discussion Hub":
                 st.markdown(get_gd_ai_guidance(topic, st.session_state.get("first_name", "Student")))
 
     with gd_practice_tab:
-        st.markdown("### 🎥 IPER PEPTECH AI GD Assessment")
-        st.info("Conduct your GD on any third-party platform, download the recording as MP4, then upload it here. The portal analyses participation, communication, knowledge, analytical thinking, teamwork and leadership.")
+        upload_topic = st.session_state.get("live_gd_topic", "")
+        st.markdown("### 🎙️ IPER PEPTECH AI Voice GD Practice")
+        st.caption("No video upload is required. Choose a topic, start the microphone, speak naturally and practise against an AI participant.")
+        live_topic = st.text_input(
+            "GD Topic",
+            value=upload_topic,
+            placeholder="Example: Is artificial intelligence a threat to jobs?",
+            key="live_gd_topic"
+        ).strip()
+        if not live_topic:
+            live_topic = "Is artificial intelligence a threat to employment?"
+
+        st.markdown("**Practice design:** 5–10 minute GD • short AI interventions • live speech transcription • filler-word tracking • final practice transcript")
+        _render_live_gd_voice_room(live_topic, st.session_state.get("first_name", "Student"))
+
+    with gd_video_tab:
+        st.markdown("### 🎥 IPER PEPTECH Video GD Assessment")
+        st.info("Keep this option for faculty-led or real-group recordings. Upload the completed MP4 and the existing speaker-diarized assessment will run as before.")
 
         if not OPENAI_API_KEY:
             st.warning("For multi-speaker identification, add OPENAI_API_KEY to Streamlit Secrets. The GD transcription uses speaker diarization so individual participation can be measured accurately.")
@@ -4572,10 +4889,7 @@ elif selected_nav == "Group Discussion Hub":
                         if error:
                             raise RuntimeError(error)
 
-                        detected_speakers = sorted(
-                            {s["speaker"] for s in segments},
-                            key=lambda x: x
-                        )
+                        detected_speakers = sorted({s["speaker"] for s in segments}, key=lambda x: x)
                         st.write(f"Detected {len(detected_speakers)} speaker(s).")
 
                         st.write("3/4 Preparing objective participation metrics...")
@@ -4683,7 +4997,7 @@ elif selected_nav == "Group Discussion Hub":
 
     with gd_feedback_tab:
         st.markdown("### 📊 My GD Feedback")
-        st.caption("Your uploaded GD recordings are converted into objective speaker statistics and a comprehensive placement-style assessment.")
+        st.caption("Your voice-GD practice and uploaded recordings are tracked separately. Video assessments include objective speaker statistics; voice practice includes live speaking metrics and transcript history.")
         render_grade_slabs()
 
         assessments = get_gd_video_assessments(st.session_state["scholar_id"])
@@ -4766,7 +5080,7 @@ elif selected_nav == "Group Discussion Hub":
             for old in assessments[1:10]:
                 st.write(f"• {old.get('created_at')} — {old.get('topic')} — {old.get('video_filename')}")
         else:
-            st.info("No GD assessment yet. Upload a completed GD video in the Upload GD Video tab.")
+            st.info("No GD assessment yet. Complete an AI Voice GD practice or upload a completed GD video in the tabs above.")
 
 # SECTION 5: PERFORMANCE DASHBOARD
 
