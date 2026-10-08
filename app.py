@@ -3767,7 +3767,12 @@ def _speak_text_in_browser(text):
 
 
 def _transcribe_live_audio_bytes(audio_bytes, sample_rate, channels):
-    """Transcribe a short WebRTC audio chunk with the already-installed Whisper model."""
+    """Transcribe a completed GD viewpoint with accuracy-first Whisper settings.
+
+    The live turn detector remains lightweight, but the completed viewpoint is
+    transcribed with the stronger base model so non-native / Indian English
+    pronunciation has a better chance of being decoded into the intended word.
+    """
     if not audio_bytes:
         return ""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
@@ -3778,22 +3783,36 @@ def _transcribe_live_audio_bytes(audio_bytes, sample_rate, channels):
             wf.setsampwidth(2)
             wf.setframerate(int(sample_rate or 48000))
             wf.writeframes(audio_bytes)
-        result = live_gd_whisper_model.transcribe(
+        # Accuracy matters more than the tiny speed gain here because this
+        # transcript drives the student's final GD feedback. Use the existing
+        # base model for the completed viewpoint rather than the tiny live model.
+        transcription_prompt = (
+            "Indian English MBA group discussion. Business, management, marketing, "
+            "finance, HR, economics, technology, jobs, education, society, India. "
+            "The speaker may have a strong regional Indian accent or mispronounce "
+            "English words. Infer the intended English word from the audio and "
+            "sentence context when the pronunciation is unclear, but do not invent "
+            "words that are not supported by the speech. Transcribe all meaningful "
+            "human speech."
+        )
+        result = whisper_model.transcribe(
             tmp.name,
             language="en",
-            temperature=0.0,
+            initial_prompt=transcription_prompt,
+            temperature=(0.0, 0.2, 0.4),
             condition_on_previous_text=False,
-            no_speech_threshold=0.72,
+            no_speech_threshold=0.60,
+            logprob_threshold=-1.0,
+            compression_ratio_threshold=2.6,
             fp16=False,
-            beam_size=1,
-            best_of=1,
-            compression_ratio_threshold=2.4,
+            beam_size=5,
+            best_of=5,
         )
         accepted = []
         for seg in result.get("segments", []):
             text = (seg.get("text") or "").strip()
             no_speech = float(seg.get("no_speech_prob", 1.0) or 1.0)
-            if text and no_speech < 0.70:
+            if text and no_speech < 0.82:
                 accepted.append(text)
         return re.sub(r"\s+", " ", " ".join(accepted)).strip()
     except Exception:
