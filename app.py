@@ -2122,6 +2122,8 @@ def save_gd_video_assessment(scholar_id, topic, participants, segments, report, 
         starts = [float(seg.get("start", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
         if ends:
             duration_seconds = max(0.0, max(ends) - (min(starts) if starts else 0.0))
+        elif source_type == "AI Voice GD":
+            duration_seconds = sum(float(seg.get("duration_sec", 0) or 0) for seg in (segments or []) if isinstance(seg, dict))
     except Exception:
         duration_seconds = 0.0
     stored_report = dict(report or {})
@@ -2161,6 +2163,22 @@ def get_gd_video_assessments(scholar_id):
             except Exception:
                 item[key] = [] if key != "report_json" else {}
         result.append(item)
+    return result
+
+
+def get_ai_voice_gd_assessments(scholar_id):
+    """Return only AI Voice GD practice assessments for student dashboards.
+
+    Legacy uploaded-video GD records remain in the database for backward compatibility,
+    but the student-facing GD workflow and progress dashboards use AI Voice GD only.
+    """
+    assessments = get_gd_video_assessments(scholar_id)
+    result = []
+    for item in assessments:
+        report = item.get("report_json") or {}
+        source_type = str(item.get("source_type") or report.get("SourceType") or "").strip().lower()
+        if source_type == "ai voice gd" or report.get("SourceType") == "AI Voice GD":
+            result.append(item)
     return result
 
 
@@ -2762,7 +2780,7 @@ if selected_nav == "Progress":
     gd_minutes = 0.0
     if scholar_id:
         try:
-            gd_assessments = get_gd_video_assessments(scholar_id)
+            gd_assessments = get_ai_voice_gd_assessments(scholar_id)
             gd_attempts = len(gd_assessments)
             for assessment in gd_assessments:
                 report = assessment.get("report_json") or {}
@@ -2821,7 +2839,7 @@ if selected_nav == "Progress":
     # GD feedback is now part of the weekly progress view, not only the GD tab.
     if scholar_id:
         try:
-            weekly_gd_assessments = get_gd_video_assessments(scholar_id)
+            weekly_gd_assessments = get_ai_voice_gd_assessments(scholar_id)
             if weekly_gd_assessments:
                 _render_live_gd_feedback_summary(
                     weekly_gd_assessments[0],
@@ -2836,7 +2854,7 @@ if selected_nav == "Progress":
     with c1:
         st.metric("PI Practice Minutes", f"{pi_minutes:.1f}")
     with c2:
-        st.metric("GD Assessment Minutes", f"{gd_minutes:.1f}")
+        st.metric("GD Practice Minutes", f"{gd_minutes:.1f}")
 
     render_grade_slabs()
     if history:
@@ -4239,7 +4257,7 @@ def _render_live_gd_voice_room(topic, student_name):
             st.session_state["last_live_gd_report"] = feedback
 
             # Persist live AI Voice GD feedback so it appears in Weekly Progress,
-            # Performance Dashboard and My GD Feedback just like uploaded GDs.
+            # Performance Dashboard just like other saved GD assessments.
             try:
                 live_report = {
                     "SourceType": "AI Voice GD",
@@ -5144,10 +5162,10 @@ Return ONLY valid JSON matching this exact structure:
 # SECTION 4: GROUP DISCUSSION HUB
 elif selected_nav == "Group Discussion Hub":
     st.title("Group Discussion Hub")
-    st.caption("Conduct the GD on Google Meet, Zoom, Teams or a phone. Upload the completed video here and let AI evaluate the discussion.")
+    st.caption("Prepare for the GD and practise directly with the IPER PEPTECH AI Voice GD. Your AI Voice GD feedback is saved automatically for Progress and Performance Dashboard.")
 
-    gd_prep_tab, gd_practice_tab, gd_video_tab, gd_feedback_tab = st.tabs([
-        "📚 GD Preparation", "🎙️ AI Voice GD", "🎥 Video Assessment", "📊 My GD Feedback"
+    gd_prep_tab, gd_practice_tab = st.tabs([
+        "📚 GD Preparation", "🎙️ AI Voice GD"
     ])
 
     with gd_prep_tab:
@@ -5199,252 +5217,7 @@ elif selected_nav == "Group Discussion Hub":
         st.markdown("**Practice design:** 5–10 minute GD • short AI interventions • live speech transcription • filler-word tracking • final practice transcript")
         _render_live_gd_voice_room(live_topic, st.session_state.get("first_name", "Student"))
 
-    with gd_video_tab:
-        st.markdown("### 🎥 IPER PEPTECH Video GD Assessment")
-        st.info("Keep this option for faculty-led or real-group recordings. Upload the completed MP4 and the existing speaker-diarized assessment will run as before.")
-
-        if not OPENAI_API_KEY:
-            st.warning("For multi-speaker identification, add OPENAI_API_KEY to Streamlit Secrets. The GD transcription uses speaker diarization so individual participation can be measured accurately.")
-        if not GROQ_API_KEY:
-            st.error("GROQ_API_KEY is required for the final GD evaluation.")
-
-        with st.form("gd_video_upload_form"):
-            upload_topic = st.selectbox("GD Topic", GD_TOPICS, key="gd_upload_topic")
-            participant_text = st.text_area(
-                "Participant names — one per line (maximum 7)",
-                placeholder="Rahul Sharma\nPriya Jain\nAnanya Singh\nArjun Patel"
-            )
-            gd_video = st.file_uploader(
-                "Upload completed GD video",
-                type=["mp4", "webm", "mov", "m4v", "mpeg", "mpg"],
-                help="MP4 is recommended. Maximum practical duration: 10 minutes."
-            )
-            consent = st.checkbox("I confirm that all participants have agreed to this recording being used for educational assessment.")
-            process_gd = st.form_submit_button("🚀 Analyse GD", use_container_width=True)
-
-        if process_gd:
-            participants = [x.strip() for x in participant_text.splitlines() if x.strip()]
-            participants = participants[:GD_MAX_PARTICIPANTS]
-
-            if len(participants) < 2:
-                st.error("Please enter at least 2 participant names.")
-            elif not gd_video:
-                st.error("Please upload the GD video.")
-            elif not consent:
-                st.error("Please confirm participant consent before processing.")
-            elif not OPENAI_API_KEY:
-                st.error("OPENAI_API_KEY is required for speaker-diarized GD analysis.")
-            else:
-                suffix = Path(gd_video.name).suffix.lower() or ".mp4"
-                video_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-                video_tmp.write(gd_video.getbuffer())
-                video_tmp.close()
-                audio_path = None
-
-                try:
-                    with st.status("Processing GD recording...", expanded=True) as status:
-                        st.write("1/4 Extracting clean mono audio with FFmpeg...")
-                        audio_path = _ffmpeg_extract_gd_audio(video_tmp.name)
-                        if not audio_path:
-                            raise RuntimeError("FFmpeg could not extract audio from this video.")
-
-                        st.write("2/4 Detecting speakers and transcribing human speech...")
-                        segments, error = transcribe_gd_with_diarization(audio_path)
-                        if error:
-                            raise RuntimeError(error)
-
-                        detected_speakers = sorted({s["speaker"] for s in segments}, key=lambda x: x)
-                        st.write(f"Detected {len(detected_speakers)} speaker(s).")
-
-                        st.write("3/4 Preparing objective participation metrics...")
-                        default_map = {}
-                        if len(detected_speakers) == len(participants):
-                            for s, name in zip(detected_speakers, participants):
-                                default_map[s] = name
-
-                        st.write("4/4 Generating comprehensive AI assessment...")
-                        st.session_state["gd_pending_analysis"] = {
-                            "topic": upload_topic,
-                            "participants": participants,
-                            "segments": segments,
-                            "speaker_map": default_map,
-                            "video_filename": gd_video.name
-                        }
-                        status.update(label="GD transcription complete — confirm speaker mapping below.", state="complete")
-
-                except Exception as exc:
-                    st.error(f"GD processing failed: {exc}")
-                finally:
-                    try:
-                        os.remove(video_tmp.name)
-                    except OSError:
-                        pass
-                    if audio_path:
-                        try:
-                            os.remove(audio_path)
-                        except OSError:
-                            pass
-
-        pending = st.session_state.get("gd_pending_analysis")
-        if pending:
-            st.markdown("---")
-            st.markdown("### 👥 Match Detected Speakers to Students")
-            st.caption("This confirmation step makes the individual reports more reliable. If the recording contains fewer detected speakers than the participant list, leave unused students as Unassigned.")
-
-            detected = sorted({s["speaker"] for s in pending["segments"]})
-            options = ["Unassigned"] + pending["participants"]
-            mapping = {}
-            cols = st.columns(min(3, max(1, len(detected))))
-            for i, speaker in enumerate(detected):
-                default_name = pending["speaker_map"].get(speaker, "Unassigned")
-                default_index = options.index(default_name) if default_name in options else 0
-                with cols[i % len(cols)]:
-                    selected_name = st.selectbox(
-                        speaker,
-                        options,
-                        index=default_index,
-                        key=f"gd_map_{speaker}"
-                    )
-                    mapping[speaker] = selected_name
-
-            if len([v for v in mapping.values() if v != "Unassigned"]) != len(set(v for v in mapping.values() if v != "Unassigned")):
-                st.warning("Two detected speakers are mapped to the same student. Please give each student a unique speaker.")
-
-            stats = _gd_speaker_stats(
-                pending["segments"],
-                {k: v for k, v in mapping.items() if v != "Unassigned"}
-            )
-            st.markdown("#### Objective participation snapshot")
-            snapshot_rows = []
-            for speaker, vals in stats.items():
-                snapshot_rows.append({
-                    "Participant": speaker,
-                    "Speaking Time": f"{vals['speaking_seconds']:.0f}s",
-                    "Share": f"{vals['participation_share_pct']:.1f}%",
-                    "Interventions": vals["turns"],
-                    "WPM": vals["wpm"],
-                    "Filler Words": vals["filler_words"]
-                })
-            if snapshot_rows:
-                st.dataframe(pd.DataFrame(snapshot_rows), use_container_width=True, hide_index=True)
-
-            if st.button("🧠 Generate Final GD Report", use_container_width=True):
-                clean_map = {k: v for k, v in mapping.items() if v != "Unassigned"}
-                transcript_text = _format_gd_transcript(pending["segments"], clean_map)
-                with st.spinner("AI is evaluating participation, communication, knowledge, analytical thinking and teamwork..."):
-                    report, raw_or_error = generate_gd_video_assessment(
-                        pending["topic"],
-                        pending["participants"],
-                        transcript_text,
-                        stats
-                    )
-                if report:
-                    mapped_segments = [
-                        {**seg, "speaker": clean_map.get(seg["speaker"], seg["speaker"])}
-                        for seg in pending["segments"]
-                    ]
-                    save_gd_video_assessment(
-                        st.session_state["scholar_id"],
-                        pending["topic"],
-                        pending["participants"],
-                        mapped_segments,
-                        report,
-                        pending["video_filename"]
-                    )
-                    st.session_state["last_gd_report"] = report
-                    st.session_state.pop("gd_pending_analysis", None)
-                    st.success("Complete GD assessment generated and saved to your profile.")
-                    st.rerun()
-                else:
-                    st.error("The AI report could not be parsed as JSON.")
-                    st.code(raw_or_error or "", language="text")
-
-    with gd_feedback_tab:
-        st.markdown("### 📊 My GD Feedback")
-        st.caption("Your voice-GD practice and uploaded recordings are tracked separately. Video assessments include objective speaker statistics; voice practice includes live speaking metrics and transcript history.")
-        render_grade_slabs()
-
-        assessments = get_gd_video_assessments(st.session_state["scholar_id"])
-        latest = assessments[0] if assessments else None
-
-        if latest:
-            report = latest.get("report_json") or {}
-            group = report.get("GroupAssessment", {})
-            st.markdown(f"### Latest GD — {latest.get('topic', '')}")
-            st.caption(f"Processed on {latest.get('created_at', '')} • Source video: {latest.get('video_filename', '')}")
-
-            gcols = st.columns(5)
-            for col, label, key in zip(
-                gcols,
-                ["Overall", "Topic", "Discussion", "Balance", "Team Dynamics"],
-                ["OverallScore", "TopicHandling", "DiscussionQuality", "ParticipationBalance", "TeamDynamics"]
-            ):
-                col.metric(f"{label} Grade", grade_from_score(float(group.get(key, 0) or 0) * 10 if float(group.get(key, 0) or 0) <= 10 else float(group.get(key, 0) or 0)))
-
-            if group.get("Strengths"):
-                st.markdown("#### 🟢 Group Strengths")
-                for item in group["Strengths"]:
-                    st.write(f"• {item}")
-            if group.get("Improvements"):
-                st.markdown("#### 🟠 Group Improvements")
-                for item in group["Improvements"]:
-                    st.write(f"• {item}")
-
-            st.markdown("### 👤 Individual Performance")
-            for person in report.get("Participants", []):
-                person_overall = float(person.get('OverallScore', 0) or 0)
-                person_overall_100 = person_overall * 10 if person_overall <= 10 else person_overall
-                with st.expander(f"{person.get('Name', 'Participant')} — {grade_from_score(person_overall_100)}", expanded=False):
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Participation Grade", grade_from_score(float(person.get('ParticipationScore', 0) or 0) * 10))
-                    c2.metric("Communication Grade", grade_from_score(float(person.get('CommunicationScore', 0) or 0) * 10))
-                    c3.metric("Knowledge Grade", grade_from_score(float(person.get('KnowledgeScore', 0) or 0) * 10))
-                    c4.metric("Leadership Grade", grade_from_score(float(person.get('LeadershipScore', 0) or 0) * 10))
-
-                    c5, c6, c7 = st.columns(3)
-                    c5.metric("Analytical Thinking Grade", grade_from_score(float(person.get('AnalyticalThinkingScore', 0) or 0) * 10))
-                    c6.metric("Listening & Teamwork Grade", grade_from_score(float(person.get('ListeningTeamworkScore', 0) or 0) * 10))
-                    c7.metric("WPM", person.get("WPM", 0))
-                    render_grade_slabs()
-
-                    st.write(
-                        f"**Speaking time:** {person.get('SpeakingTimeSeconds', 0):.0f}s  • "
-                        f"**Participation share:** {person.get('ParticipationSharePercent', 0)}%  • "
-                        f"**Interventions:** {person.get('Interventions', 0)}  • "
-                        f"**Filler words:** {person.get('FillerWords', 0)}"
-                    )
-
-                    if person.get("Strengths"):
-                        st.markdown("**Strengths**")
-                        for item in person["Strengths"]:
-                            st.write(f"• {item}")
-                    if person.get("AreasToImprove"):
-                        st.markdown("**Areas to improve**")
-                        for item in person["AreasToImprove"]:
-                            st.write(f"• {item}")
-                    if person.get("Evidence"):
-                        st.markdown("**Evidence from the recording**")
-                        for item in person["Evidence"]:
-                            st.write(f"• {item}")
-                    if person.get("PlacementReadiness"):
-                        st.markdown("**Placement readiness**")
-                        st.write(person["PlacementReadiness"])
-                    if person.get("NextGDActionPlan"):
-                        st.markdown("**Next GD action plan**")
-                        for item in person["NextGDActionPlan"]:
-                            st.write(f"• {item}")
-
-            with st.expander("📝 Diarized Transcript", expanded=False):
-                st.text(_format_gd_transcript(
-                    latest.get("transcript_json") or [],
-                    {}
-                ))
-
-            st.markdown("### Previous GD Assessments")
-            for old in assessments[1:10]:
-                st.write(f"• {old.get('created_at')} — {old.get('topic')} — {old.get('video_filename')}")
-        else:
-            st.info("No GD assessment yet. Complete an AI Voice GD practice or upload a completed GD video in the tabs above.")
+    # AI Voice GD is the sole GD assessment workflow. Its feedback is surfaced in Progress and Performance Dashboard.
 
 # SECTION 5: PERFORMANCE DASHBOARD
 
@@ -5454,7 +5227,7 @@ elif selected_nav == "Performance Dashboard":
     st.caption("Review your previous interview practice attempts, read the subjective feedback from each performance, and download mentor-ready reports.")
 
     history = st.session_state.get("history", [])
-    dashboard_gd_assessments = get_gd_video_assessments(st.session_state.get("scholar_id", "")) if st.session_state.get("scholar_id") else []
+    dashboard_gd_assessments = get_ai_voice_gd_assessments(st.session_state.get("scholar_id", "")) if st.session_state.get("scholar_id") else []
 
     if not history and not dashboard_gd_assessments:
         st.info("No practice attempts or GD assessments recorded yet. Complete an interview or GD practice session to see your performance here.")
