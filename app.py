@@ -4082,6 +4082,18 @@ def _render_live_gd_voice_room(topic, student_name):
         "media_stream_constraints": {"video": False, "audio": True},
         "audio_receiver_size": 4096,
     }
+    # Streamlit Secrets do not automatically become environment variables.
+    # Copy TURN values into the environment so streamlit-webrtc 0.78.1+ can
+    # request short-lived Cloudflare TURN credentials automatically.
+    try:
+        if not os.getenv("CLOUDFLARE_TURN_KEY_ID") and st.secrets.get("CLOUDFLARE_TURN_KEY_ID"):
+            os.environ["CLOUDFLARE_TURN_KEY_ID"] = str(st.secrets.get("CLOUDFLARE_TURN_KEY_ID"))
+        if not os.getenv("CLOUDFLARE_TURN_KEY_API_TOKEN") and st.secrets.get("CLOUDFLARE_TURN_KEY_API_TOKEN"):
+            os.environ["CLOUDFLARE_TURN_KEY_API_TOKEN"] = str(st.secrets.get("CLOUDFLARE_TURN_KEY_API_TOKEN"))
+    except Exception:
+        # st.secrets may be unavailable or empty during local development.
+        pass
+
     cloudflare_turn_ready = bool(
         os.getenv("CLOUDFLARE_TURN_KEY_ID") and os.getenv("CLOUDFLARE_TURN_KEY_API_TOKEN")
     )
