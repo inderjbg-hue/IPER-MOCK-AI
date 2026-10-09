@@ -5204,8 +5204,8 @@ elif selected_nav == "Group Discussion Hub":
     st.title("Group Discussion Hub")
     st.caption("Prepare for the GD and practise directly with the IPER PEPTECH AI Voice GD. Your AI Voice GD feedback is saved automatically for Progress and Performance Dashboard.")
 
-    gd_prep_tab, gd_practice_tab = st.tabs([
-        "📚 GD Preparation", "🎙️ AI Voice GD"
+    gd_prep_tab, gd_practice_tab, gd_video_tab = st.tabs([
+        "📚 GD Preparation", "🎙️ AI Voice GD", "🎬 Video Assessment"
     ])
 
     with gd_prep_tab:
@@ -5257,7 +5257,200 @@ elif selected_nav == "Group Discussion Hub":
         st.markdown("**Practice design:** 5–10 minute GD • short AI interventions • live speech transcription • filler-word tracking • final practice transcript")
         _render_live_gd_voice_room(live_topic, st.session_state.get("first_name", "Student"))
 
-    # AI Voice GD is the sole GD assessment workflow. Its feedback is surfaced in Progress and Performance Dashboard.
+    with gd_video_tab:
+        st.markdown("### 🎬 Upload and Assess a Recorded Group Discussion")
+        st.caption("Upload a recorded GD, generate a speaker-labelled transcript with OpenAI, review speaker names, and generate evidence-based individual feedback.")
+        if not openai_client:
+            st.warning("OpenAI API key is not configured. Add OPENAI_API_KEY in Streamlit Community Cloud → App settings → Secrets to enable video diarisation.")
+        if not shutil.which("ffmpeg"):
+            st.warning("FFmpeg is not available in this deployment. Add ffmpeg to packages.txt and redeploy before processing uploaded videos.")
+
+        video_topic = st.text_input(
+            "GD Topic",
+            placeholder="Example: Should India prioritise economic growth over environmental protection?",
+            key="uploaded_gd_topic",
+        )
+        gd_video_file = st.file_uploader(
+            "Upload GD video",
+            type=["mp4", "mov", "m4v", "webm", "mpeg", "mpg"],
+            help="For the prototype, use a clear recording of up to 10–15 minutes. Audio is extracted before sending it for transcription.",
+            key="uploaded_gd_video_file",
+        )
+        if gd_video_file:
+            st.video(gd_video_file)
+            st.caption(f"File: {gd_video_file.name} • {gd_video_file.size / (1024 * 1024):.1f} MB")
+
+        if st.button("🎧 Transcribe and Identify Speakers", use_container_width=True, key="run_uploaded_gd_diarization"):
+            if not video_topic.strip():
+                st.error("Please enter the GD topic.")
+            elif not gd_video_file:
+                st.error("Please upload a GD video first.")
+            elif not openai_client:
+                st.error("OpenAI is not configured. Add OPENAI_API_KEY to Streamlit Secrets.")
+            elif not shutil.which("ffmpeg"):
+                st.error("FFmpeg is unavailable. Install it through packages.txt and redeploy.")
+            else:
+                video_temp_path = None
+                audio_temp_path = None
+                try:
+                    suffix = Path(gd_video_file.name).suffix or ".mp4"
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_video:
+                        tmp_video.write(gd_video_file.getvalue())
+                        video_temp_path = tmp_video.name
+                    with st.spinner("Extracting audio and generating speaker-labelled transcript..."):
+                        audio_temp_path = _ffmpeg_extract_gd_audio(video_temp_path)
+                        if not audio_temp_path:
+                            st.error("Audio extraction failed. Please check that the video contains an audio track and try another file.")
+                        else:
+                            segments, diarization_error = transcribe_gd_with_diarization(audio_temp_path)
+                            if diarization_error:
+                                st.error(diarization_error)
+                            else:
+                                st.session_state["uploaded_gd_segments"] = segments
+                                st.session_state["uploaded_gd_topic_processed"] = video_topic.strip()
+                                st.session_state["uploaded_gd_filename_processed"] = gd_video_file.name
+                                st.session_state["uploaded_gd_speaker_map"] = {}
+                                st.success(f"Transcript ready: {len(segments)} speech segments identified.")
+                except Exception as exc:
+                    st.error(f"Could not process this GD video: {exc}")
+                finally:
+                    for temp_path in (audio_temp_path, video_temp_path):
+                        if temp_path and os.path.exists(temp_path):
+                            try:
+                                os.remove(temp_path)
+                            except OSError:
+                                pass
+
+        uploaded_segments = st.session_state.get("uploaded_gd_segments") or []
+        if uploaded_segments:
+            st.markdown("#### Step 2 — Review speaker labels")
+            st.caption("OpenAI identifies distinct voices as speaker labels. Confirm the student name and Scholar ID for each speaker before saving individual feedback.")
+            detected_speakers = list(dict.fromkeys(seg.get("speaker", "speaker_0") for seg in uploaded_segments))
+            speaker_map = {}
+            speaker_records = {}
+            for idx, speaker_id in enumerate(detected_speakers):
+                with st.expander(f"Map {speaker_id} to a student", expanded=True):
+                    name_value = st.text_input("Student full name", key=f"uploaded_gd_name_{speaker_id}", placeholder="Enter full name")
+                    scholar_value = st.text_input("Scholar ID (optional for preview)", key=f"uploaded_gd_scholar_{speaker_id}", placeholder="Enter Scholar ID")
+                    speaker_map[speaker_id] = name_value.strip() or speaker_id
+                    speaker_records[speaker_id] = {"name": name_value.strip(), "scholar_id": scholar_value.strip().upper()}
+
+            readable_transcript = _format_gd_transcript(uploaded_segments, speaker_map)
+            with st.expander("Preview diarised transcript", expanded=False):
+                st.text_area("Speaker-labelled transcript", value=readable_transcript, height=260, key="uploaded_gd_transcript_preview")
+                st.download_button(
+                    "Download transcript (.txt)",
+                    data=readable_transcript.encode("utf-8"),
+                    file_name="iper_peptech_gd_transcript.txt",
+                    mime="text/plain",
+                    key="download_uploaded_gd_transcript",
+                )
+
+            speaker_stats = _gd_speaker_stats(uploaded_segments, speaker_map)
+            st.markdown("#### Step 3 — Generate individual feedback")
+            if st.button("🧠 Generate GD Assessment", use_container_width=True, key="generate_uploaded_gd_feedback"):
+                if len(detected_speakers) < 2:
+                    st.warning("Only one distinct speaker was detected. You can still review the transcript, but please confirm the recording contains the full group discussion.")
+                with st.spinner("Evaluating the group and each participant using transcript evidence..."):
+                    report, report_error = generate_gd_video_assessment(
+                        st.session_state.get("uploaded_gd_topic_processed", video_topic.strip()),
+                        [{"SpeakerID": sid, "Name": speaker_map.get(sid, sid), "ScholarID": speaker_records[sid]["scholar_id"]} for sid in detected_speakers],
+                        readable_transcript,
+                        speaker_stats,
+                    )
+                if report_error:
+                    st.error(f"Assessment could not be generated: {report_error}")
+                elif report:
+                    st.session_state["uploaded_gd_report"] = report
+                    st.session_state["uploaded_gd_final_speaker_map"] = speaker_map
+                    st.session_state["uploaded_gd_final_speaker_records"] = speaker_records
+                    st.session_state["uploaded_gd_final_stats"] = speaker_stats
+                    st.success("GD assessment generated. Review the feedback below before saving.")
+                    group_report = report.get("GroupAssessment", {}) or {}
+                    st.markdown("### Group Assessment")
+                    st.markdown(f"**Overall Readiness — {grade_from_score(group_report.get('OverallScore', 0))}**")
+                    for label, key in (("Strengths", "Strengths"), ("Improvements", "Improvements")):
+                        st.markdown(f"**{label}**")
+                        values = group_report.get(key) or []
+                        if values:
+                            for value in values:
+                                st.write(f"• {value}")
+                        else:
+                            st.write("No specific points returned.")
+
+                    st.markdown("### Individual Feedback")
+                    for participant in report.get("Participants", []) or []:
+                        pname = participant.get("Name") or "Unmapped participant"
+                        with st.expander(f"{pname} — {grade_from_score(participant.get('OverallScore', 0))}", expanded=True):
+                            st.write(f"**Participation:** {grade_from_score(participant.get('ParticipationScore', 0))}")
+                            st.write(f"**Communication:** {grade_from_score(participant.get('CommunicationScore', 0))}")
+                            st.write(f"**Knowledge:** {grade_from_score(participant.get('KnowledgeScore', 0))}")
+                            st.write(f"**Analytical Thinking:** {grade_from_score(participant.get('AnalyticalThinkingScore', 0))}")
+                            st.write(f"**Listening & Teamwork:** {grade_from_score(participant.get('ListeningTeamworkScore', 0))}")
+                            st.write(f"**Leadership:** {grade_from_score(participant.get('LeadershipScore', 0))}")
+                            for label, key in (("Evidence", "Evidence"), ("Strengths", "Strengths"), ("Areas to improve", "AreasToImprove"), ("Next action plan", "NextGDActionPlan")):
+                                values = participant.get(key) or []
+                                st.markdown(f"**{label}**")
+                                if values:
+                                    for value in values:
+                                        st.write(f"• {value}")
+                                else:
+                                    st.write("No specific points returned.")
+                    st.download_button(
+                        "Download complete GD assessment (.json)",
+                        data=json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8"),
+                        file_name="iper_peptech_gd_assessment.json",
+                        mime="application/json",
+                        key="download_uploaded_gd_report_json",
+                    )
+
+            saved_report = st.session_state.get("uploaded_gd_report")
+            if saved_report:
+                st.markdown("#### Step 4 — Save individual assessments")
+                st.caption("Only participants with a confirmed Scholar ID will be saved to their student profile. Verify speaker-to-student mapping before saving.")
+                if st.button("💾 Save mapped student feedback", use_container_width=True, key="save_uploaded_gd_assessments"):
+                    saved_count = 0
+                    save_errors = []
+                    report_participants = saved_report.get("Participants", []) or []
+                    final_records = st.session_state.get("uploaded_gd_final_speaker_records", {})
+                    final_map = st.session_state.get("uploaded_gd_final_speaker_map", {})
+                    topic_to_save = st.session_state.get("uploaded_gd_topic_processed", video_topic.strip())
+                    source_segments = st.session_state.get("uploaded_gd_segments", [])
+                    for participant in report_participants:
+                        participant_name = str(participant.get("Name") or "").strip()
+                        matched_speaker = next((sid for sid, mapped_name in final_map.items() if mapped_name == participant_name), None)
+                        record = final_records.get(matched_speaker, {}) if matched_speaker else {}
+                        scholar_id = str(record.get("scholar_id") or "").strip().upper()
+                        if not scholar_id:
+                            continue
+                        participant_report = {
+                            "SourceType": "Video GD",
+                            "GroupAssessment": saved_report.get("GroupAssessment", {}),
+                            "Participants": [participant],
+                            "SpeakerStats": st.session_state.get("uploaded_gd_final_stats", {}),
+                            "Transcript": _format_gd_transcript(source_segments, final_map),
+                        }
+                        try:
+                            save_gd_video_assessment(
+                                scholar_id,
+                                topic_to_save,
+                                [participant_name],
+                                source_segments,
+                                participant_report,
+                                st.session_state.get("uploaded_gd_filename_processed", "Uploaded GD video"),
+                                source_type="Video GD",
+                            )
+                            saved_count += 1
+                        except Exception as exc:
+                            save_errors.append(f"{participant_name}: {exc}")
+                    if saved_count:
+                        st.success(f"Saved feedback for {saved_count} participant(s).")
+                    else:
+                        st.warning("No feedback was saved. Enter a Scholar ID for at least one participant and try again.")
+                    for save_error in save_errors:
+                        st.error(save_error)
+
+    # AI Voice GD remains available and its feedback continues to appear in Progress and Performance Dashboard.
 
 # SECTION 5: PERFORMANCE DASHBOARD
 
