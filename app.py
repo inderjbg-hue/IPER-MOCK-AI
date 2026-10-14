@@ -7,6 +7,7 @@ import json
 import queue
 import wave
 import re
+import uuid
 import pandas as pd
 import numpy as np
 import pypdf
@@ -762,6 +763,7 @@ import hashlib
 import secrets
 import shutil
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import base64
 import hmac
 import urllib.parse
@@ -927,6 +929,191 @@ def get_db_connection():
     return conn
 
 
+def activity_timestamp_now():
+    """Return a consistent, timezone-aware India Standard Time timestamp string."""
+    return datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _safe_json_dict(value):
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value or "{}")
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _activity_summary(activity_type, feedback, fallback=""):
+    """Create a short mentor-facing summary without exposing internal numeric marks."""
+    feedback = _safe_json_dict(feedback)
+    parts = []
+    for key in ("ExecutiveSummary", "OverallFeedback", "Summary", "CommunicationAssessment", "TechnicalAssessment"):
+        value = feedback.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    for key in ("PriorityImprovements", "AreasOfImprovement", "AreasToImprove", "NextActionPlan", "RecommendedChanges"):
+        value = feedback.get(key)
+        if isinstance(value, list):
+            cleaned = [str(x).strip() for x in value if str(x).strip()]
+            if cleaned:
+                parts.append("Next steps: " + "; ".join(cleaned[:3]))
+                break
+    summary = " | ".join(parts) or str(fallback or "Assessment completed; open detailed feedback for the full report.")
+    return summary[:1800]
+
+
+def _insert_student_activity(conn, *, student_id=None, scholar_id, activity_type,
+                             activity_timestamp, grade="Not graded", summary="",
+                             duration_seconds=0, feedback=None, source_table,
+                             source_record_id):
+    scholar_id = str(scholar_id or "").strip().upper()
+    if not scholar_id:
+        return False
+    activity_type = str(activity_type or "Assessment").strip()
+    source_record_id = str(source_record_id)
+    existing = conn.execute(
+        "SELECT id FROM student_activity_log WHERE source_table=? AND source_record_id=? AND activity_type=? LIMIT 1",
+        (source_table, source_record_id, activity_type),
+    ).fetchone()
+    if existing:
+        return False
+    count_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM student_activity_log WHERE scholar_id=? AND activity_type=?",
+        (scholar_id, activity_type),
+    ).fetchone()
+    attempt_number = int((count_row["n"] if count_row else 0) or 0) + 1
+    student_id_value = student_id
+    if student_id_value is None:
+        student_row = conn.execute("SELECT id FROM students WHERE UPPER(scholar_id)=? LIMIT 1", (scholar_id,)).fetchone()
+        student_id_value = student_row["id"] if student_row else None
+    timestamp = str(activity_timestamp or activity_timestamp_now())
+    conn.execute("""
+        INSERT INTO student_activity_log
+        (student_id, scholar_id, activity_type, activity_timestamp, attempt_number,
+         grade, summary, duration_seconds, feedback_json, source_table,
+         source_record_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(source_table, source_record_id, activity_type) DO NOTHING
+    """, (
+        student_id_value, scholar_id, activity_type, timestamp, attempt_number,
+        str(grade or "Not graded"), str(summary or "")[:1800],
+        float(duration_seconds or 0), json.dumps(feedback or {}, ensure_ascii=False, default=str),
+        str(source_table), source_record_id, activity_timestamp_now(),
+    ))
+    return True
+
+
+def _gd_report_score_and_feedback(report):
+    report = _safe_json_dict(report)
+    live = report.get("LiveFeedback") if isinstance(report.get("LiveFeedback"), dict) else {}
+    if live.get("OverallScore") is not None:
+        score = live.get("OverallScore")
+        feedback = live
+    elif report.get("OverallScore") is not None:
+        score = report.get("OverallScore")
+        feedback = report
+    else:
+        participants = report.get("Participants") or []
+        participant = participants[0] if participants and isinstance(participants[0], dict) else {}
+        score = participant.get("OverallScore")
+        feedback = participant or report
+    try:
+        grade = grade_from_score(float(score)) if score is not None else "Not graded"
+    except Exception:
+        grade = "Not graded"
+    summary = _activity_summary("Group Discussion", feedback)
+    return grade, summary, feedback
+
+
+def _backfill_student_activity_history(conn):
+    """Copy summaries from existing detailed tables; uniqueness makes this safe on reruns."""
+    # Existing PI/interview attempts.
+    try:
+        rows = conn.execute("""
+            SELECT ia.id, ia.student_id, s.scholar_id, ia.timestamp, ia.domain, ia.score,
+                   ia.mode, ia.question, ia.duration_seconds, ia.communication_score,
+                   ia.technical_score, ia.feedback_json
+            FROM interview_attempts ia JOIN students s ON s.id=ia.student_id
+            ORDER BY ia.id ASC
+        """).fetchall()
+        for row in rows:
+            feedback = _safe_json_dict(row["feedback_json"])
+            score = row["score"]
+            grade = grade_from_score(float(score or 0)) if score is not None else "Not graded"
+            summary = _activity_summary("Personal Interview", feedback, row["question"] or "Interview practice completed.")
+            _insert_student_activity(
+                conn, student_id=row["student_id"], scholar_id=row["scholar_id"],
+                activity_type="Personal Interview", activity_timestamp=row["timestamp"],
+                grade=grade, summary=summary, duration_seconds=row["duration_seconds"],
+                feedback=feedback, source_table="interview_attempts", source_record_id=row["id"],
+            )
+    except Exception:
+        # Preserve app availability if a legacy database has an unexpected shape.
+        pass
+
+    # Existing AI Voice GD and uploaded-video GD records.
+    try:
+        rows = conn.execute("SELECT id, scholar_id, topic, report_json, duration_seconds, created_at FROM gd_assessments ORDER BY id ASC").fetchall()
+        for row in rows:
+            report = _safe_json_dict(row["report_json"])
+            source_type = str(report.get("SourceType") or "Video GD").strip()
+            grade, summary, feedback = _gd_report_score_and_feedback(report)
+            _insert_student_activity(
+                conn, scholar_id=row["scholar_id"],
+                activity_type="Group Discussion", activity_timestamp=row["created_at"],
+                grade=grade, summary=f"{row['topic'] or 'Group Discussion'} — {summary}",
+                duration_seconds=row["duration_seconds"], feedback={"SourceType": source_type, **feedback},
+                source_table="gd_assessments", source_record_id=row["id"],
+            )
+    except Exception:
+        pass
+
+    # Legacy in-room GD feedback stored in gd_feedback.
+    try:
+        rows = conn.execute("""
+            SELECT id, scholar_id, voice_score, perspective_score, participation_score,
+                   camera_clarity_score, strengths, improvements, created_at
+            FROM gd_feedback ORDER BY id ASC
+        """).fetchall()
+        for row in rows:
+            avg = (float(row["voice_score"] or 0) + float(row["perspective_score"] or 0) +
+                   float(row["participation_score"] or 0) + float(row["camera_clarity_score"] or 0)) / 4.0
+            feedback = {"Strengths": row["strengths"] or "", "AreasToImprove": row["improvements"] or ""}
+            _insert_student_activity(
+                conn, scholar_id=row["scholar_id"], activity_type="Group Discussion",
+                activity_timestamp=row["created_at"], grade=grade_from_score(avg),
+                summary=_activity_summary("Group Discussion", feedback, "Legacy GD feedback recorded."),
+                feedback=feedback, source_table="gd_feedback", source_record_id=row["id"],
+            )
+    except Exception:
+        pass
+
+
+def save_resume_activity(student_id, scholar_id, ats_result, job_description=""):
+    """Persist one completed resume-match attempt to the shared mentor activity log."""
+    try:
+        score = float((ats_result or {}).get("ATSScore", 0) or 0)
+        grade = grade_from_score(score)
+        feedback = dict(ats_result or {})
+        feedback["JobDescriptionSummary"] = str(job_description or "")[:500]
+        summary = _activity_summary("Resume Checker", feedback, str(feedback.get("Category") or "Resume review completed."))
+        conn = get_db_connection()
+        try:
+            _insert_student_activity(
+                conn, student_id=student_id, scholar_id=scholar_id,
+                activity_type="Resume Checker", activity_timestamp=activity_timestamp_now(),
+                grade=grade, summary=summary, feedback=feedback,
+                source_table="resume_checker", source_record_id=uuid.uuid4().hex,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return True
+    except Exception:
+        return False
+
+
 def init_database():
     conn = get_db_connection()
     try:
@@ -1050,11 +1237,50 @@ def init_database():
             )
         """)
 
+        # Central, append-only activity history for mentor MIS integration. Existing
+        # detailed assessment tables remain the source of truth; this table is a
+        # normalized summary/index that is safe to query across activity types.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS student_activity_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER,
+                scholar_id TEXT NOT NULL,
+                activity_type TEXT NOT NULL,
+                activity_timestamp TEXT NOT NULL,
+                attempt_number INTEGER NOT NULL DEFAULT 1,
+                grade TEXT NOT NULL DEFAULT 'Not graded',
+                summary TEXT,
+                duration_seconds REAL DEFAULT 0,
+                feedback_json TEXT,
+                source_table TEXT NOT NULL,
+                source_record_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(source_table, source_record_id, activity_type)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_scholar_time ON student_activity_log (scholar_id, activity_timestamp)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_type_time ON student_activity_log (activity_type, activity_timestamp)")
+        mis_view_sql = """
+            SELECT a.id AS activity_id, a.student_id, a.scholar_id,
+                   (COALESCE(s.first_name, '') || ' ' || COALESCE(s.last_name, '')) AS student_name,
+                   a.activity_type, a.activity_timestamp, a.attempt_number, a.grade,
+                   a.summary, a.duration_seconds
+            FROM student_activity_log a
+            LEFT JOIN students s ON s.id = a.student_id
+        """
+        if USING_POSTGRES:
+            conn.execute("CREATE OR REPLACE VIEW student_activity_mis_view AS " + mis_view_sql)
+        else:
+            conn.execute("CREATE VIEW IF NOT EXISTS student_activity_mis_view AS " + mis_view_sql)
+
         for slot in range(1, 8):
             conn.execute(
                 "INSERT OR IGNORE INTO gd_rooms (slot, code, topic, status, created_at) VALUES (?, NULL, ?, 'Open', ?)",
                 (slot, 'Not allocated', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             )
+
+        # Idempotent historical backfill: reruns never duplicate an activity row.
+        _backfill_student_activity_history(conn)
         conn.commit()
     except Exception:
         try:
@@ -1095,7 +1321,7 @@ def create_student(full_name, scholar_id, email, password):
             (
                 full_name.strip(), "", scholar_id, email,
                 password_hash, password_salt,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                activity_timestamp_now(),
             ),
         )
         conn.commit()
@@ -1201,6 +1427,8 @@ def load_student_attempts(student_id):
 def save_student_attempt(student_id, domain, score, mode, question, duration_seconds=0, communication_score=0, technical_score=0, feedback=None):
     conn = get_db_connection()
     try:
+        attempt_timestamp = activity_timestamp_now()
+        normalized_feedback = feedback or {}
         conn.execute(
             """
             INSERT INTO interview_attempts
@@ -1208,12 +1436,22 @@ def save_student_attempt(student_id, domain, score, mode, question, duration_sec
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                student_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                domain, int(score), mode, question, float(duration_seconds or 0),
+                student_id, attempt_timestamp, domain, int(score), mode, question, float(duration_seconds or 0),
                 int(communication_score or 0), int(technical_score or 0),
-                json.dumps(feedback or {}, ensure_ascii=False),
+                json.dumps(normalized_feedback, ensure_ascii=False),
             ),
         )
+        saved_row = conn.execute("SELECT id, scholar_id FROM students WHERE id=?", (student_id,)).fetchone()
+        if saved_row:
+            attempt_id_row = conn.execute("SELECT id FROM interview_attempts WHERE student_id=? ORDER BY id DESC LIMIT 1", (student_id,)).fetchone()
+            _insert_student_activity(
+                conn, student_id=student_id, scholar_id=saved_row["scholar_id"],
+                activity_type="Personal Interview", activity_timestamp=attempt_timestamp,
+                grade=grade_from_score(float(score or 0)),
+                summary=_activity_summary("Personal Interview", normalized_feedback, question or "Interview practice completed."),
+                duration_seconds=duration_seconds, feedback=normalized_feedback,
+                source_table="interview_attempts", source_record_id=(attempt_id_row["id"] if attempt_id_row else uuid.uuid4().hex),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -2131,6 +2369,7 @@ def save_gd_video_assessment(scholar_id, topic, participants, segments, report, 
     stored_report = dict(report or {})
     stored_report.setdefault("SourceType", source_type)
 
+    created_at = activity_timestamp_now()
     conn.execute("""
         INSERT INTO gd_assessments
         (scholar_id, topic, participant_names, transcript_json, report_json, video_filename, duration_seconds, created_at)
@@ -2140,10 +2379,17 @@ def save_gd_video_assessment(scholar_id, topic, participants, segments, report, 
         json.dumps(participants, ensure_ascii=False),
         json.dumps(segments, ensure_ascii=False),
         json.dumps(stored_report, ensure_ascii=False),
-        video_filename,
-        duration_seconds,
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        video_filename, duration_seconds, created_at
     ))
+    saved_row = conn.execute("SELECT id FROM gd_assessments WHERE scholar_id=? AND created_at=? ORDER BY id DESC LIMIT 1", (scholar_id, created_at)).fetchone()
+    gd_grade, gd_summary, gd_feedback = _gd_report_score_and_feedback(stored_report)
+    _insert_student_activity(
+        conn, scholar_id=scholar_id, activity_type="Group Discussion",
+        activity_timestamp=created_at, grade=gd_grade,
+        summary=f"{topic or 'Group Discussion'} — {gd_summary}",
+        duration_seconds=duration_seconds, feedback={"SourceType": source_type, **gd_feedback},
+        source_table="gd_assessments", source_record_id=(saved_row["id"] if saved_row else uuid.uuid4().hex),
+    )
     conn.commit()
     conn.close()
 
@@ -4468,6 +4714,17 @@ if selected_nav == "Resume Checker & Job Matcher":
                 try:
                     clean_ats = raw_ats_response.replace("```json", "").replace("```", "").strip()
                     ats_result = json.loads(clean_ats)
+
+                    resume_saved = save_resume_activity(
+                        st.session_state.get("student_id"),
+                        st.session_state.get("scholar_id", ""),
+                        ats_result,
+                        jd_text,
+                    )
+                    if resume_saved:
+                        st.caption("This resume assessment has been added to your mentor activity history.")
+                    else:
+                        st.warning("The resume feedback was generated, but its activity record could not be saved. Please inform your mentor/administrator.")
                     
                     st.subheader(f"Resume Analysis for {candidate_name}")
                     
