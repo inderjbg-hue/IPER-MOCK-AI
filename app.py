@@ -1,5 +1,6 @@
 import os
 import sys
+import base64
 import ssl
 import tempfile
 import time
@@ -1237,6 +1238,61 @@ def init_database():
             )
         """)
 
+        # Mentor Portal: staff accounts, the admin-uploaded master roster, mentee
+        # assignments and mentor notes. These additions do not replace student data.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mentor_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                password_salt TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS student_roster (
+                scholar_id TEXT PRIMARY KEY,
+                full_name TEXT NOT NULL,
+                section TEXT NOT NULL,
+                extra_data TEXT,
+                active INTEGER NOT NULL DEFAULT 1,
+                uploaded_at TEXT NOT NULL
+            )
+        """)
+        # Safe migration for existing deployments: preserve current roster and add
+        # a JSON field for every additional Excel/CSV column supplied by admin.
+        try:
+            roster_cols = [row[1] for row in conn.execute("PRAGMA table_info(student_roster)").fetchall()]
+            if "extra_data" not in roster_cols:
+                conn.execute("ALTER TABLE student_roster ADD COLUMN extra_data TEXT")
+        except Exception:
+            # Do not silently hide a failed migration in production; re-raise.
+            raise
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mentor_mentees (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mentor_id INTEGER NOT NULL,
+                scholar_id TEXT NOT NULL,
+                assigned_at TEXT NOT NULL,
+                UNIQUE(mentor_id, scholar_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS mentor_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mentor_id INTEGER NOT NULL,
+                scholar_id TEXT NOT NULL,
+                note TEXT NOT NULL,
+                action_points TEXT,
+                follow_up_date TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mentor_mentees_mentor ON mentor_mentees (mentor_id, scholar_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_roster_section ON student_roster (section, active)")
+
         # Central, append-only activity history for mentor MIS integration. Existing
         # detailed assessment tables remain the source of truth; this table is a
         # normalized summary/index that is safe to query across activity types.
@@ -1262,11 +1318,12 @@ def init_database():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_type_time ON student_activity_log (activity_type, activity_timestamp)")
         mis_view_sql = """
             SELECT a.id AS activity_id, a.student_id, a.scholar_id,
-                   (COALESCE(s.first_name, '') || ' ' || COALESCE(s.last_name, '')) AS student_name,
+                   COALESCE(NULLIF(TRIM(COALESCE(s.first_name, '') || ' ' || COALESCE(s.last_name, '')), ''), r.full_name) AS student_name,
                    a.activity_type, a.activity_timestamp, a.attempt_number, a.grade,
                    a.summary, a.duration_seconds
             FROM student_activity_log a
             LEFT JOIN students s ON s.id = a.student_id
+            LEFT JOIN student_roster r ON UPPER(r.scholar_id) = UPPER(a.scholar_id)
         """
         if USING_POSTGRES:
             conn.execute("CREATE OR REPLACE VIEW student_activity_mis_view AS " + mis_view_sql)
@@ -2262,6 +2319,126 @@ def _gd_speaker_stats(segments, speaker_map=None):
     return stats
 
 
+def _extract_gd_visual_samples(video_path, max_frames=5):
+    """Extract a small, low-resolution set of frames spread across the whole recording."""
+    if not shutil.which("ffmpeg"):
+        return [], "FFmpeg is unavailable; visual feedback could not be generated."
+    temp_dir = tempfile.mkdtemp(prefix="iper_gd_frames_")
+    try:
+        duration_seconds = 0.0
+        if shutil.which("ffprobe"):
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30,
+            )
+            if probe.returncode == 0:
+                try: duration_seconds = max(0.0, float(probe.stdout.strip()))
+                except ValueError: duration_seconds = 0.0
+        # If ffprobe is unavailable, sample the beginning as a conservative fallback.
+        if duration_seconds > 0:
+            sample_times = [max(0.0, duration_seconds * fraction) for fraction in (0.03, 0.25, 0.50, 0.75, 0.95)][:max_frames]
+        else:
+            sample_times = [0.0, 20.0, 40.0, 60.0, 80.0][:max_frames]
+        encoded = []
+        for index, sample_time in enumerate(sample_times):
+            frame_path = os.path.join(temp_dir, f"frame_{index:02d}.jpg")
+            cmd = ["ffmpeg", "-y", "-ss", str(sample_time), "-i", video_path, "-frames:v", "1", "-vf", "scale=640:-1", "-q:v", "5", frame_path]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=45)
+            if result.returncode == 0 and os.path.exists(frame_path) and os.path.getsize(frame_path) > 1000:
+                with open(frame_path, "rb") as image_file:
+                    encoded.append(base64.b64encode(image_file.read()).decode("ascii"))
+        if not encoded:
+            return [], "No usable video frames could be extracted for body-language feedback."
+        return encoded, None
+    except Exception as exc:
+        return [], f"Video frame sampling failed: {exc}"
+    finally:
+        try:
+            import shutil as _shutil
+            _shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def analyze_gd_body_language(frames, participants):
+    """Use pre-sampled video frames; return only observable, cautious feedback."""
+    if not openai_client:
+        return None, "OPENAI_API_KEY is not configured; body-language analysis is unavailable."
+    if not frames:
+        return None, "No usable sampled video frames are available for body-language feedback."
+    participant_context = [{
+        "Name": p.get("Name", "Participant"),
+        "VisualPosition": p.get("VisualPosition", "Not mapped"),
+    } for p in participants]
+    prompt = f"""You are evaluating visible non-verbal communication in a recorded student group discussion.
+Review only the supplied sampled video frames, not assumptions about personality or emotion.
+Participants and user-confirmed visual positions: {json.dumps(participant_context, ensure_ascii=False)}
+Return valid JSON only with this shape:
+{{"GroupBodyLanguage": {{"Observations": [], "Suggestions": []}}, "Participants": [{{"Name":"", "BodyLanguageObservations": [], "BodyLanguageSuggestions": [], "EvidenceLimitations": []}}]}}
+For each participant, use their supplied visual position only if clearly visible and consistently identifiable across the sampled frames. If the position cannot be reliably matched, say that individual body-language feedback is unavailable rather than guessing. Focus on observable posture, orientation toward the group, visible engagement, turn-taking signals, and distracting movements only when clearly evidenced. Do not infer intelligence, honesty, confidence, personality, or emotions from appearance. Do not penalize disability, cultural differences, clothing, or physical characteristics. A few frames cannot establish continuous behaviour; state that limitation. Provide practical, respectful suggestions."""
+    content = [{"type": "text", "text": prompt}]
+    content.extend([{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + image_data, "detail": "low"}} for image_data in frames])
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": content}],
+            temperature=0.2,
+        )
+        raw = response.choices[0].message.content or ""
+        clean = raw.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean), None
+    except Exception as exc:
+        return None, f"Body-language analysis failed: {exc}"
+
+
+def analyze_gd_vocal_tone(audio_path, segments, speaker_map):
+    """Assess a short representative utterance per speaker; avoid processing the entire recording again."""
+    if not openai_client:
+        return {}, "OPENAI_API_KEY is not configured; vocal-tone analysis is unavailable."
+    results = {}
+    errors = []
+    speakers = sorted({str(seg.get("speaker", "speaker_0")) for seg in segments})
+    for speaker_id in speakers[:8]:
+        candidate_segments = [seg for seg in segments if str(seg.get("speaker", "speaker_0")) == speaker_id]
+        if not candidate_segments:
+            continue
+        longest = max(candidate_segments, key=lambda seg: max(0, float(seg.get("end", 0)) - float(seg.get("start", 0))))
+        start = max(0.0, float(longest.get("start", 0)))
+        duration = min(15.0, max(3.0, float(longest.get("end", start + 5)) - start))
+        clip_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix="_tone.wav") as tmp:
+                clip_path = tmp.name
+            cmd = ["ffmpeg", "-y", "-ss", str(start), "-i", audio_path, "-t", str(duration), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", clip_path]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+            if result.returncode != 0 or not os.path.exists(clip_path) or os.path.getsize(clip_path) < 1000:
+                errors.append(f"Could not sample audio for {speaker_map.get(speaker_id, speaker_id)}.")
+                continue
+            with open(clip_path, "rb") as audio_file:
+                audio_b64 = base64.b64encode(audio_file.read()).decode("ascii")
+            response = openai_client.chat.completions.create(
+                model="gpt-4o-audio-preview",
+                modalities=["text"],
+                messages=[{"role": "user", "content": [
+                    {"type": "text", "text": "Assess only audible vocal delivery in this short speech sample for a student GD. Return valid JSON with keys ToneSummary (string), WhatWentWell (array of strings), ToImprove (array of strings), and EvidenceLimitations (array of strings). Comment on audibility, steadiness, pace, variation, projection and pauses where supported. Do not infer emotions, personality or competence; do not judge accent as wrong. If sample is too short/noisy, state that."},
+                    {"type": "input_audio", "input_audio": {"data": audio_b64, "format": "wav"}}
+                ]}]
+            )
+            raw = response.choices[0].message.content or ""
+            clean = raw.replace("```json", "").replace("```", "").strip()
+            try:
+                results[speaker_id] = json.loads(clean)
+            except Exception:
+                results[speaker_id] = {"ToneSummary": clean, "WhatWentWell": [], "ToImprove": [], "EvidenceLimitations": ["The model returned unstructured feedback."]}
+        except Exception as exc:
+            errors.append(f"Tone analysis for {speaker_map.get(speaker_id, speaker_id)} failed: {exc}")
+        finally:
+            if clip_path:
+                try: os.remove(clip_path)
+                except OSError: pass
+    return results, (" ".join(errors) if errors else None)
+
+
 def generate_gd_video_assessment(topic, participants, transcript_text, stats):
     prompt = f"""
 You are a rigorous MBA Group Discussion evaluator for IPER Bhopal.
@@ -2579,6 +2756,386 @@ def generate_learning_story(activity, activity_type, student_name, role, challen
     prompt = f"""You are an MBA placement mentor at IPER Bhopal. Help {student_name} turn an activity into an interview-ready learning story. Activity: {activity}. Type: {activity_type}. Role: {role}. Challenge: {challenge}. Learning: {learning}. Use simple language and do not invent achievements. Return: 1. What interviewer wants to know 2. Simple STAR-style answer 3. Key learning 4. How this helps at work 5. One follow-up question."""
     return get_groq_response(prompt)
 
+def create_mentor_account(full_name, email, password):
+    full_name = str(full_name or "").strip()
+    email = str(email or "").strip().lower()
+    if not full_name or len(full_name.split()) < 2:
+        return False, "Please enter your complete name."
+    if not is_valid_iper_email(email):
+        return False, "Mentor registration requires an official @iper.ac.in email address."
+    if len(password or "") < 8:
+        return False, "Password must contain at least 8 characters."
+    password_hash, password_salt = hash_password(password)
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT INTO mentor_accounts (full_name, email, password_hash, password_salt, created_at, active) VALUES (?, ?, ?, ?, ?, 1)",
+            (full_name, email, password_hash, password_salt, activity_timestamp_now()),
+        )
+        conn.commit()
+        return True, "Mentor account created. You can now sign in and select mentees from the uploaded student roster."
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
+            return False, "A mentor account with this email already exists. Please sign in."
+        return False, "Mentor account could not be created. Please try again or contact the administrator."
+    finally:
+        conn.close()
+
+
+def authenticate_mentor(email, password):
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT * FROM mentor_accounts WHERE email=? AND active=1", (str(email or "").strip().lower(),)).fetchone()
+        if row and verify_password(password, row["password_hash"], row["password_salt"]):
+            return dict(row)
+        return None
+    finally:
+        conn.close()
+
+
+def _roster_normalize_cell(value):
+    """Convert pandas/numpy cell values into safe, readable JSON-compatible text."""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    if isinstance(value, (np.integer,)):
+        return str(int(value))
+    if isinstance(value, (np.floating,)):
+        return str(int(value)) if float(value).is_integer() else str(float(value))
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def import_student_roster_dataframe(df):
+    """Validate and upsert the admin roster, preserving all other source columns as JSON."""
+    if df is None or df.empty:
+        return 0, 0, ["The uploaded file is empty."]
+    normalized = {re.sub(r"[^a-z0-9]+", "", str(c).strip().lower()): c for c in df.columns}
+    def find_col(*names):
+        for name in names:
+            if name in normalized:
+                return normalized[name]
+        return None
+    scholar_col = find_col("scholarid", "studentid", "scholarno", "studentno", "id")
+    name_col = find_col("fullname", "studentname", "name", "candidatename")
+    section_col = find_col("section", "classsection", "batchsection", "class", "division")
+    if not scholar_col or not name_col or not section_col:
+        return 0, 0, ["Required columns: Scholar ID, Full Name, Section. Column order does not matter. Other columns are also imported and retained."]
+
+    errors = []
+    working = df.copy().fillna("")
+    working[scholar_col] = working[scholar_col].map(_roster_normalize_cell).str.strip().str.upper()
+    working[name_col] = working[name_col].map(_roster_normalize_cell).str.strip()
+    working[section_col] = working[section_col].map(_roster_normalize_cell).str.strip()
+    working = working[(working[scholar_col] != "") & (working[name_col] != "") & (working[section_col] != "")].copy()
+    if working.empty:
+        return 0, 0, ["No valid rows found. Each row needs Scholar ID, Full Name and Section."]
+
+    duplicates = working[working[scholar_col].duplicated(keep=False)][scholar_col].drop_duplicates().tolist()
+    if duplicates:
+        preview = ", ".join(duplicates[:10])
+        suffix = " …" if len(duplicates) > 10 else ""
+        return 0, 0, [f"Duplicate Scholar IDs found in the uploaded file: {preview}{suffix}. Correct duplicates and upload again; no rows were imported."]
+
+    inserted = updated = 0
+    conn = get_db_connection()
+    try:
+        for _, source_row in working.iterrows():
+            scholar_id = _roster_normalize_cell(source_row[scholar_col]).upper()
+            full_name = _roster_normalize_cell(source_row[name_col])
+            section = _roster_normalize_cell(source_row[section_col])
+            extra = {}
+            for column in working.columns:
+                if column in (scholar_col, name_col, section_col):
+                    continue
+                label = str(column).strip()
+                if not label:
+                    continue
+                value = _roster_normalize_cell(source_row[column])
+                if value != "":
+                    extra[label] = value
+            extra_json = json.dumps(extra, ensure_ascii=False)
+            existing = conn.execute("SELECT scholar_id FROM student_roster WHERE UPPER(scholar_id)=UPPER(?)", (scholar_id,)).fetchone()
+            if existing:
+                conn.execute("UPDATE student_roster SET full_name=?, section=?, extra_data=?, active=1, uploaded_at=? WHERE UPPER(scholar_id)=UPPER(?)",
+                             (full_name, section, extra_json, activity_timestamp_now(), scholar_id))
+                updated += 1
+            else:
+                conn.execute("INSERT INTO student_roster (scholar_id, full_name, section, extra_data, active, uploaded_at) VALUES (?, ?, ?, ?, 1, ?)",
+                             (scholar_id, full_name, section, extra_json, activity_timestamp_now()))
+                inserted += 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return inserted, updated, errors
+
+
+def get_mentor_roster_sections():
+    conn=get_db_connection()
+    try:
+        return [r["section"] for r in conn.execute("SELECT DISTINCT section FROM student_roster WHERE active=1 ORDER BY section").fetchall()]
+    finally:
+        conn.close()
+
+
+def get_mentor_mentees(mentor_id):
+    conn=get_db_connection()
+    try:
+        rows = conn.execute("""
+            SELECT r.scholar_id, r.full_name, r.section, m.assigned_at
+            FROM mentor_mentees m JOIN student_roster r ON r.scholar_id=m.scholar_id
+            WHERE m.mentor_id=? AND r.active=1 ORDER BY r.section, r.full_name
+        """, (mentor_id,)).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def assign_mentor_mentees(mentor_id, scholar_ids):
+    added=0
+    conn=get_db_connection()
+    try:
+        for scholar_id in sorted(set(str(x).strip().upper() for x in scholar_ids if str(x).strip())):
+            roster=conn.execute("SELECT scholar_id FROM student_roster WHERE scholar_id=? AND active=1", (scholar_id,)).fetchone()
+            if not roster:
+                continue
+            existing=conn.execute("SELECT id FROM mentor_mentees WHERE mentor_id=? AND scholar_id=?", (mentor_id, scholar_id)).fetchone()
+            if not existing:
+                conn.execute("INSERT INTO mentor_mentees (mentor_id, scholar_id, assigned_at) VALUES (?, ?, ?)",
+                             (mentor_id, scholar_id, activity_timestamp_now()))
+                added += 1
+        conn.commit()
+        return added
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def save_mentor_note(mentor_id, scholar_id, note, action_points, follow_up_date):
+    conn=get_db_connection()
+    try:
+        assigned=conn.execute("SELECT id FROM mentor_mentees WHERE mentor_id=? AND scholar_id=?", (mentor_id, scholar_id)).fetchone()
+        if not assigned:
+            return False
+        conn.execute("INSERT INTO mentor_notes (mentor_id, scholar_id, note, action_points, follow_up_date, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                     (mentor_id, scholar_id, note.strip(), action_points.strip(), str(follow_up_date or ""), activity_timestamp_now()))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def render_mentor_portal():
+    mentor_id = int(st.session_state.get("mentor_id", 0) or 0)
+    mentor_name = st.session_state.get("mentor_name", "Mentor")
+    st.title("Mentor Portal")
+    st.caption("IPER PEPTECH · Student mentoring and placement-readiness review")
+    st.write(f"Welcome, **{mentor_name}**")
+    tabs=st.tabs(["Dashboard & My Mentees", "Assign Mentees", "Mentor Notes", "Admin: Student Roster"])
+
+    with tabs[0]:
+        mentees=get_mentor_mentees(mentor_id)
+        sections=sorted({r["section"] for r in mentees})
+        c1,c2,c3=st.columns(3)
+        c1.metric("Assigned mentees", len(mentees))
+        c2.metric("Sections represented", len(sections))
+        assigned_ids=[r["scholar_id"] for r in mentees]
+        activities=[]
+        if assigned_ids:
+            conn=get_db_connection()
+            try:
+                placeholders=", ".join(["?"]*len(assigned_ids))
+                activities=conn.execute(f"SELECT * FROM student_activity_mis_view WHERE scholar_id IN ({placeholders}) ORDER BY activity_timestamp DESC LIMIT 500", tuple(assigned_ids)).fetchall()
+            finally:
+                conn.close()
+        c3.metric("Recorded activities", len(activities))
+        if mentees:
+            st.subheader("My Mentees")
+            st.dataframe(pd.DataFrame([dict(r) for r in mentees]), use_container_width=True, hide_index=True)
+            st.subheader("Recent Activity")
+            if activities:
+                safe_rows=[]
+                for a in activities:
+                    safe_rows.append({"Student": a["student_name"] or "", "Scholar ID": a["scholar_id"], "Activity": a["activity_type"], "Timestamp": a["activity_timestamp"], "Attempt": a["attempt_number"], "Grade": a["grade"], "Feedback Summary": a["summary"] or ""})
+                st.dataframe(pd.DataFrame(safe_rows), use_container_width=True, hide_index=True)
+                with st.expander("View detailed feedback for an activity"):
+                    labels=[f"{a['scholar_id']} · {a['activity_type']} · {a['activity_timestamp']}" for a in activities]
+                    selected=st.selectbox("Choose activity", range(len(labels)), format_func=lambda i: labels[i], key="mentor_activity_detail_choice")
+                    chosen=activities[selected]
+                    details=chosen["summary"] or "No summary saved."
+                    st.write(details)
+                    if chosen["activity_id"]:
+                        conn=get_db_connection()
+                        try:
+                            detail=conn.execute("SELECT feedback_json FROM student_activity_log WHERE id=?", (chosen["activity_id"],)).fetchone()
+                        finally:
+                            conn.close()
+                        if detail and detail["feedback_json"]:
+                            try:
+                                st.json(json.loads(detail["feedback_json"]))
+                            except Exception:
+                                st.text(str(detail["feedback_json"])[:12000])
+            else:
+                st.info("No recorded GD, PI or resume activity is available for your assigned mentees yet.")
+        else:
+            st.info("You have not added mentees yet. Open Assign Mentees after the administrator uploads the student master list.")
+
+    with tabs[1]:
+        sections=get_mentor_roster_sections()
+        if not sections:
+            st.warning("The student master list is not uploaded yet. Ask the administrator to upload the Excel roster in the Admin: Student Roster tab.")
+        else:
+            st.subheader("Find Mentees in the Student Master List")
+            st.caption("Search across all uploaded students by name or Scholar ID, then narrow the list by section. You can add several mentees at once.")
+            search_text = st.text_input("Search student name or Scholar ID", key="mentor_roster_search", placeholder="e.g. 24BBA001 or Aditi Sharma")
+            section_options = ["All sections"] + sections
+            selected_section = st.selectbox("Filter by section", section_options, key="mentor_roster_search_section")
+            conn=get_db_connection()
+            try:
+                if selected_section == "All sections":
+                    roster_rows=[dict(r) for r in conn.execute("SELECT scholar_id, full_name, section, extra_data FROM student_roster WHERE active=1 ORDER BY section, full_name").fetchall()]
+                else:
+                    roster_rows=[dict(r) for r in conn.execute("SELECT scholar_id, full_name, section, extra_data FROM student_roster WHERE active=1 AND section=? ORDER BY full_name", (selected_section,)).fetchall()]
+            finally:
+                conn.close()
+            needle = search_text.strip().casefold()
+            if needle:
+                roster_rows=[r for r in roster_rows if needle in str(r["scholar_id"]).casefold() or needle in str(r["full_name"]).casefold() or needle in str(r["section"]).casefold()]
+            existing={r["scholar_id"] for r in get_mentor_mentees(mentor_id)}
+            options=[r for r in roster_rows if r["scholar_id"] not in existing]
+            st.caption(f"{len(roster_rows)} student(s) match your filters; {len(options)} not yet assigned to you.")
+            if options:
+                option_by_id={r["scholar_id"]: r for r in options}
+                chosen=st.multiselect("Select mentees (Scholar ID shown for verification)", [r["scholar_id"] for r in options],
+                    format_func=lambda sid: f"{option_by_id[sid]['full_name']} — {sid} · {option_by_id[sid]['section']}", key="mentor_search_mentees")
+                if chosen:
+                    with st.expander("Preview selected student information"):
+                        for sid in chosen:
+                            student=option_by_id[sid]
+                            st.markdown(f"**{student['full_name']}** · {sid} · Section {student['section']}")
+                            try:
+                                extras=json.loads(student.get("extra_data") or "{}")
+                            except Exception:
+                                extras={}
+                            if extras:
+                                st.json(extras)
+                if st.button("Add Selected Mentees", type="primary", key="mentor_add_mentees"):
+                    count=assign_mentor_mentees(mentor_id, chosen)
+                    st.success(f"Added {count} mentee(s).")
+                    st.rerun()
+            else:
+                st.info("No unassigned students match this search. Try another name, Scholar ID or section.")
+            st.caption("Assignments are scoped to your mentor account. Students are selected only from the administrator-uploaded master list.")
+
+    with tabs[2]:
+        mentees=get_mentor_mentees(mentor_id)
+        if not mentees:
+            st.info("Add mentees first to record mentor notes.")
+        else:
+            mentees_by_id={r["scholar_id"]: r for r in mentees}
+            choice_id=st.selectbox("Mentee", list(mentees_by_id), format_func=lambda sid: f"{sid} — {mentees_by_id[sid]['full_name']} ({mentees_by_id[sid]['section']})", key="mentor_note_student")
+            choice=mentees_by_id[choice_id]
+            with st.form("mentor_note_form"):
+                note=st.text_area("Mentor observation", placeholder="Summarise strengths, concerns or progress.")
+                action=st.text_area("Agreed action points", placeholder="List the next steps for the student.")
+                follow_up=st.date_input("Follow-up date")
+                save=st.form_submit_button("Save Mentor Note", use_container_width=True)
+            if save:
+                if not note.strip():
+                    st.error("Please enter a mentor observation.")
+                elif save_mentor_note(mentor_id, choice["scholar_id"], note, action, follow_up):
+                    st.success("Mentor note saved.")
+                else:
+                    st.error("This student is not assigned to your account.")
+            conn=get_db_connection()
+            try:
+                notes=conn.execute("SELECT note, action_points, follow_up_date, created_at FROM mentor_notes WHERE mentor_id=? AND scholar_id=? ORDER BY id DESC LIMIT 50", (mentor_id, choice["scholar_id"])).fetchall()
+            finally:
+                conn.close()
+            st.subheader("Previous Notes")
+            if notes:
+                for n in notes:
+                    with st.expander(f"{n['created_at']} · Follow-up: {n['follow_up_date'] or 'Not set'}"):
+                        st.write(n["note"])
+                        if n["action_points"]:
+                            st.markdown("**Action points**")
+                            st.write(n["action_points"])
+            else:
+                st.caption("No mentor notes recorded yet.")
+
+    with tabs[3]:
+        admin_key=""
+        try:
+            admin_key=str(st.secrets.get("ADMIN_ACCESS_KEY", "") or "")
+        except Exception:
+            admin_key=""
+        if not admin_key:
+            st.warning("Roster upload is locked until the administrator configures ADMIN_ACCESS_KEY in Streamlit Secrets.")
+            st.code('ADMIN_ACCESS_KEY = "choose_a_long_random_secret"', language="toml")
+        else:
+            entered=st.text_input("Administrator access key", type="password", key="mentor_admin_access_key")
+            if entered and secrets.compare_digest(entered, admin_key):
+                st.success("Administrator access verified for this session.")
+                st.caption("Upload Excel (.xlsx) or CSV. Required columns: Scholar ID, Full Name, Section. Every additional column is retained as student information. Existing roster records and mentee assignments are preserved by Scholar ID.")
+                upload=st.file_uploader("Upload student master list (Excel or CSV)", type=["xlsx", "xls", "csv"], key="admin_student_roster_upload")
+                if upload is not None:
+                    st.info(f"Selected file: {upload.name}. Review the column headings in your master sheet before importing.")
+                    if st.button("Preview Student Master List", key="admin_roster_preview"):
+                        try:
+                            if upload.name.lower().endswith(".csv"):
+                                preview_frame=pd.read_csv(upload, dtype=str, keep_default_na=False)
+                            else:
+                                preview_frame=pd.read_excel(upload, dtype=str, keep_default_na=False)
+                            st.session_state["admin_roster_preview_frame"] = preview_frame
+                            st.session_state["admin_roster_preview_filename"] = upload.name
+                        except Exception as exc:
+                            st.error(f"Could not read the roster file: {exc}. For Excel uploads, ensure openpyxl is installed.")
+                    preview_frame=st.session_state.get("admin_roster_preview_frame")
+                    if preview_frame is not None and st.session_state.get("admin_roster_preview_filename")==upload.name:
+                        st.write(f"Preview: {len(preview_frame)} row(s), {len(preview_frame.columns)} column(s)")
+                        st.dataframe(preview_frame.head(20), use_container_width=True, hide_index=True)
+                        if st.button("Confirm Import / Update Roster", type="primary", key="admin_roster_import"):
+                            try:
+                                inserted,updated,errors=import_student_roster_dataframe(preview_frame)
+                                if errors:
+                                    for error in errors:
+                                        st.error(error)
+                                else:
+                                    st.success(f"Roster updated. New students: {inserted}; existing students updated: {updated}. Additional columns were saved with each student.")
+                                    st.session_state.pop("admin_roster_preview_frame", None)
+                                    st.session_state.pop("admin_roster_preview_filename", None)
+                                    st.rerun()
+                            except Exception as exc:
+                                st.error(f"Roster import failed: {exc}")
+                conn=get_db_connection()
+                try:
+                    roster_count=conn.execute("SELECT COUNT(*) AS n FROM student_roster WHERE active=1").fetchone()["n"]
+                finally:
+                    conn.close()
+                st.metric("Active students in master roster", roster_count)
+            elif entered:
+                st.error("Invalid administrator access key.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"Mentor: {mentor_name} · {st.session_state.get('mentor_email','')}")
+    if st.sidebar.button("Log Out", key="mentor_logout", use_container_width=True):
+        for key in ["authenticated", "user_role", "mentor_id", "mentor_name", "mentor_email", "student_id", "student_email", "first_name", "last_name", "scholar_id", "candidate_name"]:
+            st.session_state.pop(key, None)
+        st.rerun()
+
+
 def render_authentication_panel():
     # Compact, unified authentication card. Authentication/database logic is preserved;
     # only the presentation is redesigned.
@@ -2813,7 +3370,7 @@ def render_authentication_panel():
                 unsafe_allow_html=True,
             )
 
-            login_tab, signup_tab, reset_tab = st.tabs(["Student Sign In", "Create Account", "Forgot Password"])
+            login_tab, signup_tab, mentor_login_tab, mentor_signup_tab, reset_tab = st.tabs(["Student Sign In", "Create Student Account", "Mentor Sign In", "Mentor Registration", "Forgot Password"])
 
             with login_tab:
                 with st.form("student_login_form"):
@@ -2831,6 +3388,7 @@ def render_authentication_panel():
                         student = authenticate_student(normalized_email, login_password)
                         if student:
                             st.session_state["authenticated"] = True
+                            st.session_state["user_role"] = "student"
                             st.session_state["student_id"] = student["id"]
                             st.session_state["student_email"] = student["email"]
                             st.session_state["first_name"] = student["first_name"]
@@ -2843,6 +3401,48 @@ def render_authentication_panel():
                             st.rerun()
                         else:
                             st.error("Invalid email ID or password.")
+
+            with mentor_login_tab:
+                st.markdown('<div class="auth-kicker">Sign in with your official @iper.ac.in mentor account.</div>', unsafe_allow_html=True)
+                with st.form("mentor_login_form"):
+                    mentor_email_input = st.text_input("Official Email ID", placeholder="mentor@iper.ac.in", key="mentor_login_email")
+                    mentor_password_input = st.text_input("Password", type="password", key="mentor_login_password")
+                    mentor_login_submitted = st.form_submit_button("Sign In to Mentor Portal", use_container_width=True)
+                if mentor_login_submitted:
+                    normalized_mentor_email = mentor_email_input.strip().lower()
+                    if not is_valid_iper_email(normalized_mentor_email):
+                        st.error("Please use your official @iper.ac.in email ID.")
+                    elif not mentor_password_input:
+                        st.error("Please enter your password.")
+                    else:
+                        mentor = authenticate_mentor(normalized_mentor_email, mentor_password_input)
+                        if mentor:
+                            st.session_state["authenticated"] = True
+                            st.session_state["user_role"] = "mentor"
+                            st.session_state["mentor_id"] = mentor["id"]
+                            st.session_state["mentor_name"] = mentor["full_name"]
+                            st.session_state["mentor_email"] = mentor["email"]
+                            st.rerun()
+                        else:
+                            st.error("Invalid mentor email or password.")
+
+            with mentor_signup_tab:
+                st.markdown('<div class="auth-kicker">Create a mentor account using your official @iper.ac.in email. You can then select mentees from the administrator-uploaded section roster.</div>', unsafe_allow_html=True)
+                with st.form("mentor_signup_form"):
+                    mentor_full_name = st.text_input("Full Name", key="mentor_signup_name")
+                    mentor_signup_email = st.text_input("Official Email ID", placeholder="mentor@iper.ac.in", key="mentor_signup_email")
+                    mentor_signup_password = st.text_input("Create Password", type="password", key="mentor_signup_password")
+                    mentor_signup_confirm = st.text_input("Confirm Password", type="password", key="mentor_signup_confirm")
+                    mentor_signup_submitted = st.form_submit_button("Create Mentor Account", use_container_width=True)
+                if mentor_signup_submitted:
+                    if mentor_signup_password != mentor_signup_confirm:
+                        st.error("Passwords do not match.")
+                    else:
+                        ok, message = create_mentor_account(mentor_full_name, mentor_signup_email, mentor_signup_password)
+                        if ok:
+                            st.success(message)
+                        else:
+                            st.error(message)
 
             with reset_tab:
                 st.markdown('<div class="auth-kicker">Use your registered official email ID and Scholar ID to set a new password.</div>', unsafe_allow_html=True)
@@ -2932,6 +3532,12 @@ if not st.session_state["authenticated"]:
     render_authentication_panel()
     st.stop()
 
+# Mentors use a separate role-scoped portal; student navigation remains unchanged.
+if st.session_state.get("user_role") == "mentor":
+    st.markdown("**IPER PEPTECH · Mentor Portal**")
+    render_mentor_portal()
+    st.stop()
+
 # Keep the logged-in student's full name as the permanent personalized display name.
 st.session_state["candidate_name"] = st.session_state.get("first_name", "Student")
 
@@ -2980,7 +3586,7 @@ selected_nav = st.sidebar.radio(
 )
 
 if st.sidebar.button("Log Out", use_container_width=True):
-    for key in ["authenticated", "student_id", "student_email", "first_name", "last_name", "scholar_id", "candidate_name", "resume_details", "current_question"]:
+    for key in ["authenticated", "user_role", "student_id", "student_email", "first_name", "last_name", "scholar_id", "candidate_name", "resume_details", "current_question"]:
         st.session_state.pop(key, None)
     st.session_state["history"] = []
     st.rerun()
@@ -5567,6 +6173,12 @@ elif selected_nav == "Group Discussion Hub":
                                 st.session_state["uploaded_gd_topic_processed"] = video_topic.strip()
                                 st.session_state["uploaded_gd_filename_processed"] = gd_video_file.name
                                 st.session_state["uploaded_gd_speaker_map"] = {}
+                                sampled_frames, frame_sample_error = _extract_gd_visual_samples(video_temp_path)
+                                st.session_state["uploaded_gd_visual_frames"] = sampled_frames
+                                with open(audio_temp_path, "rb") as audio_cache_file:
+                                    st.session_state["uploaded_gd_audio_bytes"] = audio_cache_file.read()
+                                if frame_sample_error:
+                                    st.info(f"Body-language feedback may be unavailable: {frame_sample_error}")
                                 st.success(f"Transcript ready: {len(segments)} speech segments identified.")
                 except Exception as exc:
                     st.error(f"Could not process this GD video: {exc}")
@@ -5589,8 +6201,14 @@ elif selected_nav == "Group Discussion Hub":
                 with st.expander(f"Map {speaker_id} to a student", expanded=True):
                     name_value = st.text_input("Student full name", key=f"uploaded_gd_name_{speaker_id}", placeholder="Enter full name")
                     scholar_value = st.text_input("Scholar ID (optional for preview)", key=f"uploaded_gd_scholar_{speaker_id}", placeholder="Enter Scholar ID")
+                    visual_position = st.selectbox(
+                        "Visible position in the video (for body-language feedback)",
+                        ["Not identifiable", "Left", "Centre", "Right", "Top-left", "Top-centre", "Top-right", "Bottom-left", "Bottom-centre", "Bottom-right"],
+                        key=f"uploaded_gd_visual_position_{speaker_id}",
+                        help="Map only if you can reliably identify which visible participant corresponds to this audio speaker. Otherwise leave Not identifiable."
+                    )
                     speaker_map[speaker_id] = name_value.strip() or speaker_id
-                    speaker_records[speaker_id] = {"name": name_value.strip(), "scholar_id": scholar_value.strip().upper()}
+                    speaker_records[speaker_id] = {"name": name_value.strip(), "scholar_id": scholar_value.strip().upper(), "visual_position": visual_position}
 
             readable_transcript = _format_gd_transcript(uploaded_segments, speaker_map)
             with st.expander("Preview diarised transcript", expanded=False):
@@ -5605,6 +6223,12 @@ elif selected_nav == "Group Discussion Hub":
 
             speaker_stats = _gd_speaker_stats(uploaded_segments, speaker_map)
             st.markdown("#### Step 3 — Generate individual feedback")
+            include_nonverbal = st.checkbox(
+                "Include body-language and vocal-tone feedback (uses additional OpenAI processing)",
+                value=False,
+                key="uploaded_gd_include_nonverbal",
+                help="Body language uses a few sampled video frames. Tone uses a short audio sample per detected speaker; it is not a continuous analysis. This adds API usage."
+            )
             if st.button("🧠 Generate GD Assessment", use_container_width=True, key="generate_uploaded_gd_feedback"):
                 if len(detected_speakers) < 2:
                     st.warning("Only one distinct speaker was detected. You can still review the transcript, but please confirm the recording contains the full group discussion.")
@@ -5618,6 +6242,41 @@ elif selected_nav == "Group Discussion Hub":
                 if report_error:
                     st.error(f"Assessment could not be generated: {report_error}")
                 elif report:
+                    if include_nonverbal:
+                        audio_path_for_tone = None
+                        try:
+                            audio_bytes_for_tone = st.session_state.get("uploaded_gd_audio_bytes")
+                            if audio_bytes_for_tone:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix="_tone_source.mp3") as tone_audio_file:
+                                    tone_audio_file.write(audio_bytes_for_tone)
+                                    audio_path_for_tone = tone_audio_file.name
+                        except Exception as temp_exc:
+                            st.warning(f"Could not prepare temporary audio for tone analysis: {temp_exc}")
+                        mapped_visual_participants = [
+                            {"Name": speaker_map.get(sid, sid), "VisualPosition": speaker_records.get(sid, {}).get("visual_position", "Not identifiable")}
+                            for sid in detected_speakers
+                        ]
+                        visual_frames = st.session_state.get("uploaded_gd_visual_frames", [])
+                        if visual_frames:
+                            with st.spinner("Reviewing sampled video frames for observable body-language feedback..."):
+                                visual_report, visual_error = analyze_gd_body_language(visual_frames, mapped_visual_participants)
+                            if visual_report:
+                                report["NonVerbalAssessment"] = visual_report
+                            elif visual_error:
+                                st.warning(f"Body-language feedback was not added: {visual_error}")
+                        if audio_path_for_tone and os.path.exists(audio_path_for_tone):
+                            with st.spinner("Reviewing short audio samples for vocal-tone feedback..."):
+                                tone_report, tone_error = analyze_gd_vocal_tone(audio_path_for_tone, uploaded_segments, speaker_map)
+                            if tone_report:
+                                report["VocalToneAssessment"] = tone_report
+                            if tone_error:
+                                st.warning(f"Some tone feedback may be unavailable: {tone_error}")
+                        else:
+                            st.info("The audio sample is unavailable; vocal-tone feedback was skipped. You can re-run transcription and assessment.")
+                        for cleanup_path in (audio_path_for_tone,):
+                            if cleanup_path and os.path.exists(cleanup_path):
+                                try: os.remove(cleanup_path)
+                                except OSError: pass
                     st.session_state["uploaded_gd_report"] = report
                     st.session_state["uploaded_gd_final_speaker_map"] = speaker_map
                     st.session_state["uploaded_gd_final_speaker_records"] = speaker_records
@@ -5634,6 +6293,14 @@ elif selected_nav == "Group Discussion Hub":
                                 st.write(f"• {value}")
                         else:
                             st.write("No specific points returned.")
+                    nonverbal_group = (report.get("NonVerbalAssessment") or {}).get("GroupBodyLanguage", {}) or {}
+                    if nonverbal_group:
+                        st.markdown("### Group Body Language")
+                        for visual_label, visual_key in (("Observations", "Observations"), ("Suggestions", "Suggestions")):
+                            visual_values = nonverbal_group.get(visual_key) or []
+                            st.markdown(f"**{visual_label}**")
+                            for visual_value in visual_values:
+                                st.write(f"• {visual_value}")
 
                     st.markdown("### Individual Feedback")
                     for participant in report.get("Participants", []) or []:
@@ -5645,6 +6312,31 @@ elif selected_nav == "Group Discussion Hub":
                             st.write(f"**Analytical Thinking:** {grade_from_score(participant.get('AnalyticalThinkingScore', 0))}")
                             st.write(f"**Listening & Teamwork:** {grade_from_score(participant.get('ListeningTeamworkScore', 0))}")
                             st.write(f"**Leadership:** {grade_from_score(participant.get('LeadershipScore', 0))}")
+                            tone_by_speaker = report.get("VocalToneAssessment", {}) or {}
+                            final_records_for_feedback = st.session_state.get("uploaded_gd_final_speaker_records", {})
+                            final_map_for_feedback = st.session_state.get("uploaded_gd_final_speaker_map", {})
+                            participant_name_for_feedback = str(participant.get("Name") or "").strip()
+                            matched_speaker_for_feedback = next((sid for sid, mapped_name in final_map_for_feedback.items() if mapped_name == participant_name_for_feedback), None)
+                            if matched_speaker_for_feedback and matched_speaker_for_feedback in tone_by_speaker:
+                                tone_item = tone_by_speaker[matched_speaker_for_feedback] or {}
+                                st.markdown("**Vocal Tone & Delivery**")
+                                st.write(tone_item.get("ToneSummary", "No tone summary returned."))
+                                for tone_label, tone_key in (("What went well", "WhatWentWell"), ("To improve", "ToImprove"), ("Evidence limitations", "EvidenceLimitations")):
+                                    tone_values = tone_item.get(tone_key) or []
+                                    if tone_values:
+                                        st.markdown(f"*{tone_label}*")
+                                        for tone_value in tone_values:
+                                            st.write(f"• {tone_value}")
+                            nonverbal_participants = ((report.get("NonVerbalAssessment") or {}).get("Participants") or [])
+                            matched_visual = next((item for item in nonverbal_participants if str(item.get("Name", "")).strip() == participant_name_for_feedback), None)
+                            if matched_visual:
+                                st.markdown("**Body Language (sampled video frames)**")
+                                for visual_label, visual_key in (("Observations", "BodyLanguageObservations"), ("Suggestions", "BodyLanguageSuggestions"), ("Limitations", "EvidenceLimitations")):
+                                    visual_values = matched_visual.get(visual_key) or []
+                                    if visual_values:
+                                        st.markdown(f"*{visual_label}*")
+                                        for visual_value in visual_values:
+                                            st.write(f"• {visual_value}")
                             for label, key in (("Evidence", "Evidence"), ("Strengths", "Strengths"), ("Areas to improve", "AreasToImprove"), ("Next action plan", "NextGDActionPlan")):
                                 values = participant.get(key) or []
                                 st.markdown(f"**{label}**")
