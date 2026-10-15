@@ -1176,10 +1176,25 @@ def init_database():
         """)
 
         # Backward-compatible migration: remember which student created/hosts the GD.
-        existing_columns = [row[0] if USING_POSTGRES else row[1]
-                            for row in conn.execute("PRAGMA table_info(gd_rooms)").fetchall()]
+        # PostgresConnectionWrapper now returns a SQLite-compatible PRAGMA
+        # table_info row: column name is always at index 1. Checking index 0
+        # on PostgreSQL reads the numeric cid and can try to add an existing
+        # column again on every startup.
+        existing_columns = [row[1] for row in conn.execute(
+            "PRAGMA table_info(gd_rooms)"
+        ).fetchall()]
         if "host_scholar_id" not in existing_columns:
-            conn.execute("ALTER TABLE gd_rooms ADD COLUMN host_scholar_id TEXT")
+            try:
+                conn.execute("ALTER TABLE gd_rooms ADD COLUMN host_scholar_id TEXT")
+            except Exception:
+                # A concurrent app startup may have added it after the schema
+                # check. Suppress only if the column now exists; re-raise all
+                # unrelated migration errors.
+                refreshed_columns = [row[1] for row in conn.execute(
+                    "PRAGMA table_info(gd_rooms)"
+                ).fetchall()]
+                if "host_scholar_id" not in refreshed_columns:
+                    raise
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS gd_participants (
