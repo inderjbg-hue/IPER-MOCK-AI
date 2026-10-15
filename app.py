@@ -2831,10 +2831,21 @@ def create_mentor_account(full_name, email, password):
 
 
 def authenticate_mentor(email, password):
+    """Authenticate a mentor with normalized email matching across SQLite/PostgreSQL."""
     conn = get_db_connection()
     try:
-        row = conn.execute("SELECT * FROM mentor_accounts WHERE email=? AND active=1", (str(email or "").strip().lower(),)).fetchone()
-        if row and verify_password(password, row["password_hash"], row["password_salt"]):
+        normalized_email = str(email or "").strip().lower()
+        # Normalize both sides in SQL as a compatibility safeguard for accounts
+        # created before email normalization was consistently applied.
+        row = conn.execute(
+            "SELECT * FROM mentor_accounts WHERE LOWER(TRIM(email)) = ? AND CAST(active AS TEXT) IN ('1', 'true', 't')",
+            (normalized_email,),
+        ).fetchone()
+        if not row:
+            return None
+        stored_hash = str(row["password_hash"] or "")
+        stored_salt = str(row["password_salt"] or "")
+        if stored_hash and stored_salt and verify_password(str(password or ""), stored_hash, stored_salt):
             return dict(row)
         return None
     finally:
