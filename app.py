@@ -1237,10 +1237,31 @@ def init_database():
                 created_at TEXT NOT NULL
             )
         """)
-        gd_assessment_columns = [row[0] if USING_POSTGRES else row[1]
-                                  for row in conn.execute("PRAGMA table_info(gd_assessments)").fetchall()]
+        # SQLite PRAGMA table_info uses index 1 for the column name. The
+        # PostgreSQL compatibility wrapper deliberately mirrors that layout,
+        # so use the same index for both database backends. Using row[0] on
+        # PostgreSQL reads the numeric column id and repeatedly attempts to
+        # add duration_seconds, causing DuplicateColumn on app restart.
+        gd_assessment_columns = [
+            row[1] for row in conn.execute(
+                "PRAGMA table_info(gd_assessments)"
+            ).fetchall()
+        ]
         if "duration_seconds" not in gd_assessment_columns:
-            conn.execute("ALTER TABLE gd_assessments ADD COLUMN duration_seconds REAL DEFAULT 0")
+            try:
+                conn.execute(
+                    "ALTER TABLE gd_assessments ADD COLUMN duration_seconds REAL DEFAULT 0"
+                )
+            except Exception:
+                # Another app instance may have applied the migration between
+                # the schema check and ALTER. Ignore only if the column exists now.
+                refreshed_columns = [
+                    row[1] for row in conn.execute(
+                        "PRAGMA table_info(gd_assessments)"
+                    ).fetchall()
+                ]
+                if "duration_seconds" not in refreshed_columns:
+                    raise
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS student_profiles (
