@@ -883,8 +883,16 @@ class PostgresConnectionWrapper:
         if pragma_match:
             table_name = pragma_match.group(1).strip().strip("\"`").strip("'")
             cur = self.conn.cursor()
+            # Match SQLite PRAGMA table_info's six-column layout because legacy
+            # migrations read the column name from row[1], not row[0].
             cur.execute("""
-                SELECT column_name
+                SELECT
+                    ordinal_position - 1 AS cid,
+                    column_name AS name,
+                    data_type AS type,
+                    CASE WHEN is_nullable = 'NO' THEN 1 ELSE 0 END AS notnull,
+                    column_default AS dflt_value,
+                    0 AS pk
                 FROM information_schema.columns
                 WHERE table_schema = 'public' AND table_name = %s
                 ORDER BY ordinal_position
