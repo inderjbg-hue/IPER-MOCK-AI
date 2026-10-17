@@ -3736,6 +3736,7 @@ selected_nav = st.sidebar.radio(
     "MAIN MENU",
     [
         "Progress",
+        "My Personal Details",
         "Industry & Company Insights",
         "About Myself",
         "Resume Checker & Job Matcher", 
@@ -3768,8 +3769,71 @@ else:
 # 6. APPLICATION SECTIONS
 # ------------------------------------------------------------------------------
 
+# ACCOUNT: PERSONAL DETAILS
+if selected_nav == "My Personal Details":
+    st.title("My Personal Details")
+    st.caption("Update the personal details linked to your own student account. Your Scholar ID cannot be changed here.")
+    student_id = st.session_state.get("student_id")
+    if not student_id:
+        st.error("Please sign in again to edit your personal details.")
+    else:
+        conn = get_db_connection()
+        try:
+            account = conn.execute(
+                "SELECT first_name, last_name, email, scholar_id FROM students WHERE id = ?",
+                (student_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not account:
+            st.error("We could not find your student account. Please sign out and sign in again.")
+        else:
+            with st.form("edit_personal_details_form"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    personal_first_name = st.text_input("First Name", value=account["first_name"] or "")
+                    personal_email = st.text_input("Official Email ID", value=account["email"] or "")
+                with c2:
+                    personal_last_name = st.text_input("Last Name", value=account["last_name"] or "")
+                    st.text_input("Scholar ID (cannot be edited)", value=account["scholar_id"] or "", disabled=True)
+                save_personal = st.form_submit_button("Save Personal Details", use_container_width=True)
+            if save_personal:
+                first_clean = personal_first_name.strip()
+                last_clean = personal_last_name.strip()
+                email_clean = personal_email.strip().lower()
+                if not first_clean or not last_clean or not email_clean:
+                    st.error("First name, last name and email are required.")
+                elif not re.fullmatch(r"[A-Za-z0-9._%+-]+@iper\.ac\.in", email_clean):
+                    st.error("Please use a valid official @iper.ac.in email address.")
+                else:
+                    conn = get_db_connection()
+                    try:
+                        conn.execute(
+                            "UPDATE students SET first_name = ?, last_name = ?, email = ? WHERE id = ?",
+                            (first_clean, last_clean, email_clean, student_id),
+                        )
+                        conn.commit()
+                        st.session_state["first_name"] = first_clean
+                        st.session_state["last_name"] = last_clean
+                        st.session_state["student_email"] = email_clean
+                        st.session_state["candidate_name"] = f"{first_clean} {last_clean}".strip()
+                        st.success("Your personal details have been updated successfully.")
+                        st.rerun()
+                    except Exception as exc:
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+                        error_text = str(exc).lower()
+                        if "unique" in error_text or "duplicate" in error_text:
+                            st.error("That email address is already linked to another account. Please check it and try again.")
+                        else:
+                            st.error("We couldn't save your details right now. Please try again or contact the administrator.")
+                    finally:
+                        conn.close()
+
 # SECTION 0: PROGRESS
-if selected_nav == "Progress":
+elif selected_nav == "Progress":
     st.title("Weekly Progress")
     st.caption("A quick view of your weekly placement-practice journey, activity and next steps.")
 
