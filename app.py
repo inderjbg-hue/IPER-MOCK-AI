@@ -1216,6 +1216,84 @@ def resume_text_from_data(data):
     return "\n".join(lines).strip()
 
 
+
+def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
+    """Create a polished, ATS-friendly editable Word resume from reviewed student content."""
+    document = docx.Document()
+    section = document.sections[0]
+    section.top_margin = docx.shared.Inches(0.55)
+    section.bottom_margin = docx.shared.Inches(0.55)
+    section.left_margin = docx.shared.Inches(0.72)
+    section.right_margin = docx.shared.Inches(0.72)
+    styles = document.styles
+    normal = styles["Normal"]
+    normal.font.name = "Aptos"
+    normal.font.size = docx.shared.Pt(9.5)
+    normal.font.color.rgb = docx.shared.RGBColor(45, 55, 72)
+    normal.paragraph_format.space_after = docx.shared.Pt(3)
+    normal.paragraph_format.line_spacing = 1.04
+    for style_name, size in (("Heading 1", 11.5), ("Heading 2", 10.5)):
+        st = styles[style_name]
+        st.font.name = "Aptos Display"
+        st.font.size = docx.shared.Pt(size)
+        st.font.bold = True
+        st.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
+        st.paragraph_format.space_before = docx.shared.Pt(8)
+        st.paragraph_format.space_after = docx.shared.Pt(3)
+        st.paragraph_format.keep_with_next = True
+    name_p = document.add_paragraph()
+    name_p.alignment = 1
+    name_p.paragraph_format.space_after = docx.shared.Pt(2)
+    run = name_p.add_run((candidate_name or "Candidate").strip().upper())
+    run.bold = True
+    run.font.name = "Aptos Display"
+    run.font.size = docx.shared.Pt(21)
+    run.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
+    contacts = [x.strip() for x in (email, phone, linkedin) if x and x.strip()]
+    if contacts:
+        cp = document.add_paragraph("  |  ".join(contacts))
+        cp.alignment = 1
+        cp.paragraph_format.space_after = docx.shared.Pt(8)
+        for r in cp.runs:
+            r.font.size = docx.shared.Pt(8.5)
+            r.font.color.rgb = docx.shared.RGBColor(90, 99, 115)
+    headings = {
+        "PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE", "CAREER OBJECTIVE", "OBJECTIVE",
+        "CORE COMPETENCIES", "KEY SKILLS", "SKILLS", "TECHNICAL SKILLS", "EDUCATION",
+        "EDUCATIONAL QUALIFICATIONS", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE", "EXPERIENCE",
+        "INTERNSHIP", "INTERNSHIPS", "PROJECTS", "KEY PROJECTS", "PROJECTS & ACHIEVEMENTS",
+        "ACHIEVEMENTS", "CERTIFICATIONS", "CERTIFICATES", "POSITIONS OF RESPONSIBILITY", "LEADERSHIP",
+        "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES", "PUBLICATIONS", "RESEARCH", "PROFESSIONAL INTERESTS",
+        "INTERESTS", "LANGUAGES", "AWARDS", "VOLUNTEERING", "PROFESSIONAL AFFILIATIONS", "REFERENCES"
+    }
+    for raw_line in (resume_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        normalized = line.strip(" :#*-").upper()
+        if normalized in headings:
+            document.add_heading(normalized.title(), level=1)
+        elif normalized in {"NAME", "NAME:"}:
+            continue
+        elif line.startswith(("- ", "• ", "* ")):
+            para = document.add_paragraph(style="List Bullet")
+            para.paragraph_format.left_indent = docx.shared.Inches(0.18)
+            para.paragraph_format.first_line_indent = docx.shared.Inches(-0.12)
+            para.add_run(line[2:].strip())
+        elif line.endswith(":") and len(line) < 65:
+            document.add_heading(line.rstrip(":"), level=2)
+        else:
+            para = document.add_paragraph(line)
+            para.paragraph_format.keep_together = True
+    footer = document.sections[0].footer.paragraphs[0]
+    footer.alignment = 2
+    fr = footer.add_run("IPER PEPTECH  |  Editable Professional Resume")
+    fr.font.size = docx.shared.Pt(7.5)
+    fr.font.color.rgb = docx.shared.RGBColor(130, 130, 140)
+    out = BytesIO()
+    document.save(out)
+    return out.getvalue()
+
 def init_database():
     conn = get_db_connection()
     try:
@@ -5599,9 +5677,43 @@ Resume text:
     pending_resume_text = st.session_state.pop("pending_resume_editor_text", None)
     if pending_resume_text is not None:
         st.session_state["resume_editor_text"] = pending_resume_text
+    gen_col, gen_note_col = st.columns([1, 2])
+    with gen_col:
+        if st.button("✨ Generate Master Professional Resume", key="generate_master_professional_resume", use_container_width=True):
+            profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
+            verified_resume = st.session_state.get("resume_details") or {}
+            if not profile_context and not verified_resume:
+                st.warning("First complete About Myself or upload and verify your own resume so the builder has factual information to work with.")
+            else:
+                master_prompt = f"""You are a senior professional resume writer and ATS resume specialist for IPER PEPTECH.
+Create a polished MASTER PROFESSIONAL RESUME in plain text for a modern, editable Word document.
+Candidate full name: {account_name}
+Registered email: {st.session_state.get('student_email', '')}
+Verified resume facts (if any): {json.dumps(verified_resume, ensure_ascii=False)}
+Student's About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
+Target Job Description, if provided: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:8000]}
+Current draft, if any: {st.session_state.get('resume_editor_text', '')[:8000]}
+Rules:
+- Use relevant sections only: PROFESSIONAL SUMMARY, CORE COMPETENCIES, EDUCATION, EXPERIENCE, INTERNSHIPS, PROJECTS, TECHNICAL SKILLS, CERTIFICATIONS, ACHIEVEMENTS, LEADERSHIP & ACTIVITIES, PROFESSIONAL INTERESTS.
+- Include only sections supported by supplied facts. Never invent employers, dates, degrees, marks, projects, skills, metrics, contact details or achievements.
+- Use concise, action-oriented bullet points and professional wording while preserving facts.
+- For missing information, use clearly marked placeholders such as [ADD DATES] or [ADD ONLY IF TRUE: measurable achievement].
+- Do not repeat the candidate name as a section. Avoid tables, columns, icons, graphics, first-person pronouns and decorative symbols.
+- If a JD is provided, tailor wording honestly while keeping the resume reusable as a master version.
+Return only resume text, headings in uppercase and bullets beginning with '- '."""
+                with st.spinner("Building your master resume from your saved profile and verified information..."):
+                    master_text = get_groq_response(master_prompt)
+                if master_text and not master_text.strip().lower().startswith("error"):
+                    st.session_state["pending_resume_editor_text"] = master_text.strip().replace("```text", "").replace("```", "").strip()
+                    st.success("Master professional resume generated. Review and edit every section below before saving.")
+                    st.rerun()
+                else:
+                    st.error("The master resume could not be generated right now. Your current draft remains unchanged.")
+    with gen_note_col:
+        st.caption("Creates a clean, ATS-friendly master resume using the signed-in student's saved profile and verified resume facts. AI must not invent qualifications or experience.")
     resume_editor_text = st.text_area(
-        "Editable Resume Draft", key="resume_editor_text", height=300,
-        placeholder="Upload your own resume or use your About Myself profile, then edit your resume content here..."
+        "Editable Professional Resume Draft", key="resume_editor_text", height=360,
+        placeholder="Generate a master resume from your profile or upload and verify your own resume, then edit the content here..."
     )
     ai_edit_col, ai_edit_help_col = st.columns([1, 2])
     with ai_edit_col:
@@ -5628,59 +5740,9 @@ Target Job Description: {str(jd_text or st.session_state.get('resume_workspace_j
     with ai_edit_help_col:
         st.caption("AI can reorganise and tailor your real experience to the JD. Review every line before saving or downloading; never keep a claim that is not true.")
 
-    save_col, reset_col, download_col = st.columns(3)
-    with save_col:
-        if st.button("💾 Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
-            saved = save_resume_workspace(
-                student_id, st.session_state.get("resume_details") or {}, resume_editor_text,
-                st.session_state.get("resume_workspace_jd", jd_text), st.session_state.get("resume_source_filename", "")
-            )
-            if saved:
-                st.success("Your resume edits and Job Description have been saved to your own student account.")
-            else:
-                st.error("Could not save the workspace. Please try again or contact the administrator.")
-    with reset_col:
-        if st.button("↺ Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
-            st.session_state["resume_details"] = None
-            st.session_state["resume_editor_text"] = ""
-            st.session_state["resume_workspace_jd"] = ""
-            st.session_state["resume_source_filename"] = ""
-            st.session_state.pop("generated_resume_docx_bytes", None)
-            st.session_state.pop("last_resume_ats_result", None)
-            st.session_state["resume_upload_version"] = upload_version + 1
-            save_resume_workspace(student_id, {}, "", "", "")
-            st.rerun()
-    with download_col:
-        if st.button("📄 Create Editable DOCX", key="create_resume_docx", use_container_width=True):
-            if not resume_editor_text.strip():
-                st.warning("Please add or edit your resume content first.")
-            else:
-                doc = docx.Document()
-                doc.add_heading(account_name, 0)
-                for line in resume_editor_text.splitlines():
-                    stripped = line.strip()
-                    if not stripped:
-                        continue
-                    if stripped.upper() == stripped and len(stripped) < 70:
-                        doc.add_heading(stripped.title(), level=1)
-                    else:
-                        doc.add_paragraph(stripped)
-                out = BytesIO()
-                doc.save(out)
-                st.session_state["generated_resume_docx_bytes"] = out.getvalue()
-                st.success("Editable Word resume created. Use the download button below.")
-    if st.session_state.get("generated_resume_docx_bytes"):
-        st.download_button(
-            "Download My Editable Resume (.docx)",
-            data=st.session_state["generated_resume_docx_bytes"],
-            file_name=f"{re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'}_Resume.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
-        )
-
     st.markdown("---")
-    st.markdown("### 4. Resume Match & Improvement Review")
-    if st.button("Check Match & Review Suggestions", key="run_resume_match", use_container_width=True):
+    st.markdown("### 4. Check Match & Review Suggestions")
+    if st.button("🔎 Check Match & Review Suggestions", key="run_resume_match", use_container_width=True):
         if not st.session_state.get("resume_details"):
             st.error("Please upload and verify your own resume first.")
         elif not jd_text.strip():
@@ -5739,6 +5801,49 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
             except Exception:
                 st.error("The resume review response could not be processed. Please try again.")
                 st.code(raw_ats_response[:4000], language="text")
+
+
+    save_col, reset_col, download_col = st.columns(3)
+    with save_col:
+        if st.button("💾 Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
+            saved = save_resume_workspace(
+                student_id, st.session_state.get("resume_details") or {}, resume_editor_text,
+                st.session_state.get("resume_workspace_jd", jd_text), st.session_state.get("resume_source_filename", "")
+            )
+            if saved:
+                st.success("Your resume edits and Job Description have been saved to your own student account.")
+            else:
+                st.error("Could not save the workspace. Please try again or contact the administrator.")
+    with reset_col:
+        if st.button("↺ Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
+            st.session_state["resume_details"] = None
+            st.session_state["resume_editor_text"] = ""
+            st.session_state["resume_workspace_jd"] = ""
+            st.session_state["resume_source_filename"] = ""
+            st.session_state.pop("generated_resume_docx_bytes", None)
+            st.session_state.pop("last_resume_ats_result", None)
+            st.session_state["resume_upload_version"] = upload_version + 1
+            save_resume_workspace(student_id, {}, "", "", "")
+            st.rerun()
+    with download_col:
+        if st.button("📄 Create Professional Editable DOCX", key="create_resume_docx", use_container_width=True):
+            if not resume_editor_text.strip():
+                st.warning("Please add or edit your resume content first.")
+            else:
+                docx_email = str(st.session_state.get("student_email", "") or "").strip()
+                st.session_state["generated_resume_docx_bytes"] = build_professional_resume_docx(
+                    resume_editor_text, account_name, email=docx_email
+                )
+                st.success("Professional, editable Word resume created. Download it below and continue editing in Microsoft Word.")
+    if st.session_state.get("generated_resume_docx_bytes"):
+        st.download_button(
+            "Download My Editable Resume (.docx)",
+            data=st.session_state["generated_resume_docx_bytes"],
+            file_name=f"{re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'}_Resume.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+        )
+
 
 # SECTION 2: CAREER DEVELOPMENT
 elif selected_nav == "Career Development":
