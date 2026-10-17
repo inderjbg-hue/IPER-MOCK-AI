@@ -1218,45 +1218,60 @@ def resume_text_from_data(data):
 
 
 def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
-    """Create a polished, ATS-friendly editable Word resume from reviewed student content."""
+    """Create an editable, ATS-friendly resume in Times New Roman with requested sizing/alignment."""
     document = docx.Document()
     section = document.sections[0]
-    section.top_margin = docx.shared.Inches(0.55)
-    section.bottom_margin = docx.shared.Inches(0.55)
-    section.left_margin = docx.shared.Inches(0.72)
-    section.right_margin = docx.shared.Inches(0.72)
+    section.top_margin = docx.shared.Inches(0.65)
+    section.bottom_margin = docx.shared.Inches(0.65)
+    section.left_margin = docx.shared.Inches(0.75)
+    section.right_margin = docx.shared.Inches(0.75)
+
+    # Set the document-wide default and common styles explicitly, including East Asian font mapping.
     styles = document.styles
     normal = styles["Normal"]
-    normal.font.name = "Aptos"
-    normal.font.size = docx.shared.Pt(9.5)
-    normal.font.color.rgb = docx.shared.RGBColor(45, 55, 72)
-    normal.paragraph_format.space_after = docx.shared.Pt(3)
-    normal.paragraph_format.line_spacing = 1.04
-    for style_name, size in (("Heading 1", 11.5), ("Heading 2", 10.5)):
-        st = styles[style_name]
-        st.font.name = "Aptos Display"
-        st.font.size = docx.shared.Pt(size)
-        st.font.bold = True
-        st.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
-        st.paragraph_format.space_before = docx.shared.Pt(8)
-        st.paragraph_format.space_after = docx.shared.Pt(3)
-        st.paragraph_format.keep_with_next = True
+    normal.font.name = "Times New Roman"
+    normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+    normal.font.size = docx.shared.Pt(12)
+    normal.paragraph_format.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+    normal.paragraph_format.space_after = docx.shared.Pt(4)
+    normal.paragraph_format.line_spacing = 1.08
+
+    for style_name in ("Heading 1", "Heading 2", "Title", "Subtitle", "List Bullet"):
+        style = styles[style_name]
+        style.font.name = "Times New Roman"
+        style._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+        if style_name in ("Heading 1", "Heading 2", "Title"):
+            style.font.size = docx.shared.Pt(14)
+            style.font.bold = True
+            style.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
+            style.paragraph_format.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            style.paragraph_format.space_before = docx.shared.Pt(8)
+            style.paragraph_format.space_after = docx.shared.Pt(3)
+            style.paragraph_format.keep_with_next = True
+        else:
+            style.font.size = docx.shared.Pt(12)
+
+    # Candidate name is a restrained heading; body content remains 12 pt and justified.
     name_p = document.add_paragraph()
-    name_p.alignment = 1
-    name_p.paragraph_format.space_after = docx.shared.Pt(2)
-    run = name_p.add_run((candidate_name or "Candidate").strip().upper())
-    run.bold = True
-    run.font.name = "Aptos Display"
-    run.font.size = docx.shared.Pt(21)
-    run.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
+    name_p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
+    name_p.paragraph_format.space_after = docx.shared.Pt(3)
+    name_run = name_p.add_run((candidate_name or "Candidate").strip())
+    name_run.bold = True
+    name_run.font.name = "Times New Roman"
+    name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+    name_run.font.size = docx.shared.Pt(14)
+    name_run.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
+
     contacts = [x.strip() for x in (email, phone, linkedin) if x and x.strip()]
     if contacts:
-        cp = document.add_paragraph("  |  ".join(contacts))
-        cp.alignment = 1
-        cp.paragraph_format.space_after = docx.shared.Pt(8)
-        for r in cp.runs:
-            r.font.size = docx.shared.Pt(8.5)
-            r.font.color.rgb = docx.shared.RGBColor(90, 99, 115)
+        cp = document.add_paragraph(" | ".join(contacts))
+        cp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+        cp.paragraph_format.space_after = docx.shared.Pt(7)
+        for run in cp.runs:
+            run.font.name = "Times New Roman"
+            run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+            run.font.size = docx.shared.Pt(12)
+
     headings = {
         "PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE", "CAREER OBJECTIVE", "OBJECTIVE",
         "CORE COMPETENCIES", "KEY SKILLS", "SKILLS", "TECHNICAL SKILLS", "EDUCATION",
@@ -1264,32 +1279,60 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         "INTERNSHIP", "INTERNSHIPS", "PROJECTS", "KEY PROJECTS", "PROJECTS & ACHIEVEMENTS",
         "ACHIEVEMENTS", "CERTIFICATIONS", "CERTIFICATES", "POSITIONS OF RESPONSIBILITY", "LEADERSHIP",
         "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES", "PUBLICATIONS", "RESEARCH", "PROFESSIONAL INTERESTS",
-        "INTERESTS", "LANGUAGES", "AWARDS", "VOLUNTEERING", "PROFESSIONAL AFFILIATIONS", "REFERENCES"
+        "INTERESTS", "LANGUAGES", "AWARDS", "VOLUNTEERING", "PROFESSIONAL AFFILIATIONS", "REFERENCES",
+        "COURSEWORK", "ACADEMIC PROJECTS", "PERSONAL DETAILS", "CAREER HIGHLIGHTS"
     }
     for raw_line in (resume_text or "").splitlines():
         line = raw_line.strip()
         if not line:
             continue
-        normalized = line.strip(" :#*-").upper()
+        normalized = line.strip(" :#*-•").upper()
         if normalized in headings:
-            document.add_heading(normalized.title(), level=1)
+            p = document.add_paragraph(style="Heading 1")
+            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            p.add_run(normalized.title())
         elif normalized in {"NAME", "NAME:"}:
             continue
         elif line.startswith(("- ", "• ", "* ")):
-            para = document.add_paragraph(style="List Bullet")
-            para.paragraph_format.left_indent = docx.shared.Inches(0.18)
-            para.paragraph_format.first_line_indent = docx.shared.Inches(-0.12)
-            para.add_run(line[2:].strip())
+            p = document.add_paragraph(style="List Bullet")
+            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.paragraph_format.left_indent = docx.shared.Inches(0.22)
+            p.paragraph_format.first_line_indent = docx.shared.Inches(-0.14)
+            p.add_run(line[2:].strip())
         elif line.endswith(":") and len(line) < 65:
-            document.add_heading(line.rstrip(":"), level=2)
+            p = document.add_paragraph(style="Heading 2")
+            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            p.add_run(line.rstrip(":"))
         else:
-            para = document.add_paragraph(line)
-            para.paragraph_format.keep_together = True
-    footer = document.sections[0].footer.paragraphs[0]
-    footer.alignment = 2
-    fr = footer.add_run("IPER PEPTECH  |  Editable Professional Resume")
-    fr.font.size = docx.shared.Pt(7.5)
-    fr.font.color.rgb = docx.shared.RGBColor(130, 130, 140)
+            p = document.add_paragraph(line)
+            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.paragraph_format.keep_together = True
+
+    # Enforce font family/size and alignment on every generated body run/paragraph.
+    for paragraph_index, paragraph in enumerate(document.paragraphs):
+        if paragraph_index == 0:  # preserve the candidate name as a 14 pt centered heading
+            continue
+        if paragraph.style.name.startswith("Heading"):
+            paragraph.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            for run in paragraph.runs:
+                run.font.name = "Times New Roman"
+                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+                run.font.size = docx.shared.Pt(14)
+                run.font.bold = True
+        else:
+            paragraph.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+            for run in paragraph.runs:
+                run.font.name = "Times New Roman"
+                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+                run.font.size = docx.shared.Pt(12)
+
+    # Footer follows the same requested typeface and body size.
+    footer = section.footer.paragraphs[0]
+    footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+    fr = footer.add_run("IPER PEPTECH | Professional Resume")
+    fr.font.name = "Times New Roman"
+    fr._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+    fr.font.size = docx.shared.Pt(12)
     out = BytesIO()
     document.save(out)
     return out.getvalue()
@@ -3806,7 +3849,7 @@ with header_left:
     )
 with header_right:
     st.markdown("<div style='height:5px'></div>", unsafe_allow_html=True)
-    if st.button("👤 My Personal Details", key="top_right_personal_details", use_container_width=True):
+    if st.button(" My Personal Details", key="top_right_personal_details", use_container_width=True):
         st.session_state["main_nav"] = "My Personal Details"
         st.rerun()
 
@@ -4700,7 +4743,7 @@ elif selected_nav == "Industry & Company Insights":
             "pricing": sector_data.get("pricing", "Understand how the company creates and captures value."),
         }
 
-    st.markdown("### 🎯 Placement Intelligence — Learn Before You Face the Interview")
+    st.markdown("###  Placement Intelligence — Learn Before You Face the Interview")
     st.caption("This section is designed for IPER students: learn the basics of the sector and company first, then practise answering interview questions in your own words.")
 
     # -------------------- SECTOR LEARNING --------------------
@@ -4710,14 +4753,14 @@ elif selected_nav == "Industry & Company Insights":
     sector_data = SECTOR_LEARNING.get(selected_sector, {})
     s1, s2 = st.columns(2)
     with s1:
-        st.markdown(f"### 📌 {selected_sector}")
+        st.markdown(f"###  {selected_sector}")
         st.write(sector_data.get("what", "Understand what this sector sells, who it serves and how it makes money."))
         st.markdown("**Who are the customers?**")
         st.write(sector_data.get("customers", "Study the major B2B/B2C customer segments."))
         st.markdown("**How does the sector reach customers?**")
         st.write(sector_data.get("channels", "Study the major distribution and sales channels."))
     with s2:
-        st.markdown("### 💼 What MBA roles can you find here?")
+        st.markdown("###  What MBA roles can you find here?")
         st.write(sector_data.get("roles", "Study the functions relevant to your specialisation."))
         st.markdown("**Skills to prepare**")
         st.write(sector_data.get("skills", "Communication, analytical thinking and role-specific knowledge."))
@@ -4751,7 +4794,7 @@ elif selected_nav == "Industry & Company Insights":
     else:
         for row in filtered_rows:
             profile = company_learning_profile(row)
-            with st.expander(f"🏢 {profile['company']}  •  {profile['sector']}", expanded=False):
+            with st.expander(f" {profile['company']}  •  {profile['sector']}", expanded=False):
                 st.markdown(f"### {profile['company']}")
                 st.caption(f"IPER placement ecosystem • Sector: {profile['sector']}")
 
@@ -4779,7 +4822,7 @@ elif selected_nav == "Industry & Company Insights":
                     if IBEF_SECTOR_URLS.get(profile["sector"]):
                         st.link_button("Sector Reference ↗", IBEF_SECTOR_URLS[profile["sector"]], use_container_width=True)
 
-                st.markdown("#### 🎤 Interview Questions You Should Be Ready For")
+                st.markdown("####  Interview Questions You Should Be Ready For")
                 company_questions = [
                     f"What do you know about {profile['company']}?",
                     f"Why do you want to work with {profile['company']}?",
@@ -5192,12 +5235,12 @@ def _render_live_gd_feedback_summary(assessment, student_name, heading="### Late
 
 def _render_live_gd_voice_room(topic, student_name):
     """Live voice GD room. WebRTC is preferred; a native audio-turn fallback is provided."""
-    st.markdown("### 🎙️ IPER PEPTECH AI Voice GD Practice")
+    st.markdown("###  IPER PEPTECH AI Voice GD Practice")
     st.caption("Speak naturally. IPER PEPTECH waits for a natural pause at the end of your viewpoint, then the AI participant responds.")
 
     if not STREAMLIT_WEBRTC_AVAILABLE:
         st.warning("Live microphone streaming is not installed in this deployment yet. Use the voice-turn fallback below, or add streamlit-webrtc to requirements.txt and redeploy.")
-        voice = st.audio_input("🎙️ Record your GD contribution", key="live_gd_voice_turn")
+        voice = st.audio_input(" Record your GD contribution", key="live_gd_voice_turn")
         if voice:
             text = _transcribe_live_audio_bytes(voice.getvalue(), 16000, 1)
             if text:
@@ -5209,7 +5252,7 @@ def _render_live_gd_voice_room(topic, student_name):
                     with st.spinner("AI participant is responding..."):
                         ai_text = _live_gd_ai_turn(topic, text, 1)
                     if ai_text:
-                        st.markdown(f"**🤖 AI Participant:** {ai_text}")
+                        st.markdown(f"** AI Participant:** {ai_text}")
                         _speak_text_in_browser(ai_text)
             else:
                 st.warning("I couldn't detect clear speech. Please try again in a quiet environment.")
@@ -5334,14 +5377,14 @@ def _render_live_gd_voice_room(topic, student_name):
             st.session_state["live_gd_log"].append({"speaker": student_name, "text": text})
             st.session_state["live_gd_log"] = st.session_state["live_gd_log"][-20:]
 
-            live_text.markdown(f"**🎙️ {student_name}:** {text}")
+            live_text.markdown(f"** {student_name}:** {text}")
             if filler_count:
                 coach_text.warning(
-                    f"💡 Coach: {filler_count} filler word(s) detected. Good pause — now make your next point tighter."
+                    f" Coach: {filler_count} filler word(s) detected. Good pause — now make your next point tighter."
                 )
             else:
                 coach_text.success(
-                    "💡 Coach: Viewpoint captured. The AI participant is considering your point..."
+                    " Coach: Viewpoint captured. The AI participant is considering your point..."
                 )
 
             # Every completed student viewpoint can trigger the AI participant.
@@ -5359,7 +5402,7 @@ def _render_live_gd_voice_room(topic, student_name):
                         {"speaker": "AI Participant", "text": ai_text}
                     )
                     st.session_state["live_gd_log"] = st.session_state["live_gd_log"][-20:]
-                    st.markdown(f"**🤖 AI Participant:** {ai_text}")
+                    st.markdown(f"** AI Participant:** {ai_text}")
                     _speak_text_in_browser(ai_text)
                 elif st.session_state.get("live_gd_last_ai_error"):
                     st.warning(
@@ -5416,11 +5459,11 @@ def _render_live_gd_voice_room(topic, student_name):
                     process_completed_viewpoint(completed_audio, sample_rate, channels, utterance_elapsed)
 
     if st.session_state["live_gd_log"]:
-        with st.expander("📝 Live GD Transcript", expanded=False):
+        with st.expander(" Live GD Transcript", expanded=False):
             for item in st.session_state["live_gd_log"]:
                 st.write(f"**{item['speaker']}:** {item['text']}")
 
-    if st.session_state["live_gd_log"] and st.button("📊 Generate Final Voice GD Feedback", use_container_width=True, key="generate_live_gd_feedback"):
+    if st.session_state["live_gd_log"] and st.button(" Generate Final Voice GD Feedback", use_container_width=True, key="generate_live_gd_feedback"):
         student_lines = [
             item["text"] for item in st.session_state["live_gd_log"]
             if item.get("speaker") == student_name
@@ -5517,15 +5560,15 @@ def _render_live_gd_voice_room(topic, student_name):
                             st.write(f"• {item}")
 
             if feedback.get("OverallStrengths"):
-                st.markdown("#### 🟢 Overall strengths")
+                st.markdown("####  Overall strengths")
                 for item in feedback["OverallStrengths"]:
                     st.write(f"• {item}")
             if feedback.get("PriorityImprovements"):
-                st.markdown("#### 🟠 Priority improvements")
+                st.markdown("####  Priority improvements")
                 for item in feedback["PriorityImprovements"]:
                     st.write(f"• {item}")
             if feedback.get("NextActionPlan"):
-                st.markdown("#### 🎯 Your next GD practice plan")
+                st.markdown("####  Your next GD practice plan")
                 for item in feedback["NextActionPlan"]:
                     st.write(f"• {item}")
         else:
@@ -5679,7 +5722,7 @@ Resume text:
         st.session_state["resume_editor_text"] = pending_resume_text
     gen_col, gen_note_col = st.columns([1, 2])
     with gen_col:
-        if st.button("✨ Generate Master Professional Resume", key="generate_master_professional_resume", use_container_width=True):
+        if st.button(" Generate Master Professional Resume", key="generate_master_professional_resume", use_container_width=True):
             profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
             verified_resume = st.session_state.get("resume_details") or {}
             if not profile_context and not verified_resume:
@@ -5717,7 +5760,7 @@ Return only resume text, headings in uppercase and bullets beginning with '- '."
     )
     ai_edit_col, ai_edit_help_col = st.columns([1, 2])
     with ai_edit_col:
-        if st.button("✨ Tailor Resume to This JD", key="ai_tailor_resume_to_jd", use_container_width=True):
+        if st.button(" Tailor Resume to This JD", key="ai_tailor_resume_to_jd", use_container_width=True):
             if not st.session_state.get("resume_details"):
                 st.warning("Upload and verify your own resume first.")
             elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
@@ -5742,7 +5785,7 @@ Target Job Description: {str(jd_text or st.session_state.get('resume_workspace_j
 
     st.markdown("---")
     st.markdown("### 4. Check Match & Review Suggestions")
-    if st.button("🔎 Check Match & Review Suggestions", key="run_resume_match", use_container_width=True):
+    if st.button(" Check Match & Review Suggestions", key="run_resume_match", use_container_width=True):
         if not st.session_state.get("resume_details"):
             st.error("Please upload and verify your own resume first.")
         elif not jd_text.strip():
@@ -5805,7 +5848,7 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
 
     save_col, reset_col, download_col = st.columns(3)
     with save_col:
-        if st.button("💾 Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
+        if st.button(" Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
             saved = save_resume_workspace(
                 student_id, st.session_state.get("resume_details") or {}, resume_editor_text,
                 st.session_state.get("resume_workspace_jd", jd_text), st.session_state.get("resume_source_filename", "")
@@ -5826,7 +5869,7 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
             save_resume_workspace(student_id, {}, "", "", "")
             st.rerun()
     with download_col:
-        if st.button("📄 Create Professional Editable DOCX", key="create_resume_docx", use_container_width=True):
+        if st.button(" Create Professional Editable DOCX", key="create_resume_docx", use_container_width=True):
             if not resume_editor_text.strip():
                 st.warning("Please add or edit your resume content first.")
             else:
@@ -5866,7 +5909,7 @@ elif selected_nav == "Career Development":
     )
     if career_jd.strip():
         st.session_state["resume_workspace_jd"] = career_jd.strip()
-    if st.button("💾 Save JD for Resume Checker & Interview Preparation", key="save_career_jd_workspace", use_container_width=True):
+    if st.button(" Save JD for Resume Checker & Interview Preparation", key="save_career_jd_workspace", use_container_width=True):
         saved = save_resume_workspace(
             student_id, st.session_state.get("resume_details") or {},
             st.session_state.get("resume_editor_text", ""), career_jd.strip(),
@@ -5876,7 +5919,7 @@ elif selected_nav == "Career Development":
             st.success("Job Description saved. Resume Checker and Interview Preparation Guide will use this JD.")
         else:
             st.error("Could not save the JD workspace. Please try again.")
-    tab1, tab2 = st.tabs(["🎯 Career Objective & Power Words", "📜 Certification Necessity"])
+    tab1, tab2 = st.tabs([" Career Objective & Power Words", " Certification Necessity"])
     with tab1:
         if st.button("Generate Tailored Career Objective", use_container_width=True):
             if not st.session_state.get("resume_details") or not career_jd.strip():
@@ -6559,7 +6602,7 @@ Return ONLY valid JSON matching this exact structure:
                         dl1, dl2 = st.columns(2)
                         with dl1:
                             st.download_button(
-                                "⬇️ Download Word Feedback",
+                                "⬇ Download Word Feedback",
                                 data=word_report,
                                 file_name=f"{report_filename}.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -6569,7 +6612,7 @@ Return ONLY valid JSON matching this exact structure:
                         with dl2:
                             if pdf_report is not None:
                                 st.download_button(
-                                    "⬇️ Download PDF Feedback",
+                                    "⬇ Download PDF Feedback",
                                     data=pdf_report,
                                     file_name=f"{report_filename}.pdf",
                                     mime="application/pdf",
@@ -6614,17 +6657,17 @@ elif selected_nav == "Group Discussion Hub":
     st.caption("Prepare for the GD and practise directly with the IPER PEPTECH AI Voice GD. Your AI Voice GD feedback is saved automatically for Progress and Performance Dashboard.")
 
     gd_prep_tab, gd_practice_tab, gd_video_tab = st.tabs([
-        "📚 GD Preparation", "🎙️ AI Voice GD", "🎬 Video Assessment"
+        " GD Preparation", " AI Voice GD", " Video Assessment"
     ])
 
     with gd_prep_tab:
         prep_col1, prep_col2 = st.columns(2)
         with prep_col1:
-            st.markdown("### ✅ Do's")
+            st.markdown("###  Do's")
             for item in GD_DOS:
                 st.markdown(f"- {item}")
         with prep_col2:
-            st.markdown("### ❌ Don'ts")
+            st.markdown("###  Don'ts")
             for item in GD_DONTS:
                 st.markdown(f"- {item}")
 
@@ -6632,7 +6675,7 @@ elif selected_nav == "Group Discussion Hub":
         st.markdown("### 100+ GD Topics")
         st.caption("Search the topic bank or enter your own topic. If the topic is not in the list, IPER PEPTECH will still generate the same complete AI guidance for it.")
         gd_topic_search = st.text_input(
-            "🔎 Search or enter a GD topic",
+            " Search or enter a GD topic",
             placeholder="Example: Is artificial intelligence a threat to jobs?",
             key="gd_topic_search",
         )
@@ -6652,7 +6695,7 @@ elif selected_nav == "Group Discussion Hub":
 
     with gd_practice_tab:
         upload_topic = st.session_state.get("live_gd_topic", "")
-        st.markdown("### 🎙️ IPER PEPTECH AI Voice GD Practice")
+        st.markdown("###  IPER PEPTECH AI Voice GD Practice")
         st.caption("No video upload is required. Choose a topic, start the microphone, speak naturally and practise against an AI participant.")
         live_topic = st.text_input(
             "GD Topic",
@@ -6667,7 +6710,7 @@ elif selected_nav == "Group Discussion Hub":
         _render_live_gd_voice_room(live_topic, st.session_state.get("first_name", "Student"))
 
     with gd_video_tab:
-        st.markdown("### 🎬 Upload and Assess a Recorded Group Discussion")
+        st.markdown("###  Upload and Assess a Recorded Group Discussion")
         st.caption("Upload a recorded GD, generate a speaker-labelled transcript with OpenAI, review speaker names, and generate evidence-based individual feedback.")
         if not openai_client:
             st.warning("OpenAI API key is not configured. Add OPENAI_API_KEY in Streamlit Community Cloud → App settings → Secrets to enable video diarisation.")
@@ -6689,7 +6732,7 @@ elif selected_nav == "Group Discussion Hub":
             st.video(gd_video_file)
             st.caption(f"File: {gd_video_file.name} • {gd_video_file.size / (1024 * 1024):.1f} MB")
 
-        if st.button("🎧 Transcribe and Identify Speakers", use_container_width=True, key="run_uploaded_gd_diarization"):
+        if st.button(" Transcribe and Identify Speakers", use_container_width=True, key="run_uploaded_gd_diarization"):
             if not video_topic.strip():
                 st.error("Please enter the GD topic.")
             elif not gd_video_file:
@@ -6775,7 +6818,7 @@ elif selected_nav == "Group Discussion Hub":
                 key="uploaded_gd_include_nonverbal",
                 help="Body language uses a few sampled video frames. Tone uses a short audio sample per detected speaker; it is not a continuous analysis. This adds API usage."
             )
-            if st.button("🧠 Generate GD Assessment", use_container_width=True, key="generate_uploaded_gd_feedback"):
+            if st.button(" Generate GD Assessment", use_container_width=True, key="generate_uploaded_gd_feedback"):
                 if len(detected_speakers) < 2:
                     st.warning("Only one distinct speaker was detected. You can still review the transcript, but please confirm the recording contains the full group discussion.")
                 with st.spinner("Evaluating the group and each participant using transcript evidence..."):
@@ -6903,7 +6946,7 @@ elif selected_nav == "Group Discussion Hub":
             if saved_report:
                 st.markdown("#### Step 4 — Save individual assessments")
                 st.caption("Only participants with a confirmed Scholar ID will be saved to their student profile. Verify speaker-to-student mapping before saving.")
-                if st.button("💾 Save mapped student feedback", use_container_width=True, key="save_uploaded_gd_assessments"):
+                if st.button(" Save mapped student feedback", use_container_width=True, key="save_uploaded_gd_assessments"):
                     saved_count = 0
                     save_errors = []
                     report_participants = saved_report.get("Participants", []) or []
@@ -7100,7 +7143,7 @@ elif selected_nav == "Performance Dashboard":
                                 report_history,
                             )
                             st.download_button(
-                                "⬇️ Download Word Feedback",
+                                "⬇ Download Word Feedback",
                                 data=word_report,
                                 file_name=f"{report_base}.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -7119,7 +7162,7 @@ elif selected_nav == "Performance Dashboard":
                                     report_history,
                                 )
                                 st.download_button(
-                                    "⬇️ Download PDF Feedback",
+                                    "⬇ Download PDF Feedback",
                                     data=pdf_report,
                                     file_name=f"{report_base}.pdf",
                                     mime="application/pdf",
