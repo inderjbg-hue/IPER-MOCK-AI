@@ -5709,14 +5709,9 @@ Resume text:
     st.markdown("---")
     st.markdown("### 3. Edit your resume")
     st.caption("Review and edit your resume text before saving or downloading. Do not add skills, qualifications or achievements you do not have.")
-    if not st.session_state.get("resume_editor_text"):
-        profile_lines = []
-        for label, key in [("About Yourself", "about_yourself"), ("Education", "undergraduation"), ("Post Graduation", "post_graduation"), ("Internship", "internship"), ("Certifications", "certification_courses"), ("Activities", "activities_participated"), ("Achievements", "achievements"), ("Professional Interests", "professional_interest")]:
-            val = str(profile.get(key, "") or "").strip()
-            if val:
-                profile_lines.extend([label, val, ""])
-        if profile_lines:
-            st.session_state["resume_editor_text"] = "\n".join(profile_lines).strip()
+    # Do not treat the About Myself answer as a resume. The editor starts empty until
+    # a structured master resume is generated or the student's own resume is verified.
+    # This prevents interview-style prose from becoming the entire downloaded resume.
     pending_resume_text = st.session_state.pop("pending_resume_editor_text", None)
     if pending_resume_text is not None:
         st.session_state["resume_editor_text"] = pending_resume_text
@@ -5728,28 +5723,49 @@ Resume text:
             if not profile_context and not verified_resume:
                 st.warning("First complete About Myself or upload and verify your own resume so the builder has factual information to work with.")
             else:
-                master_prompt = f"""You are a senior professional resume writer and ATS resume specialist for IPER PEPTECH.
-Create a polished MASTER PROFESSIONAL RESUME in plain text for a modern, editable Word document.
+                master_prompt = f"""You are a senior executive resume writer and ATS resume specialist. Produce a complete, structured MASTER PROFESSIONAL RESUME, not an About Myself answer, biography, cover letter, or list of profile fields.
 Candidate full name: {account_name}
 Registered email: {st.session_state.get('student_email', '')}
-Verified resume facts (if any): {json.dumps(verified_resume, ensure_ascii=False)}
-Student's About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
+Verified resume facts (the source of truth): {json.dumps(verified_resume, ensure_ascii=False)}
+Student profile facts (use as supporting source material, not as a section to copy verbatim): {json.dumps(profile_context, ensure_ascii=False)}
 Target Job Description, if provided: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:8000]}
 Current draft, if any: {st.session_state.get('resume_editor_text', '')[:8000]}
-Rules:
-- Use relevant sections only: PROFESSIONAL SUMMARY, CORE COMPETENCIES, EDUCATION, EXPERIENCE, INTERNSHIPS, PROJECTS, TECHNICAL SKILLS, CERTIFICATIONS, ACHIEVEMENTS, LEADERSHIP & ACTIVITIES, PROFESSIONAL INTERESTS.
-- Include only sections supported by supplied facts. Never invent employers, dates, degrees, marks, projects, skills, metrics, contact details or achievements.
-- Use concise, action-oriented bullet points and professional wording while preserving facts.
-- For missing information, use clearly marked placeholders such as [ADD DATES] or [ADD ONLY IF TRUE: measurable achievement].
-- Do not repeat the candidate name as a section. Avoid tables, columns, icons, graphics, first-person pronouns and decorative symbols.
-- If a JD is provided, tailor wording honestly while keeping the resume reusable as a master version.
-Return only resume text, headings in uppercase and bullets beginning with '- '."""
+
+Write the document using this professional structure, including each section that has factual support:
+PROFESSIONAL SUMMARY
+CORE COMPETENCIES
+EDUCATION
+INTERNSHIP EXPERIENCE / PROFESSIONAL EXPERIENCE
+ACADEMIC PROJECTS
+TECHNICAL & DIGITAL SKILLS
+CERTIFICATIONS & TRAINING
+ACHIEVEMENTS
+LEADERSHIP & EXTRACURRICULAR ACTIVITIES
+PROFESSIONAL INTERESTS
+
+Requirements:
+- The Professional Summary must be a concise resume summary of 2-4 lines, not an interview answer. Never use first-person wording such as I, me, or my.
+- Education must list each degree/program, institution, and completion or expected completion year where supplied. Keep undergraduate and postgraduate entries separate.
+- Experience and internships must be separate entries with role, organisation, date/year, and 2-4 achievement/responsibility bullets where the supplied facts support them. Do not turn a short profile paragraph into a fake job history.
+- Core Competencies and Skills must be concise lists, not paragraphs. Only include skills evidenced by the supplied facts.
+- Projects, certifications, achievements, activities, and interests must each be placed under the correct heading. Do not create sections filled with 'None'. Omit unsupported sections.
+- Include only facts supported by the verified resume or profile. Never invent employers, responsibilities, dates, degrees, marks, tools, projects, metrics, achievements, or contact details.
+- Where useful facts are missing, add a short [ADD DETAILS: ...] placeholder only in the relevant section. Do not invent details to fill space.
+- Do not include explanations about how the resume was created, interview-ready text, markdown fences, horizontal rules, tables, columns, icons, emojis, decorative symbols, or a footer as resume content.
+- Use uppercase section headings and concise, professional bullets beginning with '- '. The output should be ready to format as a 1-2 page ATS-friendly resume.
+- If a JD is supplied, prioritise relevant truthful skills and experience but retain a master-resume structure.
+Return only the resume itself."""
                 with st.spinner("Building your master resume from your saved profile and verified information..."):
                     master_text = get_groq_response(master_prompt)
                 if master_text and not master_text.strip().lower().startswith("error"):
-                    st.session_state["pending_resume_editor_text"] = master_text.strip().replace("```text", "").replace("```", "").strip()
-                    st.success("Master professional resume generated. Review and edit every section below before saving.")
-                    st.rerun()
+                    cleaned_master = master_text.strip().replace("```text", "").replace("```", "").strip()
+                    required_resume_sections = ("PROFESSIONAL SUMMARY", "EDUCATION")
+                    if all(section_name in cleaned_master.upper() for section_name in required_resume_sections) and len(cleaned_master) >= 500:
+                        st.session_state["pending_resume_editor_text"] = cleaned_master
+                        st.success("Structured master resume generated. Review and edit every section before saving or downloading.")
+                        st.rerun()
+                    else:
+                        st.error("The AI response did not contain enough structured resume content. Please try Generate Master Professional Resume again; your current draft has not been replaced.")
                 else:
                     st.error("The master resume could not be generated right now. Your current draft remains unchanged.")
     with gen_note_col:
@@ -5767,7 +5783,7 @@ Return only resume text, headings in uppercase and bullets beginning with '- '."
                 st.warning("Add or upload the target Job Description first.")
             else:
                 profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
-                edit_prompt = f"""You are an ethical resume editor for an IPER Bhopal student. Rewrite and organise the student's resume for relevance to the target role. Do not invent or exaggerate any qualification, skill, employer, metric, responsibility or achievement. If a useful detail is absent, leave a clearly marked [ADD ONLY IF TRUE: ...] prompt instead of fabricating it. Use clean headings and concise bullet points. Return only plain text ready to edit in Word.
+                edit_prompt = f"""You are an ethical resume editor for an IPER Bhopal student. Rewrite the document as a complete structured professional resume tailored to the target role, not an About Myself answer. Use PROFESSIONAL SUMMARY, CORE COMPETENCIES, EDUCATION, EXPERIENCE/INTERNSHIP EXPERIENCE, PROJECTS, SKILLS, CERTIFICATIONS, ACHIEVEMENTS and ACTIVITIES as supported by facts. Do not invent or exaggerate any qualification, skill, employer, metric, responsibility or achievement. If a useful detail is absent, leave a clearly marked [ADD ONLY IF TRUE: ...] prompt instead of fabricating it. Use clean headings and concise bullet points. Return only plain text ready to edit in Word.
 Account name: {account_name}
 Verified resume data: {json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)}
 About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
