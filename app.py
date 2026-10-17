@@ -1123,6 +1123,99 @@ def save_resume_activity(student_id, scholar_id, ats_result, job_description="")
         return False
 
 
+def load_resume_workspace(student_id):
+    """Load resume and JD only for the authenticated student's own account."""
+    if not student_id:
+        return {}
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT resume_json, resume_text, job_description, source_filename, updated_at "
+            "FROM student_resume_workspace WHERE student_id = ?", (student_id,)
+        ).fetchone()
+        if not row:
+            return {}
+        try:
+            resume_data = json.loads(row["resume_json"] or "{}")
+        except Exception:
+            resume_data = {}
+        return {
+            "resume_details": resume_data if isinstance(resume_data, dict) else {},
+            "resume_text": row["resume_text"] or "",
+            "job_description": row["job_description"] or "",
+            "source_filename": row["source_filename"] or "",
+            "updated_at": row["updated_at"] or "",
+        }
+    finally:
+        conn.close()
+
+
+def save_resume_workspace(student_id, resume_details, resume_text, job_description, source_filename=""):
+    """Save the current user's resume workspace; no other student's key is accepted."""
+    if not student_id:
+        return False
+    conn = get_db_connection()
+    try:
+        conn.execute("""
+            INSERT INTO student_resume_workspace
+                (student_id, resume_json, resume_text, job_description, source_filename, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(student_id) DO UPDATE SET
+                resume_json=excluded.resume_json,
+                resume_text=excluded.resume_text,
+                job_description=excluded.job_description,
+                source_filename=excluded.source_filename,
+                updated_at=excluded.updated_at
+        """, (
+            int(student_id), json.dumps(resume_details or {}, ensure_ascii=False),
+            str(resume_text or ""), str(job_description or ""),
+            str(source_filename or ""), activity_timestamp_now()
+        ))
+        conn.commit()
+        return True
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def resume_name_matches_account(resume_name, account_name):
+    """Conservative name check to block obviously mismatched resumes."""
+    def tokens(value):
+        return [x for x in re.findall(r"[a-z]+", str(value or "").casefold()) if x not in {"mr", "mrs", "ms", "miss", "dr", "candidate"}]
+    resume_tokens = tokens(resume_name)
+    account_tokens = tokens(account_name)
+    if not resume_tokens or not account_tokens:
+        return False
+    r = set(resume_tokens)
+    a = set(account_tokens)
+    overlap = len(r & a)
+    if " ".join(resume_tokens) == " ".join(account_tokens):
+        return True
+    # Accept middle names/initials if most account-name tokens are represented.
+    return overlap >= 2 and overlap / max(1, min(len(r), len(a))) >= 0.8
+
+
+def resume_text_from_data(data):
+    """Turn parsed resume fields into a clean editable text draft."""
+    data = data if isinstance(data, dict) else {}
+    labels = [
+        ("Name", "Name"), ("Summary", "Professional Summary"),
+        ("Education", "Education"), ("Work_Experience", "Work Experience"),
+        ("Key_Skills", "Skills"), ("Projects_Achievements", "Projects & Achievements"),
+    ]
+    lines = []
+    for key, label in labels:
+        value = str(data.get(key, "") or "").strip()
+        if value:
+            lines.extend([label.upper() if key == "Name" else label, value, ""])
+    return "\n".join(lines).strip()
+
+
 def init_database():
     conn = get_db_connection()
     try:
@@ -1277,6 +1370,20 @@ def init_database():
                 professional_interest TEXT,
                 about_yourself TEXT,
                 profile_hash TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(student_id) REFERENCES students(id)
+            )
+        """)
+
+        # Per-student resume/JD workspace. This stores only the signed-in student's
+        # own resume context and job-description workspace, keyed by student ID.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS student_resume_workspace (
+                student_id INTEGER PRIMARY KEY,
+                resume_json TEXT,
+                resume_text TEXT,
+                job_description TEXT,
+                source_filename TEXT,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(student_id) REFERENCES students(id)
             )
@@ -3641,7 +3748,7 @@ selected_nav = st.sidebar.radio(
 )
 
 if st.sidebar.button("Log Out", use_container_width=True):
-    for key in ["authenticated", "user_role", "student_id", "student_email", "first_name", "last_name", "scholar_id", "candidate_name", "resume_details", "current_question"]:
+    for key in ["authenticated", "user_role", "student_id", "student_email", "first_name", "last_name", "scholar_id", "candidate_name", "resume_details", "resume_editor_text", "resume_workspace_jd", "resume_workspace_loaded_for", "resume_source_filename", "current_question"]:
         st.session_state.pop(key, None)
     st.session_state["history"] = []
     st.rerun()
@@ -4531,17 +4638,6 @@ elif selected_nav == "Industry & Company Insights":
                     with cq_cols[i % 2]:
                         st.markdown(f"**{i+1}. {question}**")
 
-                st.markdown("#### ✍️ Build Your Own Answer")
-                st.caption("Do not memorise a company description. Build a 30–45 second answer using: What the company does → who it serves → what interests you → how your skills fit.")
-                answer_prompt = st.text_area(
-                    "Your answer notes",
-                    key=f"company_answer_{row['No']}",
-                    placeholder="Example: I know that ... The company serves ... I am interested because ... My skills in ... can help ...",
-                    height=110,
-                    label_visibility="collapsed",
-                )
-                if answer_prompt.strip():
-                    st.success("Good. Now say the answer aloud in your own words and keep it specific to the company and role.")
 
 # SECTION 1: RESUME CHECKER & JOB MATCHER
 # SECTION: ABOUT MYSELF
@@ -5285,152 +5381,296 @@ def _render_live_gd_voice_room(topic, student_name):
 
 
 if selected_nav == "Resume Checker & Job Matcher":
-    st.title("Resume Checker & Job Matcher")
-    st.caption("Upload your resume and a target job description to get clarity on your match level, key strengths, and areas to polish.")
+    st.title("Resume Checker, Job Matcher & Resume Editor")
+    st.caption("Your About Myself profile, your own resume and the target Job Description work together here. Resume data is stored separately for each signed-in student.")
 
+    student_id = st.session_state.get("student_id")
+    account_name = str(st.session_state.get("candidate_name") or st.session_state.get("first_name") or "Student").strip()
+    profile = load_student_profile(student_id) if student_id else {}
+
+    # Load the signed-in student's saved workspace once per login/session.
+    loaded_for = st.session_state.get("resume_workspace_loaded_for")
+    if loaded_for != student_id:
+        saved_workspace = load_resume_workspace(student_id) if student_id else {}
+        st.session_state["resume_details"] = saved_workspace.get("resume_details") or None
+        st.session_state["resume_editor_text"] = saved_workspace.get("resume_text") or resume_text_from_data(saved_workspace.get("resume_details") or {})
+        st.session_state["resume_workspace_jd"] = saved_workspace.get("job_description", "")
+        st.session_state["resume_source_filename"] = saved_workspace.get("source_filename", "")
+        st.session_state["resume_workspace_loaded_for"] = student_id
+
+    upload_version = int(st.session_state.get("resume_upload_version", 0))
     col_res, col_jd = st.columns(2)
-
     with col_res:
-        st.subheader("1. Candidate Resume Upload")
-        ats_resume_file = st.file_uploader("Upload Resume (PDF or Word DOCX):", type=["pdf", "docx", "doc"], key="ats_res_upload")
-        
-        if ats_resume_file:
+        st.subheader("1. Upload your own resume")
+        ats_resume_file = st.file_uploader(
+            "Upload Resume (PDF or Word DOCX)", type=["pdf", "docx"],
+            key=f"ats_res_upload_{upload_version}",
+            help="Only upload your own resume. The portal checks the name extracted from the document against your student account."
+        )
+        if ats_resume_file and st.button("Read and Verify My Resume", key="parse_own_resume", use_container_width=True):
             res_raw_text = extract_text_from_file(ats_resume_file)
-            if res_raw_text and not res_raw_text.startswith("Error"):
-                parse_prompt = f"""
-                Analyze the following resume text and return STRICT JSON with exact keys:
-                {{
-                    "Name": "<Candidate Full Name>",
-                    "Education": "<Degrees, Institutions, Specializations>",
-                    "Work_Experience": "<Total years, key roles, companies>",
-                    "Key_Skills": "<Technical and functional skills>",
-                    "Projects_Achievements": "<Key projects, research, or certifications>",
-                    "Summary": "<2-3 sentence overview>"
-                }}
-                Do not include commentary or markdown wrapping outside valid JSON.
-                Resume Text:
-                {res_raw_text[:3500]}
-                """
-                parsed_raw = get_groq_response(parse_prompt)
+            if not res_raw_text or res_raw_text.startswith("Error"):
+                st.error("We could not read this resume. Please use a text-based PDF or DOCX file.")
+            else:
+                parse_prompt = f"""Extract the following resume into STRICT JSON with exact keys:
+{{"Name":"full name printed on resume","Education":"degrees, institutions, specialisations","Work_Experience":"roles, companies, responsibilities","Key_Skills":"skills actually evidenced","Projects_Achievements":"projects, achievements, certifications","Summary":"2-3 sentence factual overview"}}
+Do not invent information. If the name is not visible, return an empty Name string. Return JSON only.
+Resume text:
+{res_raw_text[:7000]}"""
+                with st.spinner("Reading your resume and verifying the name..."):
+                    parsed_raw = get_groq_response(parse_prompt)
                 try:
                     clean_json = parsed_raw.replace("```json", "").replace("```", "").strip()
                     resume_data = json.loads(clean_json)
-                    c_name = resume_data.get("Name", "Candidate")
                 except Exception:
-                    c_name = "Candidate"
-                    resume_data = {"Summary": parsed_raw, "RawText": res_raw_text[:2000]}
-                
-                st.session_state["resume_details"] = resume_data
-                st.success(f"Resume loaded successfully for **{st.session_state.get('first_name', 'Student')}**")
+                    resume_data = {"Name": "", "Summary": "", "RawText": res_raw_text[:7000]}
+                resume_name = str(resume_data.get("Name", "")).strip()
+                if not resume_name or not resume_name_matches_account(resume_name, account_name):
+                    st.session_state["resume_upload_rejected"] = {
+                        "filename": ats_resume_file.name,
+                        "resume_name": resume_name or "Name not detected",
+                    }
+                    st.session_state["resume_details"] = None
+                    st.error(
+                        f"This resume was not accepted. Account name: **{account_name}**; "
+                        f"name read from resume: **{resume_name or 'not detected'}**. "
+                        "Please upload a resume belonging to your own student account."
+                    )
+                else:
+                    # Map About Myself details into the candidate context without overwriting
+                    # facts parsed from the resume; profile fields remain clearly identified.
+                    resume_data["About_Myself_Profile"] = {
+                        key: str(profile.get(key, "") or "").strip()
+                        for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"]
+                        if str(profile.get(key, "") or "").strip()
+                    }
+                    st.session_state["resume_details"] = resume_data
+                    st.session_state["resume_editor_text"] = resume_text_from_data(resume_data)
+                    st.session_state["resume_source_filename"] = ats_resume_file.name
+                    st.session_state.pop("resume_upload_rejected", None)
+                    st.success(f"Your resume was verified and loaded for **{account_name}**.")
+
+        if st.session_state.get("resume_details"):
+            loaded_name = st.session_state["resume_details"].get("Name", "Name verified")
+            st.success(f"Active resume: {loaded_name} · {st.session_state.get('resume_source_filename', 'Saved resume')}")
+            st.caption("Only the resume saved under your own student ID is used by Resume Checker, Career Development and Interview Preparation.")
+        else:
+            st.info("Upload and verify your own resume to begin. You can still use About Myself to prepare your profile.")
 
     with col_jd:
         st.subheader("2. Target Job Description")
-        jd_input_option = st.radio("Provide Job Description via:", ["Upload File (PDF/DOCX/Image)", "Paste Text Direct"], horizontal=True)
-        
+        jd_input_option = st.radio(
+            "Provide Job Description via:", ["Upload File (PDF/DOCX/TXT)", "Paste Text Direct"],
+            horizontal=True, key="resume_jd_input_option"
+        )
         jd_text = ""
-        if jd_input_option == "Upload File (PDF/DOCX/Image)":
-            jd_file = st.file_uploader("Upload Job Description File:", type=["pdf", "docx", "doc", "png", "jpg", "jpeg"], key="ats_jd_upload")
+        if jd_input_option == "Upload File (PDF/DOCX/TXT)":
+            jd_file = st.file_uploader(
+                "Upload Job Description File", type=["pdf", "docx", "txt"],
+                key=f"ats_jd_upload_{upload_version}"
+            )
             if jd_file:
                 jd_text = extract_text_from_file(jd_file)
-                st.info(f"Loaded File: `{jd_file.name}`")
+                st.info(f"Loaded job description: {jd_file.name}")
         else:
-            jd_text = st.text_area("Paste Job Description Text Here:", height=180, placeholder="Paste requirements, job duties, and key qualifications...")
+            jd_text = st.text_area(
+                "Paste Job Description Text", height=180,
+                value=st.session_state.get("resume_workspace_jd", ""),
+                key="resume_jd_paste_text",
+                placeholder="Paste responsibilities, required skills, qualifications and role expectations..."
+            )
+        if jd_text.strip():
+            st.session_state["resume_workspace_jd"] = jd_text.strip()
+        elif st.session_state.get("resume_workspace_jd"):
+            jd_text = st.session_state["resume_workspace_jd"]
+            st.caption("Using the last saved Job Description.")
 
     st.markdown("---")
+    st.markdown("### 3. Edit your resume")
+    st.caption("Review and edit your resume text before saving or downloading. Do not add skills, qualifications or achievements you do not have.")
+    if not st.session_state.get("resume_editor_text"):
+        profile_lines = []
+        for label, key in [("About Yourself", "about_yourself"), ("Education", "undergraduation"), ("Post Graduation", "post_graduation"), ("Internship", "internship"), ("Certifications", "certification_courses"), ("Activities", "activities_participated"), ("Achievements", "achievements"), ("Professional Interests", "professional_interest")]:
+            val = str(profile.get(key, "") or "").strip()
+            if val:
+                profile_lines.extend([label, val, ""])
+        if profile_lines:
+            st.session_state["resume_editor_text"] = "\n".join(profile_lines).strip()
+    pending_resume_text = st.session_state.pop("pending_resume_editor_text", None)
+    if pending_resume_text is not None:
+        st.session_state["resume_editor_text"] = pending_resume_text
+    resume_editor_text = st.text_area(
+        "Editable Resume Draft", key="resume_editor_text", height=300,
+        placeholder="Upload your own resume or use your About Myself profile, then edit your resume content here..."
+    )
+    ai_edit_col, ai_edit_help_col = st.columns([1, 2])
+    with ai_edit_col:
+        if st.button("✨ Tailor Resume to This JD", key="ai_tailor_resume_to_jd", use_container_width=True):
+            if not st.session_state.get("resume_details"):
+                st.warning("Upload and verify your own resume first.")
+            elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
+                st.warning("Add or upload the target Job Description first.")
+            else:
+                profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
+                edit_prompt = f"""You are an ethical resume editor for an IPER Bhopal student. Rewrite and organise the student's resume for relevance to the target role. Do not invent or exaggerate any qualification, skill, employer, metric, responsibility or achievement. If a useful detail is absent, leave a clearly marked [ADD ONLY IF TRUE: ...] prompt instead of fabricating it. Use clean headings and concise bullet points. Return only plain text ready to edit in Word.
+Account name: {account_name}
+Verified resume data: {json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)}
+About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
+Current editable resume: {resume_editor_text[:9000]}
+Target Job Description: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:9000]}"""
+                with st.spinner("Tailoring your resume to the JD without adding unsupported claims..."):
+                    tailored_text = get_groq_response(edit_prompt)
+                if tailored_text and not tailored_text.strip().lower().startswith("error"):
+                    st.session_state["pending_resume_editor_text"] = tailored_text.strip().replace("```text", "").replace("```", "").strip()
+                    st.rerun()
+                else:
+                    st.error("The resume draft could not be generated. Your current draft remains unchanged.")
+    with ai_edit_help_col:
+        st.caption("AI can reorganise and tailor your real experience to the JD. Review every line before saving or downloading; never keep a claim that is not true.")
 
-    if st.button("Check Match & Review Suggestions", use_container_width=True):
-        if not ats_resume_file:
-            st.error("Please upload your candidate resume first.")
-        elif not jd_text.strip():
-            st.error("Please upload or paste a Job Description.")
-        else:
-            with st.spinner("Reviewing match and alignment..."):
-                candidate_name = st.session_state.get("first_name", "Student")
-                resume_content = json.dumps(st.session_state.get("resume_details", {}))
-                
-                ats_prompt = f"""
-                Act as a helpful Corporate Recruiter & Placement Reviewer at IPER Bhopal.
-                Evaluate the resume alignment for candidate '{candidate_name}'.
-
-                Resume Information:
-                {resume_content}
-
-                Job Description Information:
-                {jd_text}
-
-                Return ONLY valid JSON with this exact structure:
-                {{
-                    "CandidateName": "{candidate_name}",
-                    "ATSScore": <0-100 integer score>,
-                    "Category": "<MUST be exactly one of: High Match | Good Match | Needs Improvement>",
-                    "ExecutiveSummary": "<Greeting addressing {candidate_name} by name with a friendly summary of overall fit>",
-                    "Strengths": ["<Strength 1>", "<Strength 2>", "<Strength 3>"],
-                    "AreasOfImprovement": ["<Area 1>", "<Area 2>", "<Area 3>"],
-                    "RecommendedChanges": ["<Specific bullet update 1>", "<Keyword addition 2>", "<Formatting tip 3>"],
-                    "MissingKeywords": ["<Keyword 1>", "<Keyword 2>", "<Keyword 3>"]
-                }}
-                """
-                raw_ats_response = get_groq_response(ats_prompt)
-                
-                try:
-                    clean_ats = raw_ats_response.replace("```json", "").replace("```", "").strip()
-                    ats_result = json.loads(clean_ats)
-
-                    resume_saved = save_resume_activity(
-                        st.session_state.get("student_id"),
-                        st.session_state.get("scholar_id", ""),
-                        ats_result,
-                        jd_text,
-                    )
-                    if resume_saved:
-                        st.caption("This resume assessment has been added to your mentor activity history.")
+    save_col, reset_col, download_col = st.columns(3)
+    with save_col:
+        if st.button("💾 Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
+            saved = save_resume_workspace(
+                student_id, st.session_state.get("resume_details") or {}, resume_editor_text,
+                st.session_state.get("resume_workspace_jd", jd_text), st.session_state.get("resume_source_filename", "")
+            )
+            if saved:
+                st.success("Your resume edits and Job Description have been saved to your own student account.")
+            else:
+                st.error("Could not save the workspace. Please try again or contact the administrator.")
+    with reset_col:
+        if st.button("↺ Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
+            st.session_state["resume_details"] = None
+            st.session_state["resume_editor_text"] = ""
+            st.session_state["resume_workspace_jd"] = ""
+            st.session_state["resume_source_filename"] = ""
+            st.session_state.pop("generated_resume_docx_bytes", None)
+            st.session_state.pop("last_resume_ats_result", None)
+            st.session_state["resume_upload_version"] = upload_version + 1
+            save_resume_workspace(student_id, {}, "", "", "")
+            st.rerun()
+    with download_col:
+        if st.button("📄 Create Editable DOCX", key="create_resume_docx", use_container_width=True):
+            if not resume_editor_text.strip():
+                st.warning("Please add or edit your resume content first.")
+            else:
+                doc = docx.Document()
+                doc.add_heading(account_name, 0)
+                for line in resume_editor_text.splitlines():
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    if stripped.upper() == stripped and len(stripped) < 70:
+                        doc.add_heading(stripped.title(), level=1)
                     else:
-                        st.warning("The resume feedback was generated, but its activity record could not be saved. Please inform your mentor/administrator.")
-                    
-                    st.subheader(f"Resume Analysis for {candidate_name}")
-                    
-                    score = ats_result.get("ATSScore", 70)
-                    category_rating = ats_result.get("Category", "Good Match")
-                    
-                    m1, m2 = st.columns(2)
-                    with m1:
-                        st.metric("Overall Match Grade", grade_from_score(score))
-                        render_grade_slabs()
-                    with m2:
-                        st.metric("Fit Status", category_rating)
-                    
-                    st.write(ats_result.get("ExecutiveSummary", ""))
-                    st.markdown("---")
+                        doc.add_paragraph(stripped)
+                out = BytesIO()
+                doc.save(out)
+                st.session_state["generated_resume_docx_bytes"] = out.getvalue()
+                st.success("Editable Word resume created. Use the download button below.")
+    if st.session_state.get("generated_resume_docx_bytes"):
+        st.download_button(
+            "Download My Editable Resume (.docx)",
+            data=st.session_state["generated_resume_docx_bytes"],
+            file_name=f"{re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'}_Resume.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+        )
 
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.markdown("### Profile Strengths")
-                        for str_item in ats_result.get("Strengths", []):
-                            st.markdown(f"- **{str_item}**")
-                            
-                        st.markdown("### Suggested Keywords to Add")
-                        for kw in ats_result.get("MissingKeywords", []):
-                            st.markdown(f"- `{kw}`")
-                            
-                    with c2:
-                        st.markdown("### Areas to Improve")
-                        for imp in ats_result.get("AreasOfImprovement", []):
-                            st.markdown(f"- {imp}")
-                            
-                        st.markdown("### Practical Recommendations")
-                        for chg in ats_result.get("RecommendedChanges", []):
-                            st.markdown(f"- {chg}")
-
-                except Exception:
-                    st.markdown(raw_ats_response)
+    st.markdown("---")
+    st.markdown("### 4. Resume Match & Improvement Review")
+    if st.button("Check Match & Review Suggestions", key="run_resume_match", use_container_width=True):
+        if not st.session_state.get("resume_details"):
+            st.error("Please upload and verify your own resume first.")
+        elif not jd_text.strip():
+            st.error("Please upload or paste a Job Description first.")
+        else:
+            # Merge the current About Myself profile into the context each time so the
+            # resume checker uses the same profile information as the rest of the portal.
+            resume_context = dict(st.session_state.get("resume_details") or {})
+            resume_context["About_Myself_Profile"] = {
+                key: str(profile.get(key, "") or "").strip()
+                for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"]
+                if str(profile.get(key, "") or "").strip()
+            }
+            st.session_state["resume_workspace_jd"] = jd_text.strip()
+            with st.spinner("Comparing your verified resume, About Myself profile and the Job Description..."):
+                ats_prompt = f"""Act as a helpful but evidence-based placement reviewer at IPER Bhopal.
+Candidate account: {account_name}
+Verified resume: {json.dumps(resume_context, ensure_ascii=False)}
+Student's edited resume draft: {resume_editor_text[:9000]}
+Job Description: {jd_text[:9000]}
+Do not invent experience, achievements, marks or skills. Distinguish proven skills from suggestions. Return ONLY valid JSON:
+{{
+ "CandidateName":"{account_name}", "ATSScore":0, "Category":"Needs Improvement",
+ "ExecutiveSummary":"A factual summary addressed to the student",
+ "Strengths":["..."], "AreasOfImprovement":["..."],
+ "RecommendedChanges":["..."], "MissingKeywords":["..."]
+}}
+ATSScore must be an integer 0-100. Category must be exactly High Match, Good Match, or Needs Improvement."""
+                raw_ats_response = get_groq_response(ats_prompt)
+            try:
+                clean_ats = raw_ats_response.replace("```json", "").replace("```", "").strip()
+                ats_result = json.loads(clean_ats)
+                save_resume_activity(student_id, st.session_state.get("scholar_id", ""), ats_result, jd_text)
+                save_resume_workspace(student_id, resume_context, resume_editor_text, jd_text, st.session_state.get("resume_source_filename", ""))
+                st.session_state["last_resume_ats_result"] = ats_result
+                st.subheader(f"Resume Analysis for {account_name}")
+                score = ats_result.get("ATSScore", 0)
+                m1, m2 = st.columns(2)
+                with m1:
+                    st.metric("Overall Match Grade", grade_from_score(score))
+                    render_grade_slabs()
+                with m2:
+                    st.metric("Fit Status", ats_result.get("Category", "Needs Improvement"))
+                st.write(ats_result.get("ExecutiveSummary", ""))
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("#### Strengths")
+                    for item in ats_result.get("Strengths", []): st.markdown(f"- {item}")
+                    st.markdown("#### Suggested Keywords")
+                    for item in ats_result.get("MissingKeywords", []): st.markdown(f"- `{item}`")
+                with c2:
+                    st.markdown("#### Areas to Improve")
+                    for item in ats_result.get("AreasOfImprovement", []): st.markdown(f"- {item}")
+                    st.markdown("#### Practical Recommendations")
+                    for item in ats_result.get("RecommendedChanges", []): st.markdown(f"- {item}")
+            except Exception:
+                st.error("The resume review response could not be processed. Please try again.")
+                st.code(raw_ats_response[:4000], language="text")
 
 # SECTION 2: CAREER DEVELOPMENT
 elif selected_nav == "Career Development":
     st.title("Career Development")
     st.caption("Build a tailored career objective, find powerful resume words, and understand whether certifications are actually needed.")
+    student_id = st.session_state.get("student_id")
+    career_profile = load_student_profile(student_id) if student_id else {}
     if not st.session_state.get("resume_details"):
-        st.info("Upload your resume in Resume Checker & Job Matcher first.")
-    career_jd = st.text_area("Target Job Description", height=180, placeholder="Paste the target JD here...")
+        saved_career_workspace = load_resume_workspace(student_id) if student_id else {}
+        if saved_career_workspace.get("resume_details"):
+            st.session_state["resume_details"] = saved_career_workspace["resume_details"]
+            st.session_state["resume_editor_text"] = saved_career_workspace.get("resume_text", "")
+            st.session_state["resume_workspace_jd"] = saved_career_workspace.get("job_description", "")
+    if not st.session_state.get("resume_details"):
+        st.info("Upload and verify your own resume in Resume Checker & Job Matcher first. Your About Myself profile will be included automatically.")
+    career_jd = st.text_area(
+        "Target Job Description (linked to Resume Checker)", height=180,
+        value=st.session_state.get("resume_workspace_jd", ""), key="career_development_jd",
+        placeholder="Paste a JD here, or save one in Resume Checker & Job Matcher..."
+    )
+    if career_jd.strip():
+        st.session_state["resume_workspace_jd"] = career_jd.strip()
+    if st.button("💾 Save JD for Resume Checker & Interview Preparation", key="save_career_jd_workspace", use_container_width=True):
+        saved = save_resume_workspace(
+            student_id, st.session_state.get("resume_details") or {},
+            st.session_state.get("resume_editor_text", ""), career_jd.strip(),
+            st.session_state.get("resume_source_filename", "")
+        )
+        if saved:
+            st.success("Job Description saved. Resume Checker and Interview Preparation Guide will use this JD.")
+        else:
+            st.error("Could not save the JD workspace. Please try again.")
     tab1, tab2 = st.tabs(["🎯 Career Objective & Power Words", "📜 Certification Necessity"])
     with tab1:
         if st.button("Generate Tailored Career Objective", use_container_width=True):
@@ -5438,7 +5678,7 @@ elif selected_nav == "Career Development":
                 st.warning("Please upload your resume and paste the target Job Description.")
             else:
                 with st.spinner("Creating tailored objectives and power words..."):
-                    raw = generate_career_objective_and_power_words(st.session_state["resume_details"], career_jd, st.session_state.get("first_name", "Student"))
+                    raw = generate_career_objective_and_power_words({**st.session_state["resume_details"], "About_Myself_Profile": career_profile}, career_jd, st.session_state.get("first_name", "Student"))
                 try:
                     data=json.loads(raw.replace("```json","").replace("```","").strip())
                     st.markdown("### Career Objective Options")
@@ -5452,7 +5692,7 @@ elif selected_nav == "Career Development":
                 st.warning("Please upload your resume and paste the target Job Description.")
             else:
                 with st.spinner("Assessing skill gaps and certification value..."):
-                    raw=generate_certification_advice(st.session_state["resume_details"],career_jd,st.session_state.get("first_name","Student"))
+                    raw=generate_certification_advice({**st.session_state["resume_details"], "About_Myself_Profile": career_profile},career_jd,st.session_state.get("first_name","Student"))
                 try:
                     data=json.loads(raw.replace("```json","").replace("```","").strip())
                     st.metric("Certification Necessity",data.get("Necessity","Not Required")); st.write(data.get("Reason",""))
@@ -5469,7 +5709,7 @@ elif selected_nav == "Interview Preparation Guide":
     st.title("Interview Preparation Guide")
     st.caption("Prepare separately for Core, Subject and Company questions — then build answers around your own profile.")
 
-    prep_tabs = st.tabs(["Core Questions", "Subject Questions", "Company Questions", "Personalised Interview"])
+    prep_tabs = st.tabs(["Core Questions", "Subject Questions", "Company Questions", "Personalised Interview", "JD-Based Questions"])
 
     with prep_tabs[0]:
         st.markdown("### Essential Interview Questions")
@@ -5600,6 +5840,52 @@ Return ONLY valid JSON in this structure:
                     st.markdown(f"- {item}")
             except Exception:
                 st.markdown(raw)
+
+    with prep_tabs[4]:
+        st.markdown("### Generate Interview Questions from a Job Description")
+        st.caption("Use the JD saved in Resume Checker, upload a JD here, or paste the job description. Questions are tailored to the role's responsibilities and required skills.")
+        prep_jd_file = st.file_uploader("Attach Job Description (PDF, DOCX or TXT)", type=["pdf", "docx", "txt"], key="interview_prep_jd_file")
+        saved_jd = str(st.session_state.get("resume_workspace_jd", "") or "").strip()
+        if not saved_jd:
+            ws = load_resume_workspace(st.session_state.get("student_id")) if st.session_state.get("student_id") else {}
+            saved_jd = str(ws.get("job_description", "") or "").strip()
+            if saved_jd:
+                st.session_state["resume_workspace_jd"] = saved_jd
+        if saved_jd:
+            st.info("A saved Job Description is available from Resume Checker. Upload or paste a different JD below to override it for this question set.")
+        attached_jd_text = extract_text_from_file(prep_jd_file) if prep_jd_file else ""
+        jd_override = st.text_area("Paste or edit Job Description", value=attached_jd_text or saved_jd, height=200, key="interview_prep_jd_text", placeholder="Attach a JD above or paste it here...")
+        jd_question_count = st.selectbox("Number of questions", [5, 10, 15], index=1, key="interview_jd_question_count")
+        jd_question_level = st.selectbox("Question difficulty", ["Basic", "Intermediate", "Advanced", "Mixed"], index=3, key="interview_jd_question_level")
+        if st.button("Generate Questions from This JD", key="generate_interview_questions_from_jd", use_container_width=True):
+            if len(jd_override.strip()) < 80:
+                st.warning("Please attach or paste a fuller Job Description so the questions reflect the actual role.")
+            else:
+                prompt = f"""You are a strict, practical MBA placement interviewer at IPER Bhopal. Generate exactly {jd_question_count} interview questions from the supplied Job Description. Difficulty: {jd_question_level}. Cover role responsibilities, required skills, tools/technical knowledge, business judgement, behavioural examples and resume evidence where relevant. Do not invent company facts. Avoid generic duplicates. Label each question with its category and difficulty. Include a brief note after each question explaining which JD requirement it tests. Return a numbered, readable list only.
+JOB DESCRIPTION:
+{jd_override[:12000]}"""
+                with st.spinner("Generating role-specific interview questions from the JD..."):
+                    jd_questions_output = get_groq_response(prompt)
+                st.session_state["interview_jd_questions_output"] = jd_questions_output
+                st.session_state["interview_jd_questions_source"] = jd_override.strip()
+                # Keep the JD linked to Resume Checker and Career Development for this student.
+                st.session_state["resume_workspace_jd"] = jd_override.strip()
+                save_resume_workspace(
+                    st.session_state.get("student_id"), st.session_state.get("resume_details") or {},
+                    st.session_state.get("resume_editor_text", ""), jd_override.strip(),
+                    st.session_state.get("resume_source_filename", "")
+                )
+        if st.session_state.get("interview_jd_questions_output"):
+            st.markdown("#### Your JD-Based Question Set")
+            st.markdown(st.session_state["interview_jd_questions_output"])
+            st.download_button(
+                "Download JD Questions (.txt)",
+                data=st.session_state["interview_jd_questions_output"],
+                file_name="IPER_PEPTECH_JD_Interview_Questions.txt",
+                mime="text/plain",
+                key="download_interview_jd_questions",
+                use_container_width=True,
+            )
 
 # SECTION 3: INTERVIEW PRACTICE ROOM
 elif selected_nav == "Interview Practice Room":
