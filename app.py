@@ -3700,8 +3700,13 @@ if st.session_state.get("user_role") == "mentor":
     render_mentor_portal()
     st.stop()
 
-# Keep the logged-in student's full name as the permanent personalized display name.
-st.session_state["candidate_name"] = st.session_state.get("first_name", "Student")
+# Preserve the full account name when available; older registrations may have only a first name.
+st.session_state["candidate_name"] = " ".join(
+    part for part in (
+        str(st.session_state.get("first_name", "")).strip(),
+        str(st.session_state.get("last_name", "")).strip(),
+    ) if part
+) or "Student"
 
 # IPER PEPTECH is the portal's new name and is shown consistently across authenticated screens.
 st.markdown(
@@ -3714,11 +3719,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Personalized header shown throughout the logged-in student panel.
-st.markdown(
-    f"<div style='padding:8px 0 2px 0; font-size:18px; font-weight:600; color:#0F172A;'>Welcome, {st.session_state.get("first_name", "Student")}</div>",
-    unsafe_allow_html=True,
-)
+# Personalized header and quick access to account details.
+header_left, header_right = st.columns([7, 2])
+with header_left:
+    st.markdown(
+        f"<div style='padding:8px 0 2px 0; font-size:18px; font-weight:600; color:#0F172A;'>Welcome, {st.session_state.get('first_name', 'Student')}</div>",
+        unsafe_allow_html=True,
+    )
+with header_right:
+    st.markdown("<div style='height:5px'></div>", unsafe_allow_html=True)
+    if st.button("👤 My Personal Details", key="top_right_personal_details", use_container_width=True):
+        st.session_state["main_nav"] = "My Personal Details"
+        st.rerun()
 
 # ------------------------------------------------------------------------------
 # 6. SIDEBAR NAVIGATION CONTROLS
@@ -3745,7 +3757,8 @@ selected_nav = st.sidebar.radio(
         "Interview Practice Room", 
         "Group Discussion Hub",
         "Performance Dashboard"
-    ]
+    ],
+    key="main_nav"
 )
 
 if st.sidebar.button("Log Out", use_container_width=True):
@@ -5449,7 +5462,30 @@ if selected_nav == "Resume Checker & Job Matcher":
     st.caption("Your About Myself profile, your own resume and the target Job Description work together here. Resume data is stored separately for each signed-in student.")
 
     student_id = st.session_state.get("student_id")
-    account_name = str(st.session_state.get("candidate_name") or st.session_state.get("first_name") or "Student").strip()
+    # Read the current account name directly from the authenticated student's saved
+    # My Personal Details record. The login flow historically set candidate_name to
+    # first_name only, which incorrectly rejected resumes displaying the full name.
+    account_name = "Student"
+    if student_id:
+        account_conn = get_db_connection()
+        try:
+            account_record = account_conn.execute(
+                "SELECT first_name, last_name, email, scholar_id FROM students WHERE id = ?",
+                (student_id,),
+            ).fetchone()
+        finally:
+            account_conn.close()
+        if account_record:
+            account_first = str(account_record["first_name"] or "").strip()
+            account_last = str(account_record["last_name"] or "").strip()
+            account_name = " ".join(part for part in (account_first, account_last) if part) or account_first or "Student"
+            st.session_state["first_name"] = account_first
+            st.session_state["last_name"] = account_last
+            st.session_state["student_email"] = str(account_record["email"] or "").strip()
+            st.session_state["scholar_id"] = str(account_record["scholar_id"] or "").strip()
+            st.session_state["candidate_name"] = account_name
+        else:
+            account_name = " ".join(part for part in (str(st.session_state.get("first_name", "")).strip(), str(st.session_state.get("last_name", "")).strip()) if part) or "Student"
     profile = load_student_profile(student_id) if student_id else {}
 
     # Load the signed-in student's saved workspace once per login/session.
