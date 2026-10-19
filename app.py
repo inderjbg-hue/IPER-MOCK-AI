@@ -2682,7 +2682,7 @@ For each participant, use their supplied visual position only if clearly visible
 
 
 def analyze_gd_vocal_tone(audio_path, segments, speaker_map):
-    """Assess a short representative utterance per speaker; avoid processing the entire recording again."""
+    """Assess a short representative utterance per speaker with the current GPT Audio model; avoid processing the entire recording again."""
     if not openai_client:
         return {}, "OPENAI_API_KEY is not configured; vocal-tone analysis is unavailable."
     results = {}
@@ -2707,7 +2707,7 @@ def analyze_gd_vocal_tone(audio_path, segments, speaker_map):
             with open(clip_path, "rb") as audio_file:
                 audio_b64 = base64.b64encode(audio_file.read()).decode("ascii")
             response = openai_client.chat.completions.create(
-                model="gpt-4o-audio-preview",
+                model="gpt-audio-1.5",
                 modalities=["text"],
                 messages=[{"role": "user", "content": [
                     {"type": "text", "text": "Assess only audible vocal delivery in this short speech sample for a student GD. Return valid JSON with keys ToneSummary (string), WhatWentWell (array of strings), ToImprove (array of strings), and EvidenceLimitations (array of strings). Comment on audibility, steadiness, pace, variation, projection and pauses where supported. Do not infer emotions, personality or competence; do not judge accent as wrong. If sample is too short/noisy, state that."},
