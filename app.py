@@ -2656,16 +2656,14 @@ def analyze_gd_body_language(frames, participants):
         return None, "OPENAI_API_KEY is not configured; body-language analysis is unavailable."
     if not frames:
         return None, "No usable sampled video frames are available for body-language feedback."
-    participant_context = [{
-        "Name": p.get("Name", "Participant"),
-        "VisualPosition": p.get("VisualPosition", "Not mapped"),
-    } for p in participants]
+    participant_context = [{"Name": p.get("Name", "Participant")} for p in participants]
     prompt = f"""You are evaluating visible non-verbal communication in a recorded student group discussion.
 Review only the supplied sampled video frames, not assumptions about personality or emotion.
-Participants and user-confirmed visual positions: {json.dumps(participant_context, ensure_ascii=False)}
+Participants to consider: {json.dumps(participant_context, ensure_ascii=False)}
+The supplied frames are sparse samples, not continuous video. Do not assume that a visible person can be linked to an audio speaker unless the frames clearly support that match. If an individual cannot be reliably identified, provide group-level observations and explicitly mark individual feedback as unavailable rather than guessing.
 Return valid JSON only with this shape:
 {{"GroupBodyLanguage": {{"Observations": [], "Suggestions": []}}, "Participants": [{{"Name":"", "BodyLanguageObservations": [], "BodyLanguageSuggestions": [], "EvidenceLimitations": []}}]}}
-For each participant, use their supplied visual position only if clearly visible and consistently identifiable across the sampled frames. If the position cannot be reliably matched, say that individual body-language feedback is unavailable rather than guessing. Focus on observable posture, orientation toward the group, visible engagement, turn-taking signals, and distracting movements only when clearly evidenced. Do not infer intelligence, honesty, confidence, personality, or emotions from appearance. Do not penalize disability, cultural differences, clothing, or physical characteristics. A few frames cannot establish continuous behaviour; state that limitation. Provide practical, respectful suggestions."""
+Focus on observable posture, orientation toward the group, visible engagement, turn-taking signals, and distracting movements only when clearly evidenced. Do not infer intelligence, honesty, confidence, personality, or emotions from appearance. Do not penalize disability, cultural differences, clothing, or physical characteristics. State limitations caused by sparse frames. Provide practical, respectful suggestions."""
     content = [{"type": "text", "text": prompt}]
     content.extend([{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + image_data, "detail": "low"}} for image_data in frames])
     try:
@@ -6860,14 +6858,8 @@ elif selected_nav == "Group Discussion Hub":
                 with st.expander(f"Map {speaker_id} to a student", expanded=True):
                     name_value = st.text_input("Student full name", key=f"uploaded_gd_name_{speaker_id}", placeholder="Enter full name")
                     scholar_value = st.text_input("Scholar ID (optional for preview)", key=f"uploaded_gd_scholar_{speaker_id}", placeholder="Enter Scholar ID")
-                    visual_position = st.selectbox(
-                        "Visible position in the video (for body-language feedback)",
-                        ["Not identifiable", "Left", "Centre", "Right", "Top-left", "Top-centre", "Top-right", "Bottom-left", "Bottom-centre", "Bottom-right"],
-                        key=f"uploaded_gd_visual_position_{speaker_id}",
-                        help="Map only if you can reliably identify which visible participant corresponds to this audio speaker. Otherwise leave Not identifiable."
-                    )
                     speaker_map[speaker_id] = name_value.strip() or speaker_id
-                    speaker_records[speaker_id] = {"name": name_value.strip(), "scholar_id": scholar_value.strip().upper(), "visual_position": visual_position}
+                    speaker_records[speaker_id] = {"name": name_value.strip(), "scholar_id": scholar_value.strip().upper()}
 
             readable_transcript = _format_gd_transcript(uploaded_segments, speaker_map)
             with st.expander("Preview diarised transcript", expanded=False):
@@ -6912,7 +6904,7 @@ elif selected_nav == "Group Discussion Hub":
                         except Exception as temp_exc:
                             st.warning(f"Could not prepare temporary audio for tone analysis: {temp_exc}")
                         mapped_visual_participants = [
-                            {"Name": speaker_map.get(sid, sid), "VisualPosition": speaker_records.get(sid, {}).get("visual_position", "Not identifiable")}
+                            {"Name": speaker_map.get(sid, sid)}
                             for sid in detected_speakers
                         ]
                         visual_frames = st.session_state.get("uploaded_gd_visual_frames", [])
@@ -7065,10 +7057,10 @@ elif selected_nav == "Group Discussion Hub":
 
 elif selected_nav == "Performance Dashboard":
     st.title("Performance Dashboard")
-    st.caption("Review your previous interview practice attempts, read the subjective feedback from each performance, and download mentor-ready reports.")
+    st.caption("Review your previous interview and group discussion attempts, read the feedback from each performance, and download mentor-ready reports.")
 
     history = st.session_state.get("history", [])
-    dashboard_gd_assessments = get_ai_voice_gd_assessments(st.session_state.get("scholar_id", "")) if st.session_state.get("scholar_id") else []
+    dashboard_gd_assessments = get_gd_video_assessments(st.session_state.get("scholar_id", "")) if st.session_state.get("scholar_id") else []
 
     if not history and not dashboard_gd_assessments:
         st.info("No practice attempts or GD assessments recorded yet. Complete an interview or GD practice session to see your performance here.")
@@ -7254,18 +7246,18 @@ elif selected_nav == "Performance Dashboard":
             ) or {}
             gd_latest_score = float(gd_latest_feedback.get("OverallScore", 0) or 0)
 
-            st.markdown("### AI Voice GD Practice Summary")
+            st.markdown("### Group Discussion Practice Summary")
             gd_metric_cols = st.columns(3)
             gd_metric_cols[0].metric("GD Sessions", gd_total_sessions)
             gd_metric_cols[1].metric("Total GD Practice Minutes", f"{gd_total_minutes:.1f}")
             gd_metric_cols[2].metric("Latest GD Grade", grade_from_score(gd_latest_score) if gd_latest_feedback else "—")
 
-            st.markdown("### Group Discussion Performance")
+            st.markdown("### Group Discussion Feedback")
             latest_gd = dashboard_gd_assessments[0]
             student_name = st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))
             _render_live_gd_feedback_summary(latest_gd, student_name, heading="#### Latest GD Feedback")
 
-            st.markdown("#### GD Feedback History")
+            st.markdown("#### GD Feedback History (AI Voice and Uploaded Video) ")
             for gd_index, gd_item in enumerate(dashboard_gd_assessments[:10], 1):
                 gd_feedback = _live_gd_report_for_student(gd_item, student_name)
                 if gd_feedback:
