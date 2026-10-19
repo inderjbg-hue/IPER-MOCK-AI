@@ -5619,7 +5619,46 @@ if selected_nav == "Resume Checker & Job Matcher":
         st.session_state["resume_source_filename"] = saved_workspace.get("source_filename", "")
         st.session_state["resume_workspace_loaded_for"] = student_id
 
+    # Apply reset requests BEFORE any widgets using these session-state keys are created.
+    # Streamlit raises StreamlitAPIException if a widget key is assigned after that widget
+    # has already been instantiated during the same run.
+    if st.session_state.pop("pending_reset_resume_workspace", False):
+        st.session_state["resume_details"] = None
+        st.session_state["resume_editor_text"] = ""
+        st.session_state["resume_source_filename"] = ""
+        st.session_state["resume_workspace_jd"] = ""
+        st.session_state["resume_upload_version"] = int(st.session_state.get("resume_upload_version", 0)) + 1
+        st.session_state["resume_jd_upload_version"] = int(st.session_state.get("resume_jd_upload_version", 0)) + 1
+        st.session_state["resume_jd_input_option"] = "Upload File (PDF/DOCX/TXT)"
+        st.session_state["resume_jd_paste_version"] = int(st.session_state.get("resume_jd_paste_version", 0)) + 1
+        st.session_state.pop("generated_resume_docx_bytes", None)
+        st.session_state.pop("last_resume_ats_result", None)
+        st.session_state.pop("resume_upload_rejected", None)
+        save_resume_workspace(student_id, {}, "", "", "")
+    if st.session_state.pop("pending_reset_resume_only", False):
+        st.session_state["resume_details"] = None
+        st.session_state["resume_editor_text"] = ""
+        st.session_state["resume_source_filename"] = ""
+        st.session_state["resume_upload_version"] = int(st.session_state.get("resume_upload_version", 0)) + 1
+        st.session_state.pop("generated_resume_docx_bytes", None)
+        st.session_state.pop("last_resume_ats_result", None)
+        save_resume_workspace(
+            student_id, {}, "", st.session_state.get("resume_workspace_jd", ""), ""
+        )
+    if st.session_state.pop("pending_reset_jd_only", False):
+        st.session_state["resume_workspace_jd"] = ""
+        st.session_state["resume_jd_upload_version"] = int(st.session_state.get("resume_jd_upload_version", 0)) + 1
+        st.session_state["resume_jd_paste_version"] = int(st.session_state.get("resume_jd_paste_version", 0)) + 1
+        st.session_state["resume_jd_input_option"] = "Upload File (PDF/DOCX/TXT)"
+        save_resume_workspace(
+            student_id, st.session_state.get("resume_details") or {},
+            st.session_state.get("resume_editor_text", ""), "",
+            st.session_state.get("resume_source_filename", "")
+        )
+
     upload_version = int(st.session_state.get("resume_upload_version", 0))
+    jd_upload_version = int(st.session_state.get("resume_jd_upload_version", 0))
+    jd_paste_version = int(st.session_state.get("resume_jd_paste_version", 0))
     col_res, col_jd = st.columns(2)
     with col_res:
         st.subheader("1. Upload your own resume")
@@ -5688,7 +5727,7 @@ Resume text:
         if jd_input_option == "Upload File (PDF/DOCX/TXT)":
             jd_file = st.file_uploader(
                 "Upload Job Description File", type=["pdf", "docx", "txt"],
-                key=f"ats_jd_upload_{upload_version}"
+                key=f"ats_jd_upload_{jd_upload_version}"
             )
             if jd_file:
                 jd_text = extract_text_from_file(jd_file)
@@ -5697,7 +5736,7 @@ Resume text:
             jd_text = st.text_area(
                 "Paste Job Description Text", height=180,
                 value=st.session_state.get("resume_workspace_jd", ""),
-                key="resume_jd_paste_text",
+                key=f"resume_jd_paste_text_{jd_paste_version}",
                 placeholder="Paste responsibilities, required skills, qualifications and role expectations..."
             )
         if jd_text.strip():
@@ -5862,7 +5901,7 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
                 st.code(raw_ats_response[:4000], language="text")
 
 
-    save_col, reset_col, download_col = st.columns(3)
+    save_col, reset_col, reset_jd_col, download_col = st.columns(4)
     with save_col:
         if st.button(" Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
             saved = save_resume_workspace(
@@ -5874,15 +5913,12 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
             else:
                 st.error("Could not save the workspace. Please try again or contact the administrator.")
     with reset_col:
-        if st.button("↺ Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
-            st.session_state["resume_details"] = None
-            st.session_state["resume_editor_text"] = ""
-            st.session_state["resume_workspace_jd"] = ""
-            st.session_state["resume_source_filename"] = ""
-            st.session_state.pop("generated_resume_docx_bytes", None)
-            st.session_state.pop("last_resume_ats_result", None)
-            st.session_state["resume_upload_version"] = upload_version + 1
-            save_resume_workspace(student_id, {}, "", "", "")
+        if st.button("Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
+            st.session_state["pending_reset_resume_workspace"] = True
+            st.rerun()
+    with reset_jd_col:
+        if st.button("Reset Uploaded JD", key="reset_resume_jd", use_container_width=True):
+            st.session_state["pending_reset_jd_only"] = True
             st.rerun()
     with download_col:
         if st.button(" Create Professional Editable DOCX", key="create_resume_docx", use_container_width=True):
