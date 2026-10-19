@@ -816,6 +816,24 @@ DATABASE_URL = (
     os.getenv("DATABASE_URL", "").strip()
     or os.getenv("POSTGRES_URL", "").strip()
 )
+
+# Compact grade cards and improve readability of long feedback sections.
+st.markdown(
+    """
+    <style>
+    div[data-testid="stMetric"] { padding: 0.35rem 0.55rem; }
+    div[data-testid="stMetricLabel"] { font-size: 0.78rem !important; line-height: 1.2 !important; }
+    div[data-testid="stMetricValue"] { font-size: 1.25rem !important; line-height: 1.25 !important; }
+    div[data-testid="stMetricDelta"] { font-size: 0.75rem !important; }
+    div[data-testid="stMarkdownContainer"] p, div[data-testid="stMarkdownContainer"] li {
+        font-size: 0.92rem; line-height: 1.48; overflow-wrap: anywhere;
+    }
+    div[data-testid="stAlert"] { font-size: 0.9rem; line-height: 1.45; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 if not DATABASE_URL:
     try:
         DATABASE_URL = str(st.secrets.get("DATABASE_URL", "") or "").strip()
@@ -2952,7 +2970,7 @@ def render_inbuilt_gd_room(room_code, student, is_host=False, started_at=None):
     </div>
     """, unsafe_allow_html=True)
 
-    st.link_button("↗ Open IPER PEPTECH Virtual GD Room", room_url, use_container_width=True)
+    st.link_button(" Open IPER PEPTECH Virtual GD Room", room_url, use_container_width=True)
     st.caption("The secure room opens in a new browser tab so the camera and microphone can be granted directly to the IPER video service. Your name and Scholar ID are taken from your logged-in profile.")
 
     # Also provide an embedded view for browsers that allow camera/microphone access
@@ -3869,15 +3887,15 @@ selected_nav = st.sidebar.radio(
     "MAIN MENU",
     [
         "Progress",
-        "My Personal Details",
         "Industry & Company Insights",
         "About Myself",
-        "Resume Checker & Job Matcher", 
+        "Resume Checker & Job Matcher",
         "Career Development",
-        "Interview Preparation Guide", 
-        "Interview Practice Room", 
+        "Interview Preparation Guide",
+        "Interview Practice Room",
         "Group Discussion Hub",
-        "Performance Dashboard"
+        "Performance Dashboard",
+        "My Personal Details"
     ],
     key="main_nav"
 )
@@ -4781,7 +4799,7 @@ elif selected_nav == "Industry & Company Insights":
             st.info(question)
 
     if IBEF_SECTOR_URLS.get(selected_sector):
-        st.link_button("Read the IBEF Sector Reference ↗", IBEF_SECTOR_URLS[selected_sector])
+        st.link_button("Read the IBEF Sector Reference ", IBEF_SECTOR_URLS[selected_sector])
 
     st.markdown("---")
 
@@ -4818,9 +4836,9 @@ elif selected_nav == "Industry & Company Insights":
                     st.write(profile["pricing"])
                     st.markdown("#### Official sources")
                     if row.get("Website"):
-                        st.link_button("Official Website ↗", row["Website"], use_container_width=True)
+                        st.link_button("Official Website ", row["Website"], use_container_width=True)
                     if IBEF_SECTOR_URLS.get(profile["sector"]):
-                        st.link_button("Sector Reference ↗", IBEF_SECTOR_URLS[profile["sector"]], use_container_width=True)
+                        st.link_button("Sector Reference ", IBEF_SECTOR_URLS[profile["sector"]], use_container_width=True)
 
                 st.markdown("####  Interview Questions You Should Be Ready For")
                 company_questions = [
@@ -6654,7 +6672,7 @@ Return ONLY valid JSON matching this exact structure:
                         dl1, dl2 = st.columns(2)
                         with dl1:
                             st.download_button(
-                                "⬇ Download Word Feedback",
+                                " Download Word Feedback",
                                 data=word_report,
                                 file_name=f"{report_filename}.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -6664,7 +6682,7 @@ Return ONLY valid JSON matching this exact structure:
                         with dl2:
                             if pdf_report is not None:
                                 st.download_button(
-                                    "⬇ Download PDF Feedback",
+                                    " Download PDF Feedback",
                                     data=pdf_report,
                                     file_name=f"{report_filename}.pdf",
                                     mime="application/pdf",
@@ -7195,7 +7213,7 @@ elif selected_nav == "Performance Dashboard":
                                 report_history,
                             )
                             st.download_button(
-                                "⬇ Download Word Feedback",
+                                " Download Word Feedback",
                                 data=word_report,
                                 file_name=f"{report_base}.docx",
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -7214,7 +7232,7 @@ elif selected_nav == "Performance Dashboard":
                                     report_history,
                                 )
                                 st.download_button(
-                                    "⬇ Download PDF Feedback",
+                                    " Download PDF Feedback",
                                     data=pdf_report,
                                     file_name=f"{report_base}.pdf",
                                     mime="application/pdf",
