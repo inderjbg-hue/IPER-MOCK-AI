@@ -273,23 +273,68 @@ if "candidate_name" not in st.session_state:
     st.session_state["candidate_name"] = "Candidate"
 
 def extract_text_from_file(file_obj):
+    """Extract readable text from supported uploads, including DOCX tables and headers."""
     if file_obj is None:
         return ""
-    
-    filename = file_obj.name.lower()
+    filename = str(getattr(file_obj, "name", "") or "").lower()
     try:
+        # Streamlit UploadedFile is file-like; rewind before parsing so a prior read
+        # cannot leave the parser at EOF.
+        try:
+            file_obj.seek(0)
+        except Exception:
+            pass
         if filename.endswith(".pdf"):
             reader = pypdf.PdfReader(file_obj)
-            return "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-        elif filename.endswith(".docx") or filename.endswith(".doc"):
-            doc = docx.Document(file_obj)
-            return "\n".join([para.text for para in doc.paragraphs])
+            chunks = []
+            for page in reader.pages:
+                page_text = page.extract_text() or ""
+                if page_text.strip():
+                    chunks.append(page_text)
+            return "\n".join(chunks).strip()
+        elif filename.endswith(".docx"):
+            document = docx.Document(file_obj)
+            chunks = [para.text.strip() for para in document.paragraphs if para.text.strip()]
+            # Many CV templates place the candidate name and contact details in tables.
+            for table in document.tables:
+                for row in table.rows:
+                    cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if cells:
+                        chunks.append(" | ".join(cells))
+            for section in document.sections:
+                for area in (section.header, section.footer):
+                    for para in area.paragraphs:
+                        if para.text.strip():
+                            chunks.append(para.text.strip())
+                    for table in area.tables:
+                        for row in table.rows:
+                            cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                            if cells:
+                                chunks.append(" | ".join(cells))
+            return "\n".join(chunks).strip()
+        elif filename.endswith(".doc"):
+            return "Error extracting content from file: legacy .doc is not supported; save it as .docx or PDF."
         elif filename.endswith((".png", ".jpg", ".jpeg")):
             return f"[Uploaded Image File: {file_obj.name}]"
         else:
-            return file_obj.read().decode("utf-8", errors="ignore")
+            raw = file_obj.read()
+            if isinstance(raw, bytes):
+                return raw.decode("utf-8-sig", errors="ignore").strip()
+            return str(raw).strip()
     except Exception as e:
         return f"Error extracting content from file: {str(e)}"
+
+
+def account_name_appears_in_resume(resume_text, account_name):
+    """Return true only when the complete account name appears in extracted resume text."""
+    def normalise(value):
+        return " ".join(re.findall(r"[a-z]+", str(value or "").casefold()))
+    resume_norm = normalise(resume_text)
+    account_norm = normalise(account_name)
+    if not account_norm or len(account_norm.split()) < 2:
+        return False
+    # Exact contiguous full-name match avoids relying exclusively on an LLM's JSON extraction.
+    return bool(re.search(r"(?<![a-z])" + re.escape(account_norm) + r"(?![a-z])", resume_norm))
 
 def _extract_speech_only_wav(audio_path):
     """Use aggressive WebRTC VAD to keep likely human-speech frames and reject music/noise."""
@@ -5929,9 +5974,12 @@ if selected_nav == "Resume Checker & Job Matcher":
         )
         if ats_resume_file and st.button("Read and Verify My Resume", key="parse_own_resume", use_container_width=True):
             res_raw_text = extract_text_from_file(ats_resume_file)
-            if not res_raw_text or res_raw_text.startswith("Error"):
-                st.error("We could not read this resume. Please use a text-based PDF or DOCX file.")
+            if not res_raw_text or res_raw_text.startswith("Error") or res_raw_text.startswith("[Uploaded Image File:"):
+                st.error("We could not read text from this resume. Please use a text-based PDF or DOCX file. Scanned/image-only PDFs need OCR or should be saved as a searchable PDF.")
+            elif len(res_raw_text.strip()) < 40:
+                st.error("The resume file contains too little extractable text. Please check the file or upload a searchable PDF/DOCX version.")
             else:
+                st.caption(f"Extracted {len(res_raw_text):,} characters from {ats_resume_file.name}.")
                 parse_prompt = f"""Extract the following resume into STRICT JSON with exact keys:
 {{"Name":"full name printed on resume","Education":"degrees, institutions, specialisations","Work_Experience":"roles, companies, responsibilities","Key_Skills":"skills actually evidenced","Projects_Achievements":"projects, achievements, certifications","Summary":"2-3 sentence factual overview"}}
 Do not invent information. If the name is not visible, return an empty Name string. Return JSON only.
@@ -5945,16 +5993,29 @@ Resume text:
                 except Exception:
                     resume_data = {"Name": "", "Summary": "", "RawText": res_raw_text[:7000]}
                 resume_name = str(resume_data.get("Name", "")).strip()
-                if not resume_name or not resume_name_matches_account(resume_name, account_name):
+                # Some CV templates put the name in a DOCX table or at the top of a PDF;
+                # the LLM may miss it even when text extraction succeeded. Accept only if
+                # the account's full name is visibly present in the extracted document, or
+                # the structured name independently matches the account.
+                full_account_name_found = account_name_appears_in_resume(res_raw_text, account_name)
+                name_verified = resume_name_matches_account(resume_name, account_name) or full_account_name_found
+                if name_verified:
+                    # Use the verified account name as canonical when the model omitted or
+                    # misread it, preventing downstream resume checks from losing the name.
+                    if not resume_name_matches_account(resume_name, account_name):
+                        resume_data["Name"] = account_name
+                    elif resume_name:
+                        resume_data["Name"] = resume_name
+                if not name_verified:
                     st.session_state["resume_upload_rejected"] = {
                         "filename": ats_resume_file.name,
-                        "resume_name": resume_name or "Name not detected",
+                        "resume_name": resume_name or ("Full account name not found in extracted text"),
                     }
                     st.session_state["resume_details"] = None
                     st.error(
                         f"This resume was not accepted. Account name: **{account_name}**; "
                         f"name read from resume: **{resume_name or 'not detected'}**. "
-                        "Please upload a resume belonging to your own student account."
+                        "Please check that the name is visible in the PDF/DOCX text, or save the file as a text-based PDF/DOCX and upload again."
                     )
                 else:
                     # Map About Myself details into the candidate context without overwriting
@@ -5984,6 +6045,7 @@ Resume text:
             horizontal=True, key="resume_jd_input_option"
         )
         jd_text = ""
+        jd_read_error = False
         if jd_input_option == "Upload File (PDF/DOCX/TXT)":
             jd_file = st.file_uploader(
                 "Upload Job Description File", type=["pdf", "docx", "txt"],
@@ -5991,7 +6053,16 @@ Resume text:
             )
             if jd_file:
                 jd_text = extract_text_from_file(jd_file)
-                st.info(f"Loaded job description: {jd_file.name}")
+                if jd_text.startswith("Error extracting content from file:"):
+                    st.error(jd_text)
+                    jd_text = ""
+                    jd_read_error = True
+                elif not jd_text.strip() or jd_text.startswith("[Uploaded Image File:"):
+                    st.error("No selectable text was found in this Job Description. Use a text-based PDF/DOCX/TXT file or paste the JD text directly.")
+                    jd_text = ""
+                    jd_read_error = True
+                else:
+                    st.success(f"Job Description read: {jd_file.name} · {len(jd_text):,} characters")
         else:
             jd_text = st.text_area(
                 "Paste Job Description Text", height=180,
@@ -6001,7 +6072,7 @@ Resume text:
             )
         if jd_text.strip():
             st.session_state["resume_workspace_jd"] = jd_text.strip()
-        elif st.session_state.get("resume_workspace_jd"):
+        elif not jd_read_error and st.session_state.get("resume_workspace_jd"):
             jd_text = st.session_state["resume_workspace_jd"]
             st.caption("Using the last saved Job Description.")
 
