@@ -9,6 +9,7 @@ import queue
 import wave
 import re
 import uuid
+import random
 import pandas as pd
 import numpy as np
 import pypdf
@@ -3732,6 +3733,7 @@ def render_authentication_panel():
                         student = authenticate_student(normalized_email, login_password)
                         if student:
                             st.session_state["authenticated"] = True
+                            st.session_state["show_login_tip"] = True
                             st.session_state["user_role"] = "student"
                             st.session_state["student_id"] = student["id"]
                             st.session_state["student_email"] = student["email"]
@@ -3900,6 +3902,23 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# A fresh employability tip is shown after each successful student login.
+CAREER_TIPS = [('Skills', 'List only skills you have genuinely learned and can confidently explain.'), ('Skills', 'For every skill on your resume, prepare one real example that proves it.'), ('Skills', 'Choose one skill this week and practise it through a small project.'), ('Skills', 'Excel becomes more valuable when you can use formulas, filters, PivotTables, and charts.'), ('Skills', 'Learn to explain what a skill helps you achieve, not just its definition.'), ('Skills', 'A certificate is useful, but demonstrating the skill is even stronger.'), ('Skills', 'Build a portfolio of projects that shows what you can actually do.'), ('Skills', 'Practise presenting data as a clear business insight and recommendation.'), ('Skills', 'Learn the basics of business writing: clear subject lines, concise messages, and a specific action.'), ('Skills', 'Improve one digital skill at a time instead of collecting tools you never practise.'), ('Skills', 'Use AI to learn and practise, but verify its output before relying on it.'), ('Skills', 'Learn keyboard shortcuts in the tools you use every day to work more efficiently.'), ('Skills', 'Understand the business problem before choosing a tool or technique.'), ('Skills', 'Practise explaining a technical concept in simple language for a non-specialist.'), ('Skills', 'Ask for feedback on one specific skill, then apply it in your next attempt.'), ('Skills', 'Track your learning with evidence: a project, presentation, report, or measurable result.'), ('Skills', 'A strong MBA profile combines analytical ability, communication, teamwork, and execution.'), ('Skills', 'Learn to read a basic profit-and-loss statement and explain what drives performance.'), ('Skills', 'Practise converting a spreadsheet into three useful management insights.'), ('Skills', 'Develop professional email etiquette before your internship or first job.'), ('Resume', 'Tailor your resume to the role, but never add skills or experience you do not have.'), ('Resume', 'Start bullet points with action verbs such as analysed, coordinated, improved, or delivered.'), ('Resume', 'Where possible, quantify your contribution with a truthful number or outcome.'), ('Resume', 'Describe your own contribution to a team project, not only what the team did.'), ('Resume', 'Keep formatting consistent: dates, headings, bullet points, and spacing.'), ('Resume', 'Proofread your resume for spelling, grammar, dates, and contact details.'), ('Resume', 'Use relevant keywords from the job description only when they accurately describe you.'), ('Resume', 'Prepare to discuss every project, internship, achievement, and skill on your resume.'), ('Resume', "Replace vague claims like 'hardworking' with a short example that demonstrates them."), ('Resume', 'Put the most relevant and recent information where a recruiter can find it quickly.'), ('Resume', 'Use a professional email address and a clear, readable file name for your resume.'), ('Resume', 'Do not hide gaps or invent experience; prepare an honest, concise explanation.'), ('Resume', 'Your resume earns attention; your examples and interview answers build credibility.'), ('Resume', 'Check that your resume is readable as plain text as well as visually attractive.'), ('Resume', 'Make each resume section earn its space by supporting your target role.'), ('Placements', "Research the company's products, customers, competitors, and recent developments before an interview."), ('Placements', 'Know why you want this role, not just why you want a job.'), ('Placements', "Connect your strengths to the role's responsibilities using specific examples."), ('Placements', 'Read the job description carefully and identify its three most important requirements.'), ('Placements', 'Prepare a 60–90 second introduction that is relevant, structured, and natural.'), ('Placements', "Know the difference between a company's mission statement and how it earns revenue."), ('Placements', 'Prepare thoughtful questions about success measures, training, and team expectations.'), ('Placements', 'Follow application instructions precisely; attention to detail starts before selection.'), ('Placements', 'Keep a simple application tracker with company, role, date, stage, and follow-up.'), ('Placements', 'After an interview, note the questions that challenged you and practise better answers.'), ('Placements', "Learn the company's sector trends so your answers show commercial awareness."), ('Placements', 'Be ready to explain what you learned from a failure or setback and what changed afterward.'), ('Placements', "Understand the role's location, travel expectations, responsibilities, and growth path."), ('Placements', 'Professional punctuality includes arriving early and checking your technology in advance.'), ('Placements', 'Be honest about what you know; explain how you would learn what you do not know.'), ('Placements', 'Build a short example bank from projects, internships, volunteering, and college activities.'), ('Placements', 'Research the interviewer or panel only through appropriate public professional information.'), ('Placements', 'A polite, concise follow-up can reinforce interest after an interview.'), ('Placements', 'Practise explaining why your background fits the role without memorising a script.'), ('Placements', 'Selection is not only about confidence; evidence, preparation, and role fit matter.'), ('Interview', 'Use the STAR method: Situation, Task, Action, Result, to structure behavioural answers.'), ('Interview', 'Spend most of a STAR answer explaining your own actions and the result.'), ('Interview', "For 'Tell me about yourself', focus on relevant education, evidence, and career direction."), ('Interview', "For 'Why should we hire you?', connect two or three strengths to the role's needs."), ('Interview', 'For a weakness question, choose a genuine development area and explain your improvement plan.'), ('Interview', 'When you do not know an answer, stay calm, state what you do know, and reason transparently.'), ('Interview', 'Keep answers focused; stop when you have answered the question and supported it with evidence.'), ('Interview', 'Practise aloud rather than only reading answers silently.'), ('Interview', 'Record a practice answer and review clarity, pace, filler words, and structure.'), ('Interview', 'Listen to the full question before answering; ask for clarification when necessary.'), ('Interview', "Use 'I' to clarify your contribution and 'we' when describing team outcomes."), ('Interview', 'Do not criticise a former teammate, faculty member, or employer in an interview.'), ('Interview', 'For salary questions, research realistic ranges and communicate professionally.'), ('Interview', 'Use examples from college projects when you lack full-time work experience.'), ('Interview', 'Explain the reasoning behind a decision, not only the final result.'), ('Interview', 'Practise both common questions and role-specific technical or functional questions.'), ('Interview', 'Your body language should support your answer: attentive posture, natural eye contact, and calm gestures.'), ('Interview', "If interrupted, pause, listen, and respond to the interviewer's actual concern."), ('Interview', 'Prepare a concise closing statement that reinforces your fit and interest.'), ('Interview', 'Never claim expertise you cannot demonstrate under follow-up questions.'), ('Group Discussion', 'In a GD, contribute early when you have a useful point, but do not rush to speak without substance.'), ('Group Discussion', "Build on another participant's idea before adding your own perspective."), ('Group Discussion', 'Disagree with the idea respectfully; never attack the person.'), ('Group Discussion', 'Use a simple structure: point, reason, example, and implication.'), ('Group Discussion', 'A strong GD contribution adds evidence, a fresh angle, or a useful synthesis.'), ('Group Discussion', 'Do not dominate the discussion; create space for others and listen actively.'), ('Group Discussion', 'If the discussion becomes repetitive, summarise the points already covered and move it forward.'), ('Group Discussion', 'Use relevant examples, data, or current events only when you can explain them accurately.'), ('Group Discussion', 'Avoid unsupported statistics; a clear reasoned argument is better than a made-up number.'), ('Group Discussion', 'If you have not spoken, enter with one concise, relevant contribution.'), ('Group Discussion', 'If you have spoken several times, focus on listening and helping the group progress.'), ('Group Discussion', 'A useful conclusion summarises agreement, key differences, and a practical way forward.'), ('Group Discussion', 'Stay composed when challenged; acknowledge valid points and explain your reasoning.'), ('Group Discussion', 'Do not interrupt. If needed, enter politely when the speaker finishes a thought.'), ('Group Discussion', "Use inclusive phrases such as 'Building on that point' and 'Another factor to consider is…'."), ('Group Discussion', 'In case-based GDs, clarify the objective and constraints before proposing solutions.'), ('Group Discussion', 'Balance business, customer, employee, ethical, and implementation perspectives.'), ('Group Discussion', 'The goal is not to win the GD; it is to help the group reach a better discussion.'), ('Group Discussion', 'Practise speaking for 30–45 seconds on a topic with one clear point and one example.'), ('Group Discussion', 'Assess your GD performance on relevance, clarity, listening, evidence, and teamwork.'), ('Communication', 'Replace repeated filler words with a brief pause; silence can sound thoughtful.'), ('Communication', 'Speak slightly slower than feels natural when explaining a complex idea.'), ('Communication', 'Use short sentences when presenting recommendations to a busy audience.'), ('Communication', 'Expand your vocabulary by learning useful phrases in context, not by memorising long lists.'), ('Communication', 'Practise summarising a business article in three sentences: issue, evidence, implication.'), ('Communication', 'Read your answer aloud to catch awkward phrasing before a presentation or interview.'), ('Communication', "Use signposting phrases such as 'First', 'The key reason', and 'My recommendation is'."), ('Communication', 'Clarity matters more than using complicated words.'), ('Communication', 'When presenting data, explain what it means and what action it suggests.'), ('Communication', 'Ask a focused follow-up question to show that you are listening, not just waiting to speak.'), ('Communication', 'Practise a one-minute explanation of a business concept every day.'), ('Communication', "Use specific nouns and verbs instead of vague phrases like 'things' and 'stuff'."), ('Communication', 'In professional conversations, be courteous, concise, and clear about the next step.'), ('Communication', 'Adapt your level of detail to your audience and the time available.'), ('Communication', 'Review feedback without defensiveness; choose one change to practise next.'), ('Career Growth', 'Set one weekly career goal that is specific, measurable, and realistic.'), ('Career Growth', 'Build relationships by asking thoughtful questions and following through on commitments.'), ('Career Growth', 'A mentor can guide you, but you must own your preparation and progress.'), ('Career Growth', 'Keep a record of projects, responsibilities, feedback, and outcomes for future interviews.'), ('Career Growth', 'Use LinkedIn to present a professional profile and share genuine learning or project insights.'), ('Career Growth', 'Follow industry news regularly and practise explaining why a development matters to a business.'), ('Career Growth', 'Reliability is a skill: meet deadlines, communicate risks early, and close the loop.'), ('Career Growth', 'Teamwork means sharing credit, clarifying responsibilities, and addressing issues respectfully.'), ('Career Growth', 'Treat every mock interview as practice data: identify one strength and one next improvement.'), ('Career Growth', 'Small daily practice compounds; consistency beats last-minute preparation.')]
+
+if st.session_state.get("show_login_tip") and st.session_state.get("user_role") == "student":
+    st.session_state["show_login_tip"] = False
+    tip_category, tip_text = random.choice(CAREER_TIPS)
+
+    @st.dialog("Your Career Tip of the Day")
+    def show_career_tip():
+        st.caption(f"IPER PEPTECH · {tip_category}")
+        st.markdown(f"### {tip_text}")
+        st.write("Small improvements in preparation can make a real difference. Apply this tip in your next practice session.")
+        if st.button("Got it — let’s get started", type="primary", use_container_width=True):
+            st.rerun()
+
+    show_career_tip()
 
 # Personalized header and quick access to account details.
 header_left, header_right = st.columns([7, 2])
@@ -5884,8 +5903,8 @@ def _render_live_gd_voice_room(topic, student_name):
 
 
 if selected_nav == "Resume Checker & Job Matcher":
-    st.title("Resume Checker, Job Matcher & Resume Editor")
-    st.caption("Your About Myself profile, your own resume and the target Job Description work together here. Resume data is stored separately for each signed-in student.")
+    st.title("Resume & Job Match")
+    st.caption("Upload your resume once, add a job description, and get a clear match report. Your resume is saved for future opportunities; reset the job description when applying for a new role.")
 
     student_id = st.session_state.get("student_id")
     # Read the current account name directly from the authenticated student's saved
@@ -6029,7 +6048,12 @@ Resume text:
                     st.session_state["resume_editor_text"] = resume_text_from_data(resume_data)
                     st.session_state["resume_source_filename"] = ats_resume_file.name
                     st.session_state.pop("resume_upload_rejected", None)
-                    st.success(f"Your resume was verified and loaded for **{account_name}**.")
+                    # Save the verified resume immediately so it survives navigation and future logins.
+                    save_resume_workspace(
+                        student_id, resume_data, st.session_state.get("resume_editor_text", ""),
+                        st.session_state.get("resume_workspace_jd", ""), ats_resume_file.name
+                    )
+                    st.success(f"Your resume was verified and saved for **{account_name}**.")
 
         if st.session_state.get("resume_details"):
             loaded_name = st.session_state["resume_details"].get("Name", "Name verified")
@@ -6071,107 +6095,130 @@ Resume text:
                 placeholder="Paste responsibilities, required skills, qualifications and role expectations..."
             )
         if jd_text.strip():
-            st.session_state["resume_workspace_jd"] = jd_text.strip()
+            new_jd_text = jd_text.strip()
+            old_jd_text = str(st.session_state.get("resume_workspace_jd", "") or "").strip()
+            st.session_state["resume_workspace_jd"] = new_jd_text
+            # Persist a readable JD automatically; don't overwrite saved data on extraction errors.
+            if new_jd_text != old_jd_text and student_id:
+                save_resume_workspace(
+                    student_id, st.session_state.get("resume_details") or {},
+                    st.session_state.get("resume_editor_text", ""), new_jd_text,
+                    st.session_state.get("resume_source_filename", "")
+                )
         elif not jd_read_error and st.session_state.get("resume_workspace_jd"):
             jd_text = st.session_state["resume_workspace_jd"]
-            st.caption("Using the last saved Job Description.")
+            st.caption("Saved job description loaded. Use Reset JD for a different job opportunity.")
 
     st.markdown("---")
-    st.markdown("### 3. Edit your resume")
-    st.caption("Review and edit your resume text before saving or downloading. Do not add skills, qualifications or achievements you do not have.")
+    with st.expander("Optional: Edit or build your resume", expanded=False):
+        st.caption("Most students can skip this and go straight to Analyse My Match. Edit or build a resume only if you need to.")
+        st.info(
+            "**Skills You Have Actually Learned**\n\n"
+            "Add only skills you have genuinely learned and understand through coursework, projects, "
+            "internships, certifications, or work experience. Do not add a skill just because it appears "
+            "in a job description. Be ready to explain each skill and give an example. If you are still "
+            "learning a skill, do not claim proficiency in it.\n\n"
+            "Remember: five genuine, explainable skills are better than fifteen skills you cannot confidently discuss in an interview."
+        )
     # Do not treat the About Myself answer as a resume. The editor starts empty until
     # a structured master resume is generated or the student's own resume is verified.
     # This prevents interview-style prose from becoming the entire downloaded resume.
-    pending_resume_text = st.session_state.pop("pending_resume_editor_text", None)
-    if pending_resume_text is not None:
-        st.session_state["resume_editor_text"] = pending_resume_text
-    gen_col, gen_note_col = st.columns([1, 2])
-    with gen_col:
-        if st.button(" Generate Master Professional Resume", key="generate_master_professional_resume", use_container_width=True):
-            profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
-            verified_resume = st.session_state.get("resume_details") or {}
-            if not profile_context and not verified_resume:
-                st.warning("First complete About Myself or upload and verify your own resume so the builder has factual information to work with.")
-            else:
-                master_prompt = f"""You are a senior executive resume writer and ATS resume specialist. Produce a complete, structured MASTER PROFESSIONAL RESUME, not an About Myself answer, biography, cover letter, or list of profile fields.
-Candidate full name: {account_name}
-Registered email: {st.session_state.get('student_email', '')}
-Verified resume facts (the source of truth): {json.dumps(verified_resume, ensure_ascii=False)}
-Student profile facts (use as supporting source material, not as a section to copy verbatim): {json.dumps(profile_context, ensure_ascii=False)}
-Target Job Description, if provided: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:8000]}
-Current draft, if any: {st.session_state.get('resume_editor_text', '')[:8000]}
+        pending_resume_text = st.session_state.pop("pending_resume_editor_text", None)
+        if pending_resume_text is not None:
+            st.session_state["resume_editor_text"] = pending_resume_text
+        gen_col, gen_note_col = st.columns([1, 2])
+        with gen_col:
+            if st.button(" Generate Master Professional Resume", key="generate_master_professional_resume", use_container_width=True):
+                profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
+                verified_resume = st.session_state.get("resume_details") or {}
+                if not profile_context and not verified_resume:
+                    st.warning("First complete About Myself or upload and verify your own resume so the builder has factual information to work with.")
+                else:
+                    master_prompt = f"""You are a senior executive resume writer and ATS resume specialist. Produce a complete, structured MASTER PROFESSIONAL RESUME, not an About Myself answer, biography, cover letter, or list of profile fields.
+    Candidate full name: {account_name}
+    Registered email: {st.session_state.get('student_email', '')}
+    Verified resume facts (the source of truth): {json.dumps(verified_resume, ensure_ascii=False)}
+    Student profile facts (use as supporting source material, not as a section to copy verbatim): {json.dumps(profile_context, ensure_ascii=False)}
+    Target Job Description, if provided: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:8000]}
+    Current draft, if any: {st.session_state.get('resume_editor_text', '')[:8000]}
 
-Write the document using this professional structure, including each section that has factual support:
-PROFESSIONAL SUMMARY
-CORE COMPETENCIES
-EDUCATION
-INTERNSHIP EXPERIENCE / PROFESSIONAL EXPERIENCE
-ACADEMIC PROJECTS
-TECHNICAL & DIGITAL SKILLS
-CERTIFICATIONS & TRAINING
-ACHIEVEMENTS
-LEADERSHIP & EXTRACURRICULAR ACTIVITIES
-PROFESSIONAL INTERESTS
+    Write the document using this professional structure, including each section that has factual support:
+    PROFESSIONAL SUMMARY
+    CORE COMPETENCIES
+    EDUCATION
+    INTERNSHIP EXPERIENCE / PROFESSIONAL EXPERIENCE
+    ACADEMIC PROJECTS
+    TECHNICAL & DIGITAL SKILLS
+    CERTIFICATIONS & TRAINING
+    ACHIEVEMENTS
+    LEADERSHIP & EXTRACURRICULAR ACTIVITIES
+    PROFESSIONAL INTERESTS
 
-Requirements:
-- The Professional Summary must be a concise resume summary of 2-4 lines, not an interview answer. Never use first-person wording such as I, me, or my.
-- Education must list each degree/program, institution, and completion or expected completion year where supplied. Keep undergraduate and postgraduate entries separate.
-- Experience and internships must be separate entries with role, organisation, date/year, and 2-4 achievement/responsibility bullets where the supplied facts support them. Do not turn a short profile paragraph into a fake job history.
-- Core Competencies and Skills must be concise lists, not paragraphs. Only include skills evidenced by the supplied facts.
-- Projects, certifications, achievements, activities, and interests must each be placed under the correct heading. Do not create sections filled with 'None'. Omit unsupported sections.
-- Include only facts supported by the verified resume or profile. Never invent employers, responsibilities, dates, degrees, marks, tools, projects, metrics, achievements, or contact details.
-- Where useful facts are missing, add a short [ADD DETAILS: ...] placeholder only in the relevant section. Do not invent details to fill space.
-- Do not include explanations about how the resume was created, interview-ready text, markdown fences, horizontal rules, tables, columns, icons, emojis, decorative symbols, or a footer as resume content.
-- Use uppercase section headings and concise, professional bullets beginning with '- '. The output should be ready to format as a 1-2 page ATS-friendly resume.
-- If a JD is supplied, prioritise relevant truthful skills and experience but retain a master-resume structure.
-Return only the resume itself."""
-                with st.spinner("Building your master resume from your saved profile and verified information..."):
-                    master_text = get_groq_response(master_prompt)
-                if master_text and not master_text.strip().lower().startswith("error"):
-                    cleaned_master = master_text.strip().replace("```text", "").replace("```", "").strip()
-                    required_resume_sections = ("PROFESSIONAL SUMMARY", "EDUCATION")
-                    if all(section_name in cleaned_master.upper() for section_name in required_resume_sections) and len(cleaned_master) >= 500:
-                        st.session_state["pending_resume_editor_text"] = cleaned_master
-                        st.success("Structured master resume generated. Review and edit every section before saving or downloading.")
+    Requirements:
+    - The Professional Summary must be a concise resume summary of 2-4 lines, not an interview answer. Never use first-person wording such as I, me, or my.
+    - Education must list each degree/program, institution, and completion or expected completion year where supplied. Keep undergraduate and postgraduate entries separate.
+    - Experience and internships must be separate entries with role, organisation, date/year, and 2-4 achievement/responsibility bullets where the supplied facts support them. Do not turn a short profile paragraph into a fake job history.
+    - Core Competencies and Skills must be concise lists, not paragraphs. Only include skills evidenced by the supplied facts.
+    - Projects, certifications, achievements, activities, and interests must each be placed under the correct heading. Do not create sections filled with 'None'. Omit unsupported sections.
+    - Include only facts supported by the verified resume or profile. Never invent employers, responsibilities, dates, degrees, marks, tools, projects, metrics, achievements, or contact details.
+    - Where useful facts are missing, add a short [ADD DETAILS: ...] placeholder only in the relevant section. Do not invent details to fill space.
+    - Do not include explanations about how the resume was created, interview-ready text, markdown fences, horizontal rules, tables, columns, icons, emojis, decorative symbols, or a footer as resume content.
+    - Use uppercase section headings and concise, professional bullets beginning with '- '. The output should be ready to format as a 1-2 page ATS-friendly resume.
+    - If a JD is supplied, prioritise relevant truthful skills and experience but retain a master-resume structure.
+    Return only the resume itself."""
+                    with st.spinner("Building your master resume from your saved profile and verified information..."):
+                        master_text = get_groq_response(master_prompt)
+                    if master_text and not master_text.strip().lower().startswith("error"):
+                        cleaned_master = master_text.strip().replace("```text", "").replace("```", "").strip()
+                        required_resume_sections = ("PROFESSIONAL SUMMARY", "EDUCATION")
+                        if all(section_name in cleaned_master.upper() for section_name in required_resume_sections) and len(cleaned_master) >= 500:
+                            st.session_state["pending_resume_editor_text"] = cleaned_master
+                            st.success("Structured master resume generated. Review and edit every section before saving or downloading.")
+                            st.rerun()
+                        else:
+                            st.error("The AI response did not contain enough structured resume content. Please try Generate Master Professional Resume again; your current draft has not been replaced.")
+                    else:
+                        st.error("The master resume could not be generated right now. Your current draft remains unchanged.")
+        with gen_note_col:
+            st.caption("Creates a clean, ATS-friendly master resume using the signed-in student's saved profile and verified resume facts. AI must not invent qualifications or experience.")
+        resume_editor_text = st.text_area(
+            "Editable Professional Resume Draft", key="resume_editor_text", height=360,
+            placeholder="Generate a master resume from your profile or upload and verify your own resume, then edit the content here..."
+        )
+        ai_edit_col, ai_edit_help_col = st.columns([1, 2])
+        with ai_edit_col:
+            if st.button(" Tailor Resume to This JD", key="ai_tailor_resume_to_jd", use_container_width=True):
+                if not st.session_state.get("resume_details"):
+                    st.warning("Upload and verify your own resume first.")
+                elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
+                    st.warning("Add or upload the target Job Description first.")
+                else:
+                    profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
+                    edit_prompt = f"""You are an ethical resume editor for an IPER Bhopal student. Rewrite the document as a complete structured professional resume tailored to the target role, not an About Myself answer. Use PROFESSIONAL SUMMARY, CORE COMPETENCIES, EDUCATION, EXPERIENCE/INTERNSHIP EXPERIENCE, PROJECTS, SKILLS, CERTIFICATIONS, ACHIEVEMENTS and ACTIVITIES as supported by facts. Do not invent or exaggerate any qualification, skill, employer, metric, responsibility or achievement. If a useful detail is absent, leave a clearly marked [ADD ONLY IF TRUE: ...] prompt instead of fabricating it. Use clean headings and concise bullet points. Return only plain text ready to edit in Word.
+    Account name: {account_name}
+    Verified resume data: {json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)}
+    About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
+    Current editable resume: {resume_editor_text[:9000]}
+    Target Job Description: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:9000]}"""
+                    with st.spinner("Tailoring your resume to the JD without adding unsupported claims..."):
+                        tailored_text = get_groq_response(edit_prompt)
+                    if tailored_text and not tailored_text.strip().lower().startswith("error"):
+                        st.session_state["pending_resume_editor_text"] = tailored_text.strip().replace("```text", "").replace("```", "").strip()
                         st.rerun()
                     else:
-                        st.error("The AI response did not contain enough structured resume content. Please try Generate Master Professional Resume again; your current draft has not been replaced.")
-                else:
-                    st.error("The master resume could not be generated right now. Your current draft remains unchanged.")
-    with gen_note_col:
-        st.caption("Creates a clean, ATS-friendly master resume using the signed-in student's saved profile and verified resume facts. AI must not invent qualifications or experience.")
-    resume_editor_text = st.text_area(
-        "Editable Professional Resume Draft", key="resume_editor_text", height=360,
-        placeholder="Generate a master resume from your profile or upload and verify your own resume, then edit the content here..."
-    )
-    ai_edit_col, ai_edit_help_col = st.columns([1, 2])
-    with ai_edit_col:
-        if st.button(" Tailor Resume to This JD", key="ai_tailor_resume_to_jd", use_container_width=True):
-            if not st.session_state.get("resume_details"):
-                st.warning("Upload and verify your own resume first.")
-            elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
-                st.warning("Add or upload the target Job Description first.")
-            else:
-                profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
-                edit_prompt = f"""You are an ethical resume editor for an IPER Bhopal student. Rewrite the document as a complete structured professional resume tailored to the target role, not an About Myself answer. Use PROFESSIONAL SUMMARY, CORE COMPETENCIES, EDUCATION, EXPERIENCE/INTERNSHIP EXPERIENCE, PROJECTS, SKILLS, CERTIFICATIONS, ACHIEVEMENTS and ACTIVITIES as supported by facts. Do not invent or exaggerate any qualification, skill, employer, metric, responsibility or achievement. If a useful detail is absent, leave a clearly marked [ADD ONLY IF TRUE: ...] prompt instead of fabricating it. Use clean headings and concise bullet points. Return only plain text ready to edit in Word.
-Account name: {account_name}
-Verified resume data: {json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)}
-About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
-Current editable resume: {resume_editor_text[:9000]}
-Target Job Description: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:9000]}"""
-                with st.spinner("Tailoring your resume to the JD without adding unsupported claims..."):
-                    tailored_text = get_groq_response(edit_prompt)
-                if tailored_text and not tailored_text.strip().lower().startswith("error"):
-                    st.session_state["pending_resume_editor_text"] = tailored_text.strip().replace("```text", "").replace("```", "").strip()
-                    st.rerun()
-                else:
-                    st.error("The resume draft could not be generated. Your current draft remains unchanged.")
-    with ai_edit_help_col:
-        st.caption("AI can reorganise and tailor your real experience to the JD. Review every line before saving or downloading; never keep a claim that is not true.")
+                        st.error("The resume draft could not be generated. Your current draft remains unchanged.")
+        with ai_edit_help_col:
+            st.caption("AI can reorganise and tailor your real experience to the JD. Review every line before saving or downloading; never keep a claim that is not true.")
+
+    if st.button("Reset JD for Next Job", key="reset_resume_jd", use_container_width=True):
+        st.session_state["pending_reset_jd_only"] = True
+        st.session_state.pop("last_resume_ats_result", None)
+        st.rerun()
 
     st.markdown("---")
-    st.markdown("### 4. Check Match & Review Suggestions")
-    if st.button(" Check Match & Review Suggestions", key="run_resume_match", use_container_width=True):
+    st.markdown("### 3. Your Job Match")
+    st.caption("Your saved resume and current job description are compared in one step.")
+    if st.button("Analyse My Match", key="run_resume_match", use_container_width=True):
         if not st.session_state.get("resume_details"):
             st.error("Please upload and verify your own resume first.")
         elif not jd_text.strip():
@@ -6232,7 +6279,7 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
                 st.code(raw_ats_response[:4000], language="text")
 
 
-    save_col, reset_col, reset_jd_col, download_col = st.columns(4)
+    save_col, reset_col, download_col = st.columns(3)
     with save_col:
         if st.button(" Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
             saved = save_resume_workspace(
@@ -6246,10 +6293,6 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
     with reset_col:
         if st.button("Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
             st.session_state["pending_reset_resume_workspace"] = True
-            st.rerun()
-    with reset_jd_col:
-        if st.button("Reset Uploaded JD", key="reset_resume_jd", use_container_width=True):
-            st.session_state["pending_reset_jd_only"] = True
             st.rerun()
     with download_col:
         if st.button(" Create Professional Editable DOCX", key="create_resume_docx", use_container_width=True):
