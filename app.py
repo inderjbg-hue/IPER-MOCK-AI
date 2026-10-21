@@ -4107,6 +4107,248 @@ elif selected_nav == "Industry & Company Insights":
     st.title("Industry & Company Insights")
     st.caption("Explore sectors in India and the companies documented in IPER's 2025–26 placement ecosystem. Use the information here to prepare for roles, interviews and campus recruitment.")
 
+    # Cross-industry business glossary. Definitions are concise, student-friendly,
+    # and intentionally independent of any single company or sector.
+    BUSINESS_GLOSSARY = {
+        "A": [
+            ("A/B Testing", "A method of comparing two versions of a page, message or campaign to see which performs better."),
+            ("Accounts Payable (AP)", "Money a business owes suppliers for goods or services already received."),
+            ("Accounts Receivable (AR)", "Money customers owe a business for goods or services already supplied."),
+            ("Acquisition", "The purchase of one company or business by another."),
+            ("Agile", "An iterative way of managing work that uses short cycles, feedback and frequent improvements."),
+            ("Asset", "A resource owned or controlled by a business that can provide future economic value."),
+            ("Asset Turnover", "A ratio that shows how efficiently a business uses its assets to generate revenue."),
+            ("Average Revenue per User (ARPU)", "Average revenue generated per customer or user during a defined period."),
+        ],
+        "B": [
+            ("B2B (Business-to-Business)", "A business model in which an organisation sells to other organisations."),
+            ("B2C (Business-to-Consumer)", "A business model in which an organisation sells directly to individual consumers."),
+            ("Balance Sheet", "A financial statement showing assets, liabilities and equity at a specific date."),
+            ("Balanced Scorecard", "A performance framework that considers financial, customer, process, and learning measures."),
+            ("Benchmarking", "Comparing performance or practices with standards, competitors or leading organisations."),
+            ("Big Data", "Large or complex datasets analysed to identify patterns, trends and insights."),
+            ("Brand Equity", "The value a brand gains from awareness, associations, perceived quality and customer loyalty."),
+            ("Break-even Point", "The sales level at which total revenue equals total costs, leaving neither profit nor loss."),
+            ("Budget", "A financial plan estimating income, expenditure and resource use for a future period."),
+            ("Business Model", "The way an organisation creates, delivers and captures value."),
+        ],
+        "C": [
+            ("CAC (Customer Acquisition Cost)", "The average cost of gaining a new customer, including relevant marketing and sales costs."),
+            ("Call to Action (CTA)", "A prompt asking an audience to take a specific next step, such as apply, buy or register."),
+            ("Capital Expenditure (CapEx)", "Spending on long-term assets such as equipment, buildings or major systems."),
+            ("Cash Flow", "The movement of cash into and out of a business over a period."),
+            ("Churn Rate", "The percentage of customers or subscribers who stop using a product or service during a period."),
+            ("CLV / Customer Lifetime Value", "The estimated value or profit a business expects from a customer over the relationship."),
+            ("Competitive Advantage", "A capability or position that helps an organisation outperform rivals."),
+            ("Compliance", "Following applicable laws, regulations, standards, contracts and internal policies."),
+            ("Consumer Behaviour", "The study of how people select, buy, use and evaluate products or services."),
+            ("Conversion Rate", "The percentage of people who complete a desired action out of those who had the opportunity to do so."),
+            ("Core Competency", "A distinctive organisational capability that contributes significantly to customer value or advantage."),
+            ("CRM (Customer Relationship Management)", "Practices and systems used to manage customer interactions, information and relationships."),
+            ("Current Ratio", "Current assets divided by current liabilities; a common measure of short-term liquidity."),
+        ],
+        "D": [
+            ("Data Analytics", "Examining data to describe performance, explain patterns, predict outcomes or support decisions."),
+            ("Data-driven Decision-making", "Using relevant data and analysis, alongside judgement, to make business decisions."),
+            ("Debt-to-Equity Ratio", "A leverage measure comparing a company's debt with shareholders' equity."),
+            ("Demand Forecasting", "Estimating future demand to support production, inventory, staffing and planning."),
+            ("Depreciation", "The systematic allocation of a tangible asset's depreciable cost over its useful life."),
+            ("Digital Transformation", "Using digital technology to improve or redesign business processes, services and operating models."),
+            ("Distribution Channel", "The route through which a product or service reaches its end customer."),
+            ("Diversification", "Expanding into different products, markets or investments to pursue growth or manage risk."),
+            ("Dividend", "A distribution of a company's profits or reserves to eligible shareholders, when declared."),
+        ],
+        "E": [
+            ("EBITDA", "Earnings before interest, taxes, depreciation and amortisation; a commonly used operating-performance measure."),
+            ("E-commerce", "Buying and selling goods or services through electronic networks, especially the internet."),
+            ("Economies of Scale", "Cost advantages that can arise when output increases and average cost per unit falls."),
+            ("Employee Engagement", "The degree to which employees feel involved, committed and motivated at work."),
+            ("Employer Value Proposition (EVP)", "The combination of benefits and experiences an organisation offers employees in return for their contribution."),
+            ("Enterprise Resource Planning (ERP)", "Integrated software that helps manage core processes such as finance, procurement, inventory and HR."),
+            ("Equity", "Ownership interest in a business; in a balance sheet, assets minus liabilities."),
+            ("ESG", "Environmental, social and governance factors considered when assessing an organisation's practices and risks."),
+            ("Exit Interview", "A conversation with a departing employee to understand their experience and reasons for leaving."),
+        ],
+        "F": [
+            ("Fixed Cost", "A cost that does not change directly with output within a relevant range and period."),
+            ("Fixed Asset", "A long-term tangible resource used in operations, such as machinery or buildings."),
+            ("Forecasting", "Estimating future business conditions or results using data, assumptions and methods."),
+            ("Franchise", "A business arrangement in which one party permits another to use its brand and operating model under agreed terms."),
+            ("Free Cash Flow", "Cash available after operating cash needs and capital investment, according to the chosen definition."),
+            ("Funnel", "A model of stages people move through, from awareness or consideration to conversion and retention."),
+        ],
+        "G": [
+            ("GDP (Gross Domestic Product)", "The value of final goods and services produced within a country's borders during a period."),
+            ("Go-to-Market Strategy", "A plan for taking a product or service to target customers, including positioning, channels and sales."),
+            ("Governance", "The structures, policies and processes used to direct, oversee and hold an organisation accountable."),
+            ("Gross Margin", "Revenue minus cost of goods sold, usually expressed as a percentage of revenue."),
+            ("Gross Domestic Product Growth", "The rate at which a country's inflation-adjusted economic output changes over time."),
+            ("Growth Strategy", "A plan to expand revenue, customers, markets, products or organisational scale."),
+        ],
+        "H": [
+            ("Human Capital", "The knowledge, skills, experience and capabilities people contribute to an organisation."),
+            ("Human Resource Analytics", "Using workforce data to understand HR outcomes and inform people-related decisions."),
+            ("Hybrid Work", "A work arrangement combining remote work with work at a shared workplace."),
+            ("Hypothesis Testing", "A statistical method for evaluating evidence about a claim or difference using sample data."),
+        ],
+        "I": [
+            ("Inbound Marketing", "Attracting potential customers through useful content, search, education and relevant experiences."),
+            ("Income Statement", "A financial statement reporting revenue, expenses and profit or loss over a period."),
+            ("Inflation", "A sustained increase in the general price level, reducing the purchasing power of money."),
+            ("Innovation", "Introducing or applying a new or improved product, service, process or business approach."),
+            ("Intellectual Property (IP)", "Creations or identifiers protected by legal rights, such as patents, copyrights and trademarks."),
+            ("Internal Rate of Return (IRR)", "The discount rate at which a project's net present value equals zero."),
+            ("Inventory Turnover", "A measure of how often inventory is sold or used and replaced during a period."),
+            ("Investment", "Allocating money or resources with the expectation of future benefits or returns."),
+            ("IPO (Initial Public Offering)", "The first public offering of a company's shares to public-market investors."),
+        ],
+        "J": [
+            ("Job Analysis", "A systematic study of a role's tasks, responsibilities and required capabilities."),
+            ("Job Description (JD)", "A document outlining a role's purpose, duties, responsibilities and reporting relationships."),
+            ("Job Specification", "A description of the qualifications, skills, experience and other requirements for a role."),
+            ("Joint Venture", "A business arrangement in which parties collaborate in a defined enterprise and share agreed risks or returns."),
+        ],
+        "K": [
+            ("Key Account Management", "A structured approach to developing and retaining an organisation's most important customers."),
+            ("Key Performance Indicator (KPI)", "A measurable indicator used to track progress towards an important objective."),
+            ("Knowledge Management", "Practices for creating, organising, sharing and applying knowledge within an organisation."),
+            ("KYC (Know Your Customer)", "Identity and due-diligence procedures used by regulated institutions to understand and verify customers."),
+        ],
+        "L": [
+            ("Lead Generation", "Activities used to identify and attract potential customers or sales prospects."),
+            ("Lean Management", "An approach focused on customer value, reducing waste and continuously improving processes."),
+            ("Leverage", "Using debt or other fixed commitments to increase potential returns and risk."),
+            ("Liquidity", "The ability to meet near-term obligations or convert assets into cash without excessive loss."),
+            ("Loss Leader", "A product priced very low, sometimes below cost, to attract customers to other purchases."),
+        ],
+        "M": [
+            ("Market Capitalisation", "The market value of a listed company's equity, calculated as share price multiplied by shares outstanding."),
+            ("Market Research", "Collecting and analysing information about customers, competitors and market conditions."),
+            ("Market Segmentation", "Dividing a broad market into groups with shared needs, characteristics or behaviours."),
+            ("Marketing Mix", "The controllable elements used to shape a marketing offer, often described as the 4Ps or 7Ps."),
+            ("Merger", "The combination of two or more businesses into one organisation or corporate structure."),
+            ("Mission Statement", "A concise description of an organisation's purpose and what it seeks to do."),
+            ("Monetisation", "The process of generating revenue from a product, service, audience, asset or capability."),
+            ("Motivation", "The factors that initiate, direct and sustain effort towards a goal."),
+        ],
+        "N": [
+            ("Net Present Value (NPV)", "The present value of expected cash inflows minus the present value of cash outflows."),
+            ("Net Promoter Score (NPS)", "A customer-loyalty measure based on willingness to recommend, calculated from promoter and detractor responses."),
+            ("Net Profit Margin", "Net profit expressed as a percentage of revenue."),
+            ("Network Effect", "A situation where a product or service becomes more valuable as more people use it."),
+            ("Non-performing Asset (NPA)", "A loan or advance classified as non-performing under the applicable regulatory rules."),
+        ],
+        "O": [
+            ("Objectives and Key Results (OKRs)", "A goal-setting framework pairing an objective with measurable results that indicate progress."),
+            ("Omnichannel", "A coordinated customer experience across channels such as stores, websites, apps and service centres."),
+            ("Operating Cash Flow", "Cash generated or used by a business's principal operating activities."),
+            ("Operating Margin", "Operating profit expressed as a percentage of revenue."),
+            ("Opportunity Cost", "The value of the best alternative given up when a choice is made."),
+            ("Organisational Culture", "Shared values, norms and behaviours that shape how people work and make decisions."),
+        ],
+        "P": [
+            ("P&L (Profit and Loss Statement)", "Another common name for the income statement, which summarises income and expenses over a period."),
+            ("PESTLE Analysis", "A framework examining political, economic, social, technological, legal and environmental influences."),
+            ("Portfolio", "A collection of investments, products, projects, clients or other assets managed together."),
+            ("Positioning", "How a brand or offering is intended to be perceived relative to alternatives by its target audience."),
+            ("Predictive Analytics", "Using historical data, statistical methods and models to estimate likely future outcomes."),
+            ("Price Elasticity of Demand", "The responsiveness of quantity demanded to a change in price."),
+            ("Product Life Cycle", "The stages an offering may pass through, commonly introduction, growth, maturity and decline."),
+            ("Profitability", "The ability of a business to generate profit relative to revenue, assets, capital or other measures."),
+            ("Project Management", "Planning, organising and controlling work to deliver agreed outcomes within constraints."),
+            ("Public Relations (PR)", "Managing communication and relationships between an organisation and its publics."),
+        ],
+        "Q": [
+            ("Quality Assurance (QA)", "Planned processes used to provide confidence that requirements and standards will be met."),
+            ("Quality Control (QC)", "Checking outputs or processes to identify defects and determine whether requirements are met."),
+            ("Qualitative Research", "Research focused on meanings, experiences and explanations, often using interviews or observations."),
+            ("Quantitative Research", "Research using numerical data and statistical methods to measure patterns or test questions."),
+        ],
+        "R": [
+            ("Return on Investment (ROI)", "A measure comparing the gain or benefit from an investment with its cost."),
+            ("Return on Equity (ROE)", "Net income relative to shareholders' equity, indicating returns generated on book equity."),
+            ("Revenue", "Income earned from selling goods, delivering services or other ordinary business activities."),
+            ("Risk Management", "Identifying, assessing and responding to risks that could affect objectives."),
+            ("ROI of Marketing", "An assessment of the value generated by marketing relative to the cost of marketing activity."),
+            ("RFM Analysis", "Customer analysis using recency, frequency and monetary value of purchases or activity."),
+        ],
+        "S": [
+            ("SaaS (Software as a Service)", "Software delivered over the internet, typically accessed through a subscription or usage-based model."),
+            ("Scenario Planning", "Exploring plausible future situations to prepare decisions and responses under uncertainty."),
+            ("Segmentation, Targeting and Positioning (STP)", "A marketing process for grouping a market, selecting target groups and defining a distinctive offer."),
+            ("SEO (Search Engine Optimisation)", "Improving a website's visibility in unpaid search-engine results."),
+            ("Six Sigma", "A data-oriented approach to improving process quality and reducing variation and defects."),
+            ("Stakeholder", "A person or group that can affect or is affected by an organisation's activities or decisions."),
+            ("Strategic Planning", "Setting long-term direction and deciding priorities, resources and actions to achieve objectives."),
+            ("Supply Chain", "The connected activities and parties involved in sourcing, making and delivering a product or service."),
+            ("SWOT Analysis", "A framework for examining internal strengths and weaknesses and external opportunities and threats."),
+            ("Sustainability", "Operating in ways that consider long-term environmental, social and economic impacts."),
+        ],
+        "T": [
+            ("Target Market", "The specific customer group an organisation intends to serve with its offering."),
+            ("Talent Acquisition", "The process of identifying, attracting, assessing and hiring people for organisational needs."),
+            ("Total Quality Management (TQM)", "An organisation-wide approach to continuous quality improvement and customer satisfaction."),
+            ("Trade Credit", "A supplier arrangement that allows a buyer to pay for goods or services at a later date."),
+            ("Trade Marketing", "Marketing activities designed to improve product availability, visibility and sales through channel partners."),
+            ("Turnover", "Depending on context, revenue generated by a business or the rate at which employees leave and are replaced."),
+        ],
+        "U": [
+            ("Unique Selling Proposition (USP)", "The distinctive benefit or feature used to differentiate an offering from alternatives."),
+            ("Upselling", "Encouraging a customer to buy a higher-value version or add-on to their intended purchase."),
+            ("User Experience (UX)", "The overall experience a person has while interacting with a product, service or system."),
+            ("Utilisation Rate", "The share of available capacity or time that is actively used for productive work."),
+        ],
+        "V": [
+            ("Value Chain", "The connected activities through which an organisation creates and delivers value to customers."),
+            ("Value Proposition", "The specific benefits and value an offering promises to its target customers."),
+            ("Variable Cost", "A cost that changes with output, sales volume or activity level."),
+            ("Variance Analysis", "Comparing actual results with budgets, standards or forecasts to understand differences."),
+            ("Venture Capital", "Investment funding provided to businesses with high growth potential, often in exchange for equity."),
+        ],
+        "W": [
+            ("Working Capital", "Current assets minus current liabilities; a measure of short-term operating resources."),
+            ("Workforce Planning", "Forecasting workforce demand and supply and planning how to close gaps in skills or staffing."),
+            ("Weighted Average Cost of Capital (WACC)", "The average required return on a company's financing sources, weighted by their proportions."),
+        ],
+        "X": [
+            ("X-efficiency", "How effectively a business converts inputs into outputs compared with the best achievable performance."),
+            ("XaaS (Anything as a Service)", "A broad term for technology or business capabilities delivered as services, often over the internet."),
+        ],
+        "Y": [
+            ("Yield Management", "Adjusting price, capacity or availability to improve revenue from time-sensitive or perishable capacity."),
+            ("Year-over-Year (YoY)", "A comparison of a measure with the same period in the previous year."),
+        ],
+        "Z": [
+            ("Zero-based Budgeting", "A budgeting method in which expenses must be justified from a zero base for each period."),
+            ("Zero-based Thinking", "Reassessing an activity or decision from first principles rather than assuming existing choices should continue."),
+        ],
+    }
+
+    with st.expander("Business Glossary A–Z", expanded=False):
+        st.write("A cross-industry reference for business, management, marketing, finance, HR, analytics, operations and placement terminology.")
+        glossary_query = st.text_input("Search glossary terms", key="industry_glossary_search", placeholder="Search a term or definition")
+        glossary_letters = ["All"] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        selected_glossary_letter = st.selectbox("Browse by letter", glossary_letters, key="industry_glossary_letter")
+        glossary_matches = []
+        q = glossary_query.strip().casefold()
+        for letter, entries in BUSINESS_GLOSSARY.items():
+            if selected_glossary_letter != "All" and letter != selected_glossary_letter:
+                continue
+            for term, definition in entries:
+                if not q or q in term.casefold() or q in definition.casefold():
+                    glossary_matches.append((letter, term, definition))
+        if glossary_matches:
+            st.caption(f"{len(glossary_matches)} term(s) found")
+            current_letter = None
+            for letter, term, definition in glossary_matches:
+                if letter != current_letter:
+                    st.markdown(f"### {letter}")
+                    current_letter = letter
+                st.markdown(f"**{term}**  ")
+                st.write(definition)
+        else:
+            st.info("No glossary terms match that search. Try another keyword or select All letters.")
+
     st.markdown("---")
     st.markdown("## 3. The 5 Things You Must Know Before Any Company Interview")
     must_cols = st.columns(5)
