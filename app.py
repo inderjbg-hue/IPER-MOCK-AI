@@ -7225,63 +7225,161 @@ elif selected_nav == "My Progress Dashboard":
     weekly_gd_video_items = [item for item in weekly_gd_items if _is_within_last_seven_days(item.get("created_at") or item.get("timestamp"))]
     weekly_live_gd_items = [item for item in live_gd_items if _is_within_last_seven_days(item.get("created_at") or item.get("timestamp"))]
     weekly_pi_count = len(weekly_history)
-    weekly_gd_count = len(weekly_gd_items) + len(live_gd_items)
+    _all_gd_count_map = {}
+    for _gd_item in list(weekly_gd_items) + list(live_gd_items):
+        _gd_key = str(_gd_item.get("id") or _gd_item.get("created_at") or id(_gd_item))
+        _all_gd_count_map[_gd_key] = _gd_item
+    weekly_gd_count = len(_all_gd_count_map)
     weekly_pi_recent_count = len(weekly_pi_items)
-    weekly_gd_recent_count = len(weekly_gd_video_items) + len(weekly_live_gd_items)
+    _recent_gd_count_map = {}
+    for _gd_item in list(weekly_gd_video_items) + list(weekly_live_gd_items):
+        _gd_key = str(_gd_item.get("id") or _gd_item.get("created_at") or id(_gd_item))
+        _recent_gd_count_map[_gd_key] = _gd_item
+    weekly_gd_recent_count = len(_recent_gd_count_map)
     weekly_target_count = 6
     weekly_done_count = min(weekly_pi_recent_count, 4) + min(weekly_gd_recent_count, 2)
     weekly_pct = int(round(100 * weekly_done_count / weekly_target_count))
 
-    st.markdown("### 1. Overall Performance")
-    overall_cols = st.columns(4)
-    overall_cols[0].metric("PI Attempts", weekly_pi_count)
-    overall_cols[1].metric("GD Attempts", weekly_gd_count)
-    pi_last = weekly_history[-1] if weekly_history else {}
-    pi_fb = pi_last.get("Feedback") or {}
-    overall_cols[2].metric("Latest PI Grade", grade_from_score(pi_last.get("Score", 0)) if pi_last else "—")
-    latest_gd_item = (weekly_gd_items or live_gd_items or [None])[0]
-    latest_gd_fb = _live_gd_report_for_student(latest_gd_item, st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))) if latest_gd_item else {}
-    gd_latest_score = (latest_gd_fb or {}).get("OverallScore")
-    overall_cols[3].metric("Latest GD Grade", grade_from_score(gd_latest_score) if gd_latest_score is not None else "—")
+    # Normalize saved grades for a student-friendly overview.
+    def _safe_score(value):
+        try:
+            return max(0.0, min(100.0, float(value or 0)))
+        except (TypeError, ValueError):
+            return 0.0
 
-    st.markdown("### 2. Weekly Performance")
-    st.caption("Weekly target: complete 4 Personal Interview (PI) attempts and 2 Group Discussion (GD) attempts.")
-    st.progress(weekly_pct, text=f"{weekly_done_count} of 6 weekly practice targets completed ({weekly_pct}%)")
+    pi_scores = [_safe_score(item.get("Score", 0)) for item in weekly_history]
+    pi_avg = (sum(pi_scores) / len(pi_scores)) if pi_scores else None
+    pi_latest = weekly_history[-1] if weekly_history else {}
+    pi_fb = pi_latest.get("Feedback") or {}
+
+    # Deduplicate GD rows by saved assessment id and calculate their actual overall scores.
+    gd_by_id = {}
+    for item in list(weekly_gd_items) + list(live_gd_items):
+        gd_by_id[str(item.get("id") or item.get("created_at") or id(item))] = item
+    all_gd_items = sorted(gd_by_id.values(), key=lambda item: str(item.get("created_at") or item.get("timestamp") or ""))
+    gd_scored_items = []
+    for item in all_gd_items:
+        report = _live_gd_report_for_student(item, st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))) or {}
+        score = report.get("OverallScore")
+        if score is not None:
+            gd_scored_items.append((item, _safe_score(score), report))
+    gd_scores = [entry[1] for entry in gd_scored_items]
+    gd_avg = (sum(gd_scores) / len(gd_scores)) if gd_scores else None
+    latest_gd_entry = gd_scored_items[-1] if gd_scored_items else None
+    latest_gd_item = latest_gd_entry[0] if latest_gd_entry else None
+    latest_gd_fb = latest_gd_entry[2] if latest_gd_entry else {}
+    overall_scores = pi_scores + gd_scores
+    overall_avg = (sum(overall_scores) / len(overall_scores)) if overall_scores else None
+
+    st.markdown("## Overall Feedback")
+    grade_cols = st.columns(5)
+    grade_cols[0].metric("GD Attempts", len(all_gd_items))
+    grade_cols[1].metric("GD Average Grade", grade_from_score(gd_avg) if gd_avg is not None else "—")
+    grade_cols[2].metric("PI Attempts", len(weekly_history))
+    grade_cols[3].metric("PI Average Grade", grade_from_score(pi_avg) if pi_avg is not None else "—")
+    grade_cols[4].metric("Overall Grade", grade_from_score(overall_avg) if overall_avg is not None else "—")
+
+    st.markdown("## Weekly Progress")
+    st.caption("Weekly target: 4 Personal Interview (PI) attempts and 2 Group Discussion (GD) attempts in the last seven days.")
+    st.progress(weekly_pct, text=f"{weekly_done_count} of 6 weekly attempts completed ({weekly_pct}%)")
     weekly_cols = st.columns(2)
-    weekly_cols[0].metric("PI target (last 7 days)", f"{min(weekly_pi_recent_count, 4)} / 4")
-    weekly_cols[1].metric("GD target (last 7 days)", f"{min(weekly_gd_recent_count, 2)} / 2")
+    weekly_cols[0].metric("PI attempts this week", f"{min(weekly_pi_recent_count, 4)} / 4")
+    weekly_cols[1].metric("GD attempts this week", f"{min(weekly_gd_recent_count, 2)} / 2")
+    if weekly_pi_recent_count >= 4 and weekly_gd_recent_count >= 2:
+        st.success("🎉 Congratulations! You have completed all 4 PI and 2 GD practice targets for this week. Keep the momentum going and focus on the quality of your next attempts.")
+    else:
+        remaining_pi = max(0, 4 - weekly_pi_recent_count)
+        remaining_gd = max(0, 2 - weekly_gd_recent_count)
+        st.info(f"You're making progress! This week, aim to complete {remaining_pi} more PI attempt(s) and {remaining_gd} more GD attempt(s) to reach your target.")
 
-    st.markdown("### 3. Action Plans for the Week Ahead")
+    # Self-explanatory infographic: completed attempts versus weekly target.
+    st.markdown("### Weekly Target at a Glance")
+    chart_cols = st.columns(2)
+    with chart_cols[0]:
+        st.markdown("**PI — target 4**")
+        st.progress(min(weekly_pi_recent_count, 4) / 4, text=f"{min(weekly_pi_recent_count, 4)} of 4 completed")
+    with chart_cols[1]:
+        st.markdown("**GD — target 2**")
+        st.progress(min(weekly_gd_recent_count, 2) / 2, text=f"{min(weekly_gd_recent_count, 2)} of 2 completed")
+
+    # Compare average PI and GD performance without inventing missing grades.
+    if pi_avg is not None or gd_avg is not None:
+        try:
+            import pandas as pd
+            grade_chart_rows = []
+            if pi_avg is not None:
+                grade_chart_rows.append({"Assessment": "PI average", "Score (0–100)": round(pi_avg, 1)})
+            if gd_avg is not None:
+                grade_chart_rows.append({"Assessment": "GD average", "Score (0–100)": round(gd_avg, 1)})
+            st.markdown("### Performance Snapshot")
+            st.caption("Average scores are shown only where recorded assessment scores are available. The portal continues to display grades as the primary result.")
+            st.bar_chart(pd.DataFrame(grade_chart_rows).set_index("Assessment"), y="Score (0–100)", height=220)
+        except Exception:
+            pass
+
+    st.markdown("## 5 Action Steps for Next Week")
     action_plans = []
     if weekly_pi_recent_count < 4:
-        action_plans.append(f"Complete {4 - weekly_pi_recent_count} more PI practice attempt(s) in the last-seven-day target window. Review each answer for structure, relevance and evidence.")
+        action_plans.append(f"Complete {4 - weekly_pi_recent_count} more PI attempt(s). Practise a concise, structured answer to ‘Tell me about yourself’ and one role-specific question.")
     else:
-        action_plans.append("Review your PI feedback and practise improving one recurring communication or technical gap.")
+        action_plans.append("Complete one additional PI mock or review your latest PI recording; strengthen evidence, examples and answer structure rather than repeating memorised lines.")
     if weekly_gd_recent_count < 2:
-        action_plans.append(f"Complete {2 - weekly_gd_recent_count} more GD practice attempt(s) in the last-seven-day target window. Focus on concise contributions, listening and balanced participation.")
+        action_plans.append(f"Complete {2 - weekly_gd_recent_count} more GD attempt(s). Make an opening contribution, build on a peer's point and finish with a concise summary.")
     else:
-        action_plans.append("Review your GD feedback and prepare one specific improvement for your next discussion.")
-    if len(weekly_history) and pi_fb:
-        action_plans.append(str(pi_fb.get("NextPracticeFocus") or "Use your latest PI feedback to practise one answer and record a stronger second attempt."))
-    else:
-        action_plans.append("After your next PI attempt, read the feedback and turn the top recommendation into a concrete practice task.")
-    for plan in action_plans[:3]:
-        st.markdown(f"- {plan}")
-
-    st.markdown("### PI Overall Feedback")
+        action_plans.append("Review one GD assessment and practise improving turn-taking, active listening and evidence-backed contributions.")
     if pi_fb:
+        action_plans.append(str(pi_fb.get("NextPracticeFocus") or "For PI, prepare two STAR examples and connect each answer to the role's requirements."))
+    else:
+        action_plans.append("For PI, prepare two genuine examples using Situation, Task, Action and Result; review technical or role-related concepts before the next mock.")
+    if latest_gd_fb:
+        gd_focus = latest_gd_fb.get("PriorityImprovements") or latest_gd_fb.get("NextActionPlan") or []
+        if isinstance(gd_focus, list):
+            gd_focus = "; ".join(str(x) for x in gd_focus[:2])
+        action_plans.append(f"For GD, work on the latest feedback priority: {gd_focus}" if gd_focus else "For GD, support key points with examples or facts and respond constructively to another participant.")
+    else:
+        action_plans.append("For GD, practise supporting each major point with an example or fact and respectfully responding to a different viewpoint.")
+    action_plans.append("At the end of each practice, record one strength, one improvement and one specific behaviour to apply in the next attempt.")
+    for idx, plan in enumerate(action_plans[:5], 1):
+        st.markdown(f"**{idx}.** {plan}")
+
+    st.markdown("## Overall GD Feedback")
+    if latest_gd_item:
+        _render_live_gd_feedback_summary(latest_gd_item, st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")), heading="")
+    else:
+        st.info("Complete a GD assessment to see your overall GD feedback here.")
+
+    st.markdown("## Overall PI Feedback")
+    if pi_fb:
+        st.markdown("**Communication**")
         st.write(pi_fb.get("CommunicationAssessment", "Communication feedback is not available for the latest PI attempt."))
+        st.markdown("**Technical knowledge**")
         st.write(pi_fb.get("TechnicalKnowledgeAssessment", "Technical feedback is not available for the latest PI attempt."))
         if pi_fb.get("NextPracticeFocus"):
             st.info(pi_fb.get("NextPracticeFocus"))
     else:
         st.info("Complete an Interview Practice attempt to see your overall PI feedback here.")
 
-    st.markdown("### GD Overall Feedback")
-    if latest_gd_item:
-        _render_live_gd_feedback_summary(latest_gd_item, st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")), heading="")
+    st.markdown("## GD and PI Attempt Timeline")
+    timeline_rows = []
+    for item in weekly_history:
+        fb = item.get("Feedback") or {}
+        timestamp = item.get("Timestamp") or item.get("timestamp") or "Timestamp unavailable"
+        timeline_rows.append({"Date & Time": str(timestamp), "Practice": "PI", "Grade": grade_from_score(item.get("Score", 0)), "Details": str(item.get("Company") or item.get("QuestionType") or "Interview Practice")})
+    for item, score, _report in gd_scored_items:
+        timestamp = item.get("created_at") or item.get("timestamp") or "Timestamp unavailable"
+        timeline_rows.append({"Date & Time": str(timestamp), "Practice": "GD", "Grade": grade_from_score(score), "Details": str(item.get("topic") or item.get("source_type") or "GD Assessment")})
+    if timeline_rows:
+        try:
+            import pandas as pd
+            timeline_df = pd.DataFrame(timeline_rows)
+            timeline_df["_sort"] = pd.to_datetime(timeline_df["Date & Time"], errors="coerce")
+            timeline_df = timeline_df.sort_values("_sort", ascending=False, na_position="last").drop(columns=["_sort"])
+            st.dataframe(timeline_df, use_container_width=True, hide_index=True)
+        except Exception:
+            for row in reversed(timeline_rows):
+                st.write(f"{row['Date & Time']} · {row['Practice']} · Grade {row['Grade']} · {row['Details']}")
     else:
-        st.info("Complete a GD assessment to see your overall GD feedback here.")
+        st.info("Your GD and PI attempt timestamps and grades will appear here after your first assessment.")
 
     st.markdown("---")
     st.markdown("### Detailed Performance History")
