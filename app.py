@@ -8,6 +8,8 @@ import json
 import queue
 import wave
 import re
+import unicodedata
+import difflib
 import uuid
 import random
 import pandas as pd
@@ -4638,8 +4640,34 @@ elif selected_nav == "Industry & Company Insights":
     st.caption("Search across the wider company directory—not only companies that have visited IPER for placements.")
     company_query = st.text_input("Company name", placeholder="Try HDFC, Nestlé, Tata, Deloitte, DMart, Infosys…", key="all_company_search")
     if company_query.strip():
-        matches = [x for x in company_directory.values() if company_query.strip().casefold() in x["Company"].casefold()]
-        matches.sort(key=lambda x: (x["Company"].casefold(), x["Sector"].casefold()))
+        # Accent-insensitive, partial-name search: e.g. "Nestle" finds "Nestlé India".
+        # Also tolerate punctuation and common legal suffixes so users do not need the exact registered name.
+        def _company_search_key(value):
+            value = unicodedata.normalize("NFKD", str(value or ""))
+            value = "".join(ch for ch in value if not unicodedata.combining(ch))
+            value = value.casefold()
+            value = re.sub(r"[^a-z0-9]+", " ", value)
+            return re.sub(r"\s+", " ", value).strip()
+
+        query_key = _company_search_key(company_query)
+        query_tokens = [token for token in query_key.split() if token]
+        all_companies = list(company_directory.values())
+        scored_matches = []
+        for item in all_companies:
+            name_key = _company_search_key(item["Company"])
+            # Primary match: normalized substring, then token-prefix match (e.g. "nest"),
+            # then a forgiving fuzzy match for small spelling mistakes.
+            score = 0
+            if query_key and query_key in name_key:
+                score = 100 + len(query_key)
+            elif query_tokens and all(any(part.startswith(token) for part in name_key.split()) for token in query_tokens):
+                score = 70 + len(query_tokens)
+            elif query_key and difflib.SequenceMatcher(None, query_key, name_key).ratio() >= 0.72:
+                score = int(50 * difflib.SequenceMatcher(None, query_key, name_key).ratio())
+            if score:
+                scored_matches.append((score, item))
+        scored_matches.sort(key=lambda pair: (-pair[0], pair[1]["Company"].casefold(), pair[1]["Sector"].casefold()))
+        matches = [item for _, item in scored_matches]
         if matches:
             st.caption(f"Showing {len(matches)} matching companies")
             for company in matches:
@@ -4670,7 +4698,7 @@ elif selected_nav == "Industry & Company Insights":
                     ], 1):
                         st.markdown(f"{i}. {question}")
         else:
-            st.info("No exact name match in the current directory. Try a shorter company name or keyword. This directory is representative, so it may not contain every company in India.")
+            st.info("No matching company found. Try a shorter name or a distinctive keyword (for example, “Nestle”, “Tata” or “HDFC”). Search is not case-sensitive and ignores accents and punctuation. The directory is representative, so it may not contain every company in India.")
     else:
         st.info("Enter a company name above to search the wider directory.")
 
