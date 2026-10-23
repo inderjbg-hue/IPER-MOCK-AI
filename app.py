@@ -2226,14 +2226,18 @@ def clean_generated_about_yourself(text):
 
 def generate_about_yourself(profile):
     """Generate a self-introduction using the agreed MBA-first structure.
-    Class 10 and 12 data is deliberately excluded from the prompt and output.
+    Class 10 and 12 percentages are included at the end when supplied.
     """
     if not client:
         return ""
 
-    # Explicit whitelist: secondary-school percentages cannot enter the AI prompt.
+    # Explicit whitelist: academic percentages enter the prompt so the model can
+    # reliably include Class 10 and Class 12 percentages at the end of every draft.
     approved_profile = {
+        "Class 10 percentage (include near the end if supplied)": profile.get("tenth_percentage", ""),
+        "Class 12 percentage (include near the end if supplied)": profile.get("twelfth_percentage", ""),
         "MBA institute and location": profile.get("mba_institute", ""),
+        "MBA percentage (include only if supplied and relevant)": profile.get("mba_percentage", ""),
         "Why MBA / objectives": profile.get("mba_choice", ""),
         "Specialisation and reason for choosing it": profile.get("mba_specialisation", ""),
         "MBA learning (case studies, simulations, projects, group assignments)": profile.get("mba_learning", ""),
@@ -2241,6 +2245,7 @@ def generate_about_yourself(profile):
         "Internship / live project": profile.get("internship", ""),
         "Special skills and certifications, including where learned": profile.get("certification_courses", ""),
         "Graduation": profile.get("undergraduation", ""),
+        "Graduation percentage (include only if supplied and relevant)": profile.get("ug_percentage", ""),
         "School background (only meaningful experiences; no marks)": profile.get("school_background", ""),
         "Family values (only details the student is comfortable sharing)": profile.get("family_values", ""),
         "Personality, strengths and uniqueness": profile.get("personality", ""),
@@ -2260,12 +2265,14 @@ FOLLOW THIS STRUCTURE STRICTLY:
    - Special skills, where they were learned, and their relevance to an organisation.
    - Career aspirations: desired role/function and future direction.
 2. GRADUATION: institute/location, course choice, relevant achievements, and learning connected to management/MBA.
-3. SCHOOL BACKGROUND: only a meaningful experience or achievement if supplied; no academic marks.
+3. SCHOOL BACKGROUND: briefly mention meaningful school experiences if supplied.
 4. FAMILY AND VALUES: include only supplied details the student is comfortable discussing.
 5. PERSONALITY AND UNIQUENESS: authentic strengths, interests and experiences that distinguish the student.
+6. ACADEMIC PERCENTAGES — ENDING: at the very end of the answer, include the supplied Class 10 and Class 12 percentages in one short, natural sentence. Include both if both are available; include only the one supplied if the other is blank. Do not invent, calculate, or infer any percentage.
 
 STRICT RULES:
-- Class 10 and Class 12 must NOT be included. Do not mention school marks, percentages, academic scores or grades.
+- Class 10 and Class 12 percentages must be included at the end whenever supplied, as specified in step 6.
+- MBA and graduation percentages may be mentioned only if supplied and they fit naturally; never invent or infer them.
 - Only use facts explicitly provided below. Never invent institutions, roles, achievements, skills, responsibilities, durations, outcomes or goals.
 - If a section is blank, omit it. Do not compensate with generic claims.
 - Write in first person, simple and natural English, confident but not exaggerated, suitable for a 60–90 second spoken answer.
@@ -5010,6 +5017,16 @@ elif selected_nav == "About Myself":
     except Exception:
         _about_extra = {"personality": str(existing_profile.get("achievements", "") or "")}
 
+    st.markdown("### Academic Percentages")
+    st.caption("These details are saved to your profile. Supplied Class 10 and Class 12 percentages will be included at the end of the generated interview introduction.")
+    percent_col1, percent_col2 = st.columns(2)
+    with percent_col1:
+        tenth_percentage = st.text_input("Class 10 Percentage", value=existing_profile.get("tenth_percentage", ""), placeholder="e.g., 82%", key="about_tenth_percentage")
+        ug_percentage = st.text_input("Graduation / UG Percentage", value=_about_extra.get("ug_percentage", ""), placeholder="e.g., 76%", key="about_ug_percentage")
+    with percent_col2:
+        twelfth_percentage = st.text_input("Class 12 Percentage", value=existing_profile.get("twelfth_percentage", ""), placeholder="e.g., 78%", key="about_twelfth_percentage")
+        mba_percentage = st.text_input("MBA / PG Percentage", value=_about_extra.get("mba_percentage", ""), placeholder="e.g., 74%", key="about_mba_percentage")
+
     st.markdown("### 1. MBA Journey — Main Focus")
     st.caption("Describe your MBA experience in the most detail. Use real examples and explain what you learned.")
     mba_institute = st.text_input("MBA institute and location", value=existing_profile.get("mba_institute", ""), placeholder="Institute name, city and what makes it special", key="about_mba_institute")
@@ -5034,7 +5051,8 @@ elif selected_nav == "About Myself":
         "undergraduation": graduation.strip(),
         "post_graduation": "\n".join(x for x in [mba_institute, mba_choice, mba_specialisation, mba_learning] if x.strip()),
         "internship": internship.strip(), "certification_courses": skills.strip(),
-        "activities_participated": mba_activities.strip(), "achievements": json.dumps({"personality": personality.strip(), "school": school.strip(), "family_values": family_values.strip()}, ensure_ascii=False),
+        "activities_participated": mba_activities.strip(), "achievements": json.dumps({"personality": personality.strip(), "school": school.strip(), "family_values": family_values.strip(), "ug_percentage": ug_percentage.strip(), "mba_percentage": mba_percentage.strip()}, ensure_ascii=False),
+        "tenth_percentage": tenth_percentage.strip(), "twelfth_percentage": twelfth_percentage.strip(),
         "professional_interest": career_goals.strip(),
         # Additional structured answers are included in the saved profile hash and draft context.
         "school_background": school.strip(), "family_values": family_values.strip(),
@@ -5083,6 +5101,8 @@ elif selected_nav == "About Myself":
             "school_background": school,
             "family_values": family_values,
             "personality": personality,
+            "ug_percentage": ug_percentage,
+            "mba_percentage": mba_percentage,
             "professional_interest": career_goals,
         })
         with st.spinner("Preparing a factual draft from your profile..."):
