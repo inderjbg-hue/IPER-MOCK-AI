@@ -3162,11 +3162,35 @@ Do not invent facts. When evidence is limited, clearly say the feedback is based
     return get_groq_response(prompt)
 
 def generate_career_objective_and_power_words(resume_details, jd_text, student_name):
-    prompt = f"""You are an MBA placement advisor at IPER Bhopal. Help {student_name} create a truthful, tailored career objective.
-Use only information supported by the resume and job description. Do not invent experience.
-Resume: {json.dumps(resume_details)}
-Job Description: {jd_text}
-Return ONLY valid JSON with keys: CareerObjectives (3 options), PowerWords (5 tailored words/phrases), WhereToUseThem (5 matching usage suggestions). Use simple, professional language for an MBA fresher."""
+    """Create evidence-based career objectives tailored to the supplied JD."""
+    prompt = f"""You are a careful ATS resume editor and MBA placement advisor at IPER Bhopal.
+Create three concise career-objective options tailored to the actual role and priorities in the supplied Job Description.
+Use powerful, specific verbs and relevant role keywords naturally, but do not exaggerate or claim expertise, experience, skills, achievements, or outcomes not supported by the candidate evidence. Do not merely copy the JD. Do not describe a fresher as experienced unless the evidence supports it. Prefer a clear contribution the candidate can realistically make and a credible development goal.
+Candidate: {student_name}
+Verified resume/profile evidence: {json.dumps(resume_details, ensure_ascii=False)}
+Target Job Description: {str(jd_text or '')[:9000]}
+Return ONLY valid JSON with keys: CareerObjectives (exactly 3 options), PowerWords (5 useful words/phrases grounded in the JD), WhereToUseThem (5 matching usage suggestions). Simple, professional language. If evidence is limited, keep objectives broad and truthful."""
+    return get_groq_response(prompt)
+
+
+def strengthen_resume_wording(resume_text, jd_text="", student_name="Candidate", profile_evidence=None):
+    """Refine terse resume notes into clear professional wording without adding facts."""
+    prompt = f"""You are an expert ATS resume editor for IPER PEPTECH. Rewrite the candidate's existing resume content to be clear, concise, professional, and achievement-oriented while preserving every fact.
+Rules:
+- Convert shorthand into polished, grammatically correct resume wording. Example: 'Winner Karate State Level' may become 'Winner, State-Level Karate Competition' only if that is exactly what the source means; do not invent a year, medal, rank, event name, or details.
+- Use strong action verbs where the source supports an action. Do not turn participation into leadership, a general achievement into a quantified result, or an activity into employment.
+- Never invent numbers, impact, awards, dates, employers, responsibilities, qualifications, skills, publications, or proficiency.
+- Tailor emphasis and wording to the JD only where the candidate's evidence supports it. Do not add JD keywords as skills unless supported.
+- Keep contact details, names, education, grades, employers, dates, and claims unchanged in meaning.
+- Use standard ATS headings and simple hyphen bullets. No tables, columns, Markdown, JSON, commentary, or placeholders.
+- Keep the candidate's existing sections and return the full revised resume only.
+Candidate: {student_name}
+Verified profile evidence: {json.dumps(profile_evidence or {}, ensure_ascii=False)}
+Current resume text:
+{str(resume_text or '')[:10000]}
+Target Job Description (may be empty):
+{str(jd_text or '')[:9000]}
+"""
     return get_groq_response(prompt)
 
 def generate_certification_advice(resume_details, jd_text, student_name):
@@ -5926,7 +5950,7 @@ Resume text:
             "Editable Professional Resume Draft", key="resume_editor_text", height=360,
             placeholder="Review or edit your uploaded/verified resume here, then tailor it to the target job..."
         )
-        ai_edit_col, ai_edit_help_col = st.columns([1, 2])
+        ai_edit_col, ai_refine_col, ai_edit_help_col = st.columns([1, 1, 2])
         with ai_edit_col:
             if st.button("Tailor Resume to This Job", key="ai_tailor_resume_to_jd", use_container_width=True):
                 if not st.session_state.get("resume_details"):
@@ -5953,8 +5977,22 @@ Resume text:
                         st.rerun()
                     else:
                         st.error("The resume draft could not be generated. Your current draft remains unchanged.")
+        with ai_refine_col:
+            if st.button("Strengthen Resume Wording", key="ai_strengthen_resume_wording", use_container_width=True):
+                current_text = str(resume_editor_text or "").strip()
+                if not current_text:
+                    st.warning("Add or upload your resume content first.")
+                else:
+                    profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
+                    with st.spinner("Refining wording while preserving the candidate's facts..."):
+                        refined_text = strengthen_resume_wording(current_text, str(jd_text or st.session_state.get("resume_workspace_jd", "")), account_name, {"resume": st.session_state.get("resume_details") or {}, "About_Myself_Profile": profile_context})
+                    if refined_text and not refined_text.strip().lower().startswith(("execution error", "groq api key is missing", "error")):
+                        st.session_state["pending_resume_editor_text"] = clean_resume_draft(refined_text)
+                        st.rerun()
+                    else:
+                        st.error("The wording refinement could not be generated. Your current draft remains unchanged.")
         with ai_edit_help_col:
-            st.caption("AI can reorganise and tailor your real experience to the JD. Review every line before saving or downloading; never keep a claim that is not true.")
+            st.caption("Strengthen terse notes into professional wording (for example, 'Winner Karate State Level') without inventing achievements. Tailoring aligns supported evidence with the JD. Review all changes before saving.")
 
     if st.button("Reset JD for Next Job", key="reset_resume_jd", use_container_width=True):
         st.session_state["pending_reset_jd_only"] = True
@@ -6125,7 +6163,27 @@ elif selected_nav == "Career Development":
                 try:
                     data=json.loads(raw.replace("```json","").replace("```","").strip())
                     st.markdown("### Career Objective Options")
-                    for i,x in enumerate(data.get("CareerObjectives",[]),1): st.info(f"**Option {i}:** {x}")
+                    objectives = [str(x).strip() for x in data.get("CareerObjectives", []) if str(x).strip()]
+                    for i, objective in enumerate(objectives, 1):
+                        st.info(f"**Option {i}:** {objective}")
+                        if st.button(f"Use Objective {i} in My Resume", key=f"apply_career_objective_{i}", use_container_width=True):
+                            current_text = str(st.session_state.get("resume_editor_text", "") or "").strip()
+                            lines = current_text.splitlines()
+                            aliases = {"CAREER OBJECTIVE", "OBJECTIVE", "PROFESSIONAL OBJECTIVE"}
+                            start = next((idx for idx, line in enumerate(lines) if line.strip().strip(":").upper() in aliases), None)
+                            if start is not None:
+                                end = next((idx for idx in range(start + 1, len(lines)) if lines[idx].strip().upper() in {"PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE", "SKILLS", "KEY SKILLS", "EDUCATION", "EXPERIENCE", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE", "INTERNSHIP", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "ACTIVITIES"}), len(lines))
+                                lines[start:end] = ["CAREER OBJECTIVE", objective, ""]
+                            else:
+                                insert_at = next((idx for idx, line in enumerate(lines) if line.strip().upper() in {"PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE"}), None)
+                                block = ["CAREER OBJECTIVE", objective, ""]
+                                if insert_at is None:
+                                    lines = block + lines
+                                else:
+                                    lines[insert_at:insert_at] = block
+                            st.session_state["pending_resume_editor_text"] = clean_resume_draft("\n".join(lines))
+                            st.session_state["resume_workspace_jd"] = career_jd.strip()
+                            st.success("Objective selected. Open Resume Checker & Job Matcher to review it in your editable resume.")
                     st.markdown("### Powerful Words Tailored to the JD")
                     for word,use in zip(data.get("PowerWords",[]),data.get("WhereToUseThem",[])): st.markdown(f"- **{word}** — {use}")
                 except Exception: st.markdown(raw)
