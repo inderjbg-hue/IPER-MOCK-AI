@@ -4961,80 +4961,97 @@ Be concrete and company-specific. If a fact is uncertain or may have changed, la
 # SECTION: ABOUT MYSELF
 elif selected_nav == "About Myself":
     st.title("About Myself")
-    st.caption("Enter your own information, edit your introduction and save it. AI generation is optional — your personal wording always remains under your control.")
+    st.caption("Build a truthful, structured introduction for placement interviews. Give the most attention to your MBA journey, then connect it with your education, values and personality.")
 
     student_id = st.session_state.get("student_id")
     existing_profile = load_student_profile(student_id) if student_id else {}
+    # Store the additional structured fields inside an existing text column to remain
+    # compatible with older SQLite/PostgreSQL schemas; legacy plain-text values remain readable.
+    try:
+        _about_extra = json.loads(existing_profile.get("achievements", "") or "{}")
+        if not isinstance(_about_extra, dict):
+            _about_extra = {"personality": str(existing_profile.get("achievements", "") or "")}
+    except Exception:
+        _about_extra = {"personality": str(existing_profile.get("achievements", "") or "")}
 
-    fields = {
-        "tenth_percentage": st.text_input("10th Percentage", value=existing_profile.get("tenth_percentage", ""), placeholder="e.g., 82%"),
-        "twelfth_percentage": st.text_input("12th Percentage", value=existing_profile.get("twelfth_percentage", ""), placeholder="e.g., 78%"),
-        "undergraduation": st.text_area("Undergraduation", value=existing_profile.get("undergraduation", ""), placeholder="Degree, college/university, specialization, year, relevant learning", height=90),
-        "post_graduation": st.text_area("Post Graduation", value=existing_profile.get("post_graduation", ""), placeholder="MBA/PG degree, specialization, institute, relevant learning", height=90),
-        "internship": st.text_area("Internship", value=existing_profile.get("internship", ""), placeholder="Company, role, duration, responsibilities, key learning", height=100),
-        "certification_courses": st.text_area("Certification Courses", value=existing_profile.get("certification_courses", ""), placeholder="Courses, certifications, platforms and key skills learned", height=100),
-        "activities_participated": st.text_area("Activities Participated", value=existing_profile.get("activities_participated", ""), placeholder="Clubs, events, competitions, sports, volunteering, leadership activities", height=100),
-        "achievements": st.text_area("Achievements", value=existing_profile.get("achievements", ""), placeholder="Academic, professional, competition or extracurricular achievements", height=100),
-        "professional_interest": st.text_area("Professional Interest", value=existing_profile.get("professional_interest", ""), placeholder="Roles, sectors, functions or career areas you want to pursue", height=100),
+    st.markdown("### 1. MBA Journey — Main Focus")
+    st.caption("Describe your MBA experience in the most detail. Use real examples and explain what you learned.")
+    mba_institute = st.text_input("MBA institute and location", value=existing_profile.get("mba_institute", ""), placeholder="Institute name, city and what makes it special", key="about_mba_institute")
+    mba_choice = st.text_area("Why did you choose an MBA? What are your objectives?", value=existing_profile.get("mba_choice", ""), placeholder="Your reasons for choosing management and what you want to achieve", height=80, key="about_mba_choice")
+    mba_specialisation = st.text_area("Specialisation and reason for choosing it", value=existing_profile.get("mba_specialisation", ""), placeholder="Your specialisation, interests and reasons", height=75, key="about_mba_specialisation")
+    mba_learning = st.text_area("Case studies, simulations, projects and group assignments", value=existing_profile.get("mba_learning", ""), placeholder="What you worked on, your contribution and what you learned", height=90, key="about_mba_learning")
+    mba_activities = st.text_area("Committees, clubs, events and competitions", value=existing_profile.get("activities_participated", ""), placeholder="Activities, your role, contribution and learning", height=85, key="about_activities")
+    internship = st.text_area("Internship / live project", value=existing_profile.get("internship", ""), placeholder="Organisation, location, duration, role, responsibilities, learning and achievements", height=100, key="about_internship")
+    skills = st.text_area("Special skills and where you learned them", value=existing_profile.get("certification_courses", ""), placeholder="Skills, courses/certifications, where you developed them and how they can help an organisation", height=90, key="about_skills")
+    career_goals = st.text_area("Career aspirations", value=existing_profile.get("professional_interest", ""), placeholder="Desired role, sector/function and where you hope to be in the next few years", height=80, key="about_career_goals")
+
+    st.markdown("### 2. Graduation")
+    graduation = st.text_area("Graduation institute, location, course choice and achievements", value=existing_profile.get("undergraduation", ""), placeholder="Degree, college/university, location, why you chose it, awards and learning relevant to management", height=100, key="about_graduation")
+    st.markdown("### 3. School Background")
+    school = st.text_area("School, meaningful experiences and achievements", value=_about_extra.get("school", ""), placeholder="School name/location, achievements and lessons that shaped you", height=75, key="about_school")
+    st.markdown("### 4. Family and Values")
+    family_values = st.text_area("Values and experiences that shaped you", value=_about_extra.get("family_values", ""), placeholder="Share only what you are comfortable discussing in an interview", height=75, key="about_family_values")
+    st.markdown("### 5. Personality and Uniqueness")
+    personality = st.text_area("Strengths, interests and what makes you different", value=_about_extra.get("personality", ""), placeholder="Genuine strengths, interests, responsibilities or experiences that distinguish you", height=85, key="about_personality")
+    tenth = st.text_input("10th Percentage", value=existing_profile.get("tenth_percentage", ""), placeholder="e.g., 82%", key="about_tenth")
+    twelfth = st.text_input("12th Percentage", value=existing_profile.get("twelfth_percentage", ""), placeholder="e.g., 78%", key="about_twelfth")
+
+    # Keep the existing database columns so this update remains compatible with current records.
+    profile_payload = {
+        "tenth_percentage": tenth.strip(), "twelfth_percentage": twelfth.strip(),
+        "undergraduation": graduation.strip(),
+        "post_graduation": "\n".join(x for x in [mba_institute, mba_choice, mba_specialisation, mba_learning] if x.strip()),
+        "internship": internship.strip(), "certification_courses": skills.strip(),
+        "activities_participated": mba_activities.strip(), "achievements": json.dumps({"personality": personality.strip(), "school": school.strip(), "family_values": family_values.strip()}, ensure_ascii=False),
+        "professional_interest": career_goals.strip(),
+        # Additional structured answers are included in the saved profile hash and draft context.
+        "school_background": school.strip(), "family_values": family_values.strip(),
+        "mba_institute": mba_institute.strip(), "mba_choice": mba_choice.strip(),
+        "mba_specialisation": mba_specialisation.strip(), "mba_learning": mba_learning.strip(),
     }
-
-    profile_payload = {k: (v or "").strip() for k, v in fields.items()}
     profile_hash = hashlib.sha256(json.dumps(profile_payload, sort_keys=True).encode("utf-8")).hexdigest()
-    previous_hash = existing_profile.get("profile_hash", "")
 
-    # Editable introduction: never show a preset response when the student has not created one.
-    # If an AI draft was generated on the previous run, load it BEFORE the
-    # text_area widget is instantiated. Streamlit forbids changing a widget
-    # key after that widget has already been created in the same run.
     pending_about = st.session_state.pop("pending_about_yourself_draft", None)
     if pending_about:
         st.session_state["about_yourself_editor"] = pending_about
     elif "about_yourself_editor" not in st.session_state:
         st.session_state["about_yourself_editor"] = existing_profile.get("about_yourself", "") or ""
 
-    st.markdown("### Your About Yourself")
-    st.caption("Write or edit this in your own words. You can use AI to generate a draft, but nothing is saved until you click Save About Myself.")
-    about_text = st.text_area(
-        "About Yourself",
-        key="about_yourself_editor",
-        height=190,
-        placeholder="Write your introduction here in your own words. Example structure: present status → education → internship/projects → strengths/skills → career interest. No preset answer is provided.",
-        label_visibility="collapsed",
-    )
-
+    st.markdown("### Your Interview Introduction")
+    st.caption("You remain in control of the final wording. AI can prepare a draft from the information you provide; it must not invent details.")
+    about_text = st.text_area("About Yourself", key="about_yourself_editor", height=190, placeholder="Write or edit your introduction here.")
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         save_about_clicked = st.button("Save About Myself", use_container_width=True)
     with col2:
         generate_about_clicked = st.button("Generate Draft with AI", use_container_width=True)
     with col3:
-        if existing_profile.get("updated_at"):
-            st.caption(f"Last saved: {existing_profile['updated_at']}")
-        else:
-            st.caption("Not saved yet")
+        st.caption(f"Last saved: {existing_profile['updated_at']}" if existing_profile.get("updated_at") else "Not saved yet")
 
     if save_about_clicked:
-        if not about_text.strip():
-            st.warning("Please write your About Yourself response before saving.")
+        if not student_id:
+            st.error("Your student account could not be identified. Please sign in again.")
         else:
             save_student_profile(student_id, profile_payload, about_text.strip(), profile_hash)
             st.success("Your About Myself profile and introduction have been saved.")
             st.rerun()
 
     if generate_about_clicked:
+        # Extend the draft context while preserving the existing generator/database interface.
+        draft_profile = dict(profile_payload)
+        draft_profile.update({"undergraduation": graduation, "post_graduation": "\n".join([mba_institute, mba_choice, mba_specialisation, mba_learning]),
+                              "internship": internship, "certification_courses": skills,
+                              "activities_participated": mba_activities, "achievements": "\n".join([personality, school, family_values]),
+                              "professional_interest": career_goals})
         with st.spinner("Preparing a factual draft from your profile..."):
-            generated_about = generate_about_yourself(profile_payload)
+            generated_about = generate_about_yourself(draft_profile)
         if generated_about:
-            # Do not write directly to the text_area's session-state key after
-            # the widget has been instantiated. Store the draft and rerun; the
-            # draft will be loaded into the widget key at the top of the next run.
             st.session_state["pending_about_yourself_draft"] = generated_about
             st.rerun()
         else:
-            st.error("The AI draft could not be generated. Your existing introduction was not changed or overwritten.")
+            st.error("The AI draft could not be generated. Check the AI configuration; your existing introduction has not been changed.")
 
-    st.markdown("### Profile Editing")
-    st.caption("You can return to this page anytime, change any profile field or introduction, and save the updated version. AI generation never replaces your saved text automatically.")
+    st.info("Tip: Keep the MBA journey as the main part of your answer. Use graduation, school, values and personality only where they add a meaningful detail. Do not include information you are uncomfortable sharing.")
 
 # ------------------------------------------------------------------------------
 # LIVE VOICE GD PRACTICE (PILOT)
@@ -7338,8 +7355,51 @@ elif selected_nav == "My Progress Dashboard":
     for step_number, step in enumerate(action_steps, 1):
         st.markdown(f"**{step_number}.** {step}")
 
+    def _simple_feedback_text(value):
+        """Flatten saved feedback into readable, factual text for student summaries."""
+        if isinstance(value, dict):
+            return " ".join(_simple_feedback_text(v) for v in value.values() if v not in (None, "", [], {}))
+        if isinstance(value, (list, tuple)):
+            return " ".join(_simple_feedback_text(v) for v in value if v not in (None, "", [], {}))
+        return str(value).strip() if value is not None else ""
+
+    def _past_performance_paragraphs(records, activity_name):
+        if not records:
+            return (
+                f"You have not completed a saved {activity_name} attempt yet, so there is not enough history to describe your past performance.",
+                f"After your first attempt, review the feedback and choose one or two clear actions to practise before the next session."
+            )
+        scored = [r for r in records if r.get("score") is not None]
+        latest = records[-1]
+        if len(records) == 1:
+            first = f"You have completed one saved {activity_name} attempt ({latest.get('grade', 'Not graded')}). This is an early picture of your current performance, not a long-term trend."
+        else:
+            first = f"You have completed {len(records)} saved {activity_name} attempts. "
+            if len(scored) >= 2:
+                movement = scored[-1]['score'] - scored[0]['score']
+                if movement > 3:
+                    first += "Your latest recorded score is higher than your first recorded score, showing a positive change in the available results."
+                elif movement < -3:
+                    first += "Your latest recorded score is lower than your first recorded score, so revisit the feedback and identify what changed."
+                else:
+                    first += "Your first and latest recorded scores are fairly close, so focus on building consistency and improving specific skills."
+            else:
+                first += "Some attempts do not have a usable score, so the available records do not support a reliable score trend yet."
+        latest_text = _simple_feedback_text(latest.get("feedback", {}))
+        latest_text = re.sub(r"\s+", " ", latest_text).strip()
+        if latest_text:
+            # Avoid displaying an entire raw report in the narrative paragraph.
+            latest_text = latest_text[:420].rstrip(" .;,")
+            second = f"Your latest feedback includes these points: {latest_text}. Read the detailed report below for the full comments. Use one specific suggestion from that report in your next practice session."
+        else:
+            second = "Detailed comments are not available for the latest attempt. Open the individual attempt below if a report is available, and set one clear practice goal for your next session."
+        return first, second
+
     # 3. Overall GD feedback: show the full feedback report for every saved GD attempt.
     st.markdown("## Overall GD Feedback")
+    gd_past_1, gd_past_2 = _past_performance_paragraphs(gd_records, "Group Discussion (GD)")
+    st.markdown(gd_past_1)
+    st.markdown(gd_past_2)
     if gd_records:
         for attempt_number, record in enumerate(reversed(gd_records), 1):
             with st.expander(
@@ -7359,6 +7419,9 @@ elif selected_nav == "My Progress Dashboard":
 
     # 4. Overall PI feedback: show the full saved feedback for every PI attempt.
     st.markdown("## Overall PI Feedback")
+    pi_past_1, pi_past_2 = _past_performance_paragraphs(pi_records, "Personal Interview (PI)")
+    st.markdown(pi_past_1)
+    st.markdown(pi_past_2)
     if pi_records:
         # These fields cover the full structured PI assessment and preserve any
         # additional feedback fields that may be present in older/newer records.
