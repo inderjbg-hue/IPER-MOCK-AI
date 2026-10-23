@@ -5950,7 +5950,7 @@ Resume text:
             "Editable Professional Resume Draft", key="resume_editor_text", height=360,
             placeholder="Review or edit your uploaded/verified resume here, then tailor it to the target job..."
         )
-        ai_edit_col, ai_refine_col, ai_edit_help_col = st.columns([1, 1, 2])
+        ai_edit_col, ai_edit_help_col = st.columns([1, 2])
         with ai_edit_col:
             if st.button("Tailor Resume to This Job", key="ai_tailor_resume_to_jd", use_container_width=True):
                 if not st.session_state.get("resume_details"):
@@ -5958,41 +5958,64 @@ Resume text:
                 elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
                     st.warning("Add or upload the target Job Description first.")
                 else:
-                    profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
-                    source_resume_text = str(resume_editor_text or "") + "\n" + json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)
-                    extracted_email, extracted_phone = extract_resume_contacts(source_resume_text)
-                    edit_prompt = f"""You are an expert ATS resume formatter and ethical resume editor for an IPER Bhopal student. Produce a clean, polished, one-column, ATS-friendly resume tailored to the target job. Use standard plain-text headings and simple hyphen bullets only. Absolutely no Markdown, asterisks, stray question marks, unmatched parentheses, decorative symbols, tables, columns, icons, emojis, text boxes, or numbered list clutter. Keep consistent heading names and concise action-led bullet points. Start with the candidate's full name, then email and phone if found in their own resume; never invent contact details. Use sections only where supported: PROFESSIONAL SUMMARY, SKILLS, EDUCATION, EXPERIENCE, INTERNSHIP, PROJECTS, CERTIFICATIONS, ACHIEVEMENTS, ACTIVITIES. Include important JD keywords naturally only when supported by the student's evidence. Never invent or exaggerate any qualification, skill, employer, metric, responsibility or achievement. Do not insert placeholder text into the final resume. Return only the resume text, no commentary.
-    Candidate account name: {account_name}
-    Email extracted from student's own resume (use if present): {extracted_email}
-    Phone extracted from student's own resume (use if present): {extracted_phone}
-    Verified resume data: {json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)}
-    About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
-    Current editable resume: {resume_editor_text[:9000]}
-    Target Job Description: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:9000]}"""
-                    with st.spinner("Tailoring your resume to the JD without adding unsupported claims..."):
-                        tailored_text = get_groq_response(edit_prompt)
-                    if tailored_text and not tailored_text.strip().lower().startswith("error"):
-                        st.session_state["pending_resume_editor_text"] = clean_resume_draft(tailored_text)
-                        st.rerun()
-                        st.rerun()
+                    active_jd = str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip()
+                    profile_context = {
+                        key: str(profile.get(key, "") or "").strip()
+                        for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"]
+                        if str(profile.get(key, "") or "").strip()
+                    }
+                    source_resume_text = str(resume_editor_text or "").strip()
+                    extracted_email, extracted_phone = extract_resume_contacts(
+                        source_resume_text + "\n" + json.dumps(st.session_state.get("resume_details") or {}, ensure_ascii=False)
+                    )
+                    combined_prompt = f"""You are the integrated ATS resume editor for IPER PEPTECH. Complete the ENTIRE resume-tailoring task in one pass: improve terse wording, tailor relevant content to the supplied job description, and write a role-aligned CAREER OBJECTIVE.
+
+OUTPUT AND FORMATTING:
+- Return only the complete resume as clean plain text, with standard ATS headings and simple hyphen bullets. No Markdown, JSON, tables, columns, icons, commentary, or placeholders.
+- Start with the candidate's full name, then email and phone only if found in the candidate's own materials.
+- Use clear headings where evidence supports them, such as CAREER OBJECTIVE, PROFESSIONAL SUMMARY, SKILLS, EDUCATION, EXPERIENCE, INTERNSHIP, PROJECTS, CERTIFICATIONS, ACHIEVEMENTS, and ACTIVITIES.
+- Keep the resume concise, readable, professional, and suitable for an ATS.
+
+CAREER OBJECTIVE:
+- Include one concise CAREER OBJECTIVE aligned to the actual role and priorities in the JD.
+- Use strong, relevant action words and keywords naturally, but only make claims supported by the candidate's evidence.
+- State the kind of contribution the candidate can credibly make; do not simply copy the JD or use inflated claims such as 'expert', 'exceptional', or 'proven track record' without evidence.
+
+REFINE SHORT OR ROUGH NOTES:
+- Turn fragments into grammatically correct, professional resume wording while preserving their exact meaning. For example, 'Winner Karate State Level' may become 'Winner, State-Level Karate Competition' if that accurately reflects the source.
+- Use action verbs only when the evidence supports the action. Do not convert participation into leadership, a winner into a medalist, or a general achievement into a quantified result.
+- Never invent dates, medals, rankings, event names, metrics, awards, impact, duties, employers, qualifications, skills, publications, or experience.
+
+TRUTH AND EVIDENCE RULES:
+- Treat the uploaded resume and verified profile as evidence. Use the About Myself profile to clarify facts, not to invent missing details.
+- Keep names, contact details, education, percentages/grades, employers, dates, and achievements unchanged in meaning.
+- Include JD keywords only where supported. Do not add a skill just because it appears in the JD.
+- Do not invent or exaggerate any qualification, skill, employer, metric, responsibility, outcome, or achievement.
+- Do not include unsupported claims from prior AI-generated drafts unless supported by the candidate's own resume or verified profile.
+- If a section has no supported content, omit it rather than adding filler or placeholder text.
+
+Candidate account name: {account_name}
+Candidate email from own materials (use only if present): {extracted_email}
+Candidate phone from own materials (use only if present): {extracted_phone}
+Verified resume data: {json.dumps(st.session_state.get("resume_details") or {}, ensure_ascii=False)}
+About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
+Current editable resume (primary source to refine): {source_resume_text[:10000]}
+Target Job Description: {active_jd[:9000]}
+"""
+                    with st.spinner("Refining your wording, aligning the career objective, and tailoring the full resume to the JD..."):
+                        tailored_text = get_groq_response(combined_prompt)
+                    if tailored_text and not tailored_text.strip().lower().startswith(("execution error", "groq api key is missing", "error")):
+                        cleaned_tailored = clean_resume_draft(tailored_text)
+                        if len(cleaned_tailored.split()) < 20:
+                            st.error("The generated resume appears incomplete. Your current draft remains unchanged. Please try again.")
+                        else:
+                            st.session_state["pending_resume_editor_text"] = cleaned_tailored
+                            st.session_state["resume_workspace_jd"] = active_jd
+                            st.rerun()
                     else:
-                        st.error("The resume draft could not be generated. Your current draft remains unchanged.")
-        with ai_refine_col:
-            if st.button("Strengthen Resume Wording", key="ai_strengthen_resume_wording", use_container_width=True):
-                current_text = str(resume_editor_text or "").strip()
-                if not current_text:
-                    st.warning("Add or upload your resume content first.")
-                else:
-                    profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
-                    with st.spinner("Refining wording while preserving the candidate's facts..."):
-                        refined_text = strengthen_resume_wording(current_text, str(jd_text or st.session_state.get("resume_workspace_jd", "")), account_name, {"resume": st.session_state.get("resume_details") or {}, "About_Myself_Profile": profile_context})
-                    if refined_text and not refined_text.strip().lower().startswith(("execution error", "groq api key is missing", "error")):
-                        st.session_state["pending_resume_editor_text"] = clean_resume_draft(refined_text)
-                        st.rerun()
-                    else:
-                        st.error("The wording refinement could not be generated. Your current draft remains unchanged.")
+                        st.error("The tailored resume could not be generated. Your current draft remains unchanged.")
         with ai_edit_help_col:
-            st.caption("Strengthen terse notes into professional wording (for example, 'Winner Karate State Level') without inventing achievements. Tailoring aligns supported evidence with the JD. Review all changes before saving.")
+            st.caption("One action does the full job: strengthens rough achievement notes, creates a JD-aligned career objective, and tailors supported resume content. All claims must remain truthful; review the result before saving or downloading.")
 
     if st.button("Reset JD for Next Job", key="reset_resume_jd", use_container_width=True):
         st.session_state["pending_reset_jd_only"] = True
