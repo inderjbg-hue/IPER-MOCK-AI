@@ -811,11 +811,12 @@ import sqlite3
 import hashlib
 import secrets
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import base64
 import hmac
 import urllib.parse
+from urllib.parse import quote_plus
 import re
 import subprocess
 import wave
@@ -1357,121 +1358,135 @@ def add_keyword_to_resume_editor(keyword, checkbox_key=None):
 
 
 def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
-    """Create an editable, ATS-friendly resume in Times New Roman with requested sizing/alignment."""
+    """Render every downloadable resume using one consistent, ATS-friendly Word template."""
     document = docx.Document()
     section = document.sections[0]
-    section.top_margin = docx.shared.Inches(0.65)
-    section.bottom_margin = docx.shared.Inches(0.65)
-    section.left_margin = docx.shared.Inches(0.75)
-    section.right_margin = docx.shared.Inches(0.75)
+    section.top_margin = docx.shared.Inches(0.62)
+    section.bottom_margin = docx.shared.Inches(0.62)
+    section.left_margin = docx.shared.Inches(0.72)
+    section.right_margin = docx.shared.Inches(0.72)
 
-    # Set the document-wide default and common styles explicitly, including East Asian font mapping.
+    purple = docx.shared.RGBColor(83, 49, 131)
     styles = document.styles
     normal = styles["Normal"]
     normal.font.name = "Times New Roman"
     normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    normal.font.size = docx.shared.Pt(12)
-    normal.paragraph_format.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
-    normal.paragraph_format.space_after = docx.shared.Pt(4)
-    normal.paragraph_format.line_spacing = 1.08
+    normal.font.size = docx.shared.Pt(11)
+    normal.paragraph_format.space_after = docx.shared.Pt(3)
+    normal.paragraph_format.line_spacing = 1.0
 
-    for style_name in ("Heading 1", "Heading 2", "Title", "Subtitle", "List Bullet"):
+    for style_name in ("Heading 1", "Heading 2", "List Bullet"):
         style = styles[style_name]
         style.font.name = "Times New Roman"
         style._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-        if style_name in ("Heading 1", "Heading 2", "Title"):
-            style.font.size = docx.shared.Pt(14)
+        if style_name == "Heading 1":
+            style.font.size = docx.shared.Pt(11)
             style.font.bold = True
-            style.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
-            style.paragraph_format.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
-            style.paragraph_format.space_before = docx.shared.Pt(8)
-            style.paragraph_format.space_after = docx.shared.Pt(3)
+            style.font.color.rgb = purple
+            style.paragraph_format.space_before = docx.shared.Pt(7)
+            style.paragraph_format.space_after = docx.shared.Pt(2)
             style.paragraph_format.keep_with_next = True
+        elif style_name == "Heading 2":
+            style.font.size = docx.shared.Pt(11)
+            style.font.bold = True
         else:
-            style.font.size = docx.shared.Pt(12)
+            style.font.size = docx.shared.Pt(11)
 
-    # Candidate name is a restrained heading; body content remains 12 pt and justified.
+    # One fixed template: consistent name/contact header and predictable section order.
     name_p = document.add_paragraph()
     name_p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-    name_p.paragraph_format.space_after = docx.shared.Pt(3)
-    name_run = name_p.add_run((candidate_name or "Candidate").strip())
+    name_p.paragraph_format.space_after = docx.shared.Pt(2)
+    name_run = name_p.add_run(str(candidate_name or "Candidate").strip())
     name_run.bold = True
     name_run.font.name = "Times New Roman"
     name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    name_run.font.size = docx.shared.Pt(14)
-    name_run.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
+    name_run.font.size = docx.shared.Pt(16)
+    name_run.font.color.rgb = purple
 
     contacts = [x.strip() for x in (email, phone, linkedin) if x and x.strip()]
     if contacts:
         cp = document.add_paragraph(" | ".join(contacts))
-        cp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
-        cp.paragraph_format.space_after = docx.shared.Pt(7)
-        for run in cp.runs:
-            run.font.name = "Times New Roman"
-            run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-            run.font.size = docx.shared.Pt(12)
+        cp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
+        cp.paragraph_format.space_after = docx.shared.Pt(6)
 
-    headings = {
-        "PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE", "CAREER OBJECTIVE", "OBJECTIVE",
-        "CORE COMPETENCIES", "KEY SKILLS", "SKILLS", "TECHNICAL SKILLS", "EDUCATION",
-        "EDUCATIONAL QUALIFICATIONS", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE", "EXPERIENCE",
-        "INTERNSHIP", "INTERNSHIPS", "PROJECTS", "KEY PROJECTS", "PROJECTS & ACHIEVEMENTS",
-        "ACHIEVEMENTS", "CERTIFICATIONS", "CERTIFICATES", "POSITIONS OF RESPONSIBILITY", "LEADERSHIP",
-        "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES", "PUBLICATIONS", "RESEARCH", "PROFESSIONAL INTERESTS",
-        "INTERESTS", "LANGUAGES", "AWARDS", "VOLUNTEERING", "PROFESSIONAL AFFILIATIONS", "REFERENCES",
-        "COURSEWORK", "ACADEMIC PROJECTS", "PERSONAL DETAILS", "CAREER HIGHLIGHTS"
+    # Parse the text into sections, retaining content while mapping common heading variants.
+    section_aliases = {
+        "PROFESSIONAL SUMMARY": "PROFESSIONAL SUMMARY", "SUMMARY": "PROFESSIONAL SUMMARY",
+        "PROFILE": "PROFESSIONAL SUMMARY", "CAREER OBJECTIVE": "PROFESSIONAL SUMMARY", "OBJECTIVE": "PROFESSIONAL SUMMARY",
+        "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS", "KEY COMPETENCIES": "SKILLS",
+        "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
+        "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
+        "INTERNSHIP": "INTERNSHIPS", "INTERNSHIPS": "INTERNSHIPS",
+        "PROJECTS": "PROJECTS", "KEY PROJECTS": "PROJECTS", "ACADEMIC PROJECTS": "PROJECTS", "PROJECTS & ACHIEVEMENTS": "PROJECTS",
+        "CERTIFICATIONS": "CERTIFICATIONS", "CERTIFICATES": "CERTIFICATIONS", "COURSES": "CERTIFICATIONS", "COURSEWORK": "CERTIFICATIONS",
+        "ACHIEVEMENTS": "ACHIEVEMENTS", "AWARDS": "ACHIEVEMENTS", "HONOURS": "ACHIEVEMENTS",
+        "POSITIONS OF RESPONSIBILITY": "LEADERSHIP & ACTIVITIES", "LEADERSHIP": "LEADERSHIP & ACTIVITIES", "ACTIVITIES": "LEADERSHIP & ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "LEADERSHIP & ACTIVITIES", "VOLUNTEERING": "LEADERSHIP & ACTIVITIES",
+        "PUBLICATIONS": "ADDITIONAL INFORMATION", "RESEARCH": "ADDITIONAL INFORMATION", "PROFESSIONAL INTERESTS": "ADDITIONAL INFORMATION", "INTERESTS": "ADDITIONAL INFORMATION", "LANGUAGES": "ADDITIONAL INFORMATION", "PROFESSIONAL AFFILIATIONS": "ADDITIONAL INFORMATION", "PERSONAL DETAILS": "ADDITIONAL INFORMATION", "REFERENCES": "ADDITIONAL INFORMATION"
     }
-    for raw_line in (resume_text or "").splitlines():
-        line = raw_line.strip()
+    order = ["PROFESSIONAL SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"]
+    sections = {key: [] for key in order}
+    current = "PROFESSIONAL SUMMARY"
+    for raw in str(resume_text or "").splitlines():
+        line = raw.strip()
         if not line:
             continue
-        normalized = line.strip(" :#*-•").upper()
-        if normalized in headings:
-            p = document.add_paragraph(style="Heading 1")
-            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
-            p.add_run(normalized.title())
-        elif normalized in {"NAME", "NAME:"}:
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
+        line = re.sub(r"\*{1,3}|__|`", "", line).strip()
+        line = re.sub(r"^\s*(?:[-•*]+|\d+[.)])\s*", "", line).strip()
+        normalized = re.sub(r"[^A-Z& ]", "", line.upper()).strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        if normalized in section_aliases:
+            current = section_aliases[normalized]
             continue
-        elif line.startswith(("- ", "• ", "* ")):
-            p = document.add_paragraph(style="List Bullet")
-            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
-            p.paragraph_format.left_indent = docx.shared.Inches(0.22)
-            p.paragraph_format.first_line_indent = docx.shared.Inches(-0.14)
-            p.add_run(line[2:].strip())
-        elif line.endswith(":") and len(line) < 65:
-            p = document.add_paragraph(style="Heading 2")
-            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
-            p.add_run(line.rstrip(":"))
-        else:
-            p = document.add_paragraph(line)
-            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
-            p.paragraph_format.keep_together = True
+        if normalized in {"NAME", "CANDIDATE NAME", "CONTACT", "CONTACT DETAILS"}:
+            continue
+        # Convert model-generated bullets into clean plain-text content for the fixed template.
+        sections.setdefault(current, []).append(line)
 
-    # Enforce font family/size and alignment on every generated body run/paragraph.
-    for paragraph_index, paragraph in enumerate(document.paragraphs):
-        if paragraph_index == 0:  # preserve the candidate name as a 14 pt centered heading
+    for heading in order:
+        content = sections.get(heading, [])
+        if not content:
             continue
-        if paragraph.style.name.startswith("Heading"):
-            paragraph.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
-            for run in paragraph.runs:
+        hp = document.add_paragraph(style="Heading 1")
+        hp.add_run(heading)
+        for item in content:
+            item = re.sub(r"^[*•?)+\-\s]+", "", item).strip()
+            if not item or re.fullmatch(r"[*)?._\-\s]+", item):
+                continue
+            # A concise list-like line is formatted as a standard Word bullet; no decorative glyphs.
+            if len(item) < 350 and (";" in item or item.startswith(("- ", "• "))):
+                bp = document.add_paragraph(style="List Bullet")
+                bp.paragraph_format.left_indent = docx.shared.Inches(0.22)
+                bp.paragraph_format.first_line_indent = docx.shared.Inches(-0.12)
+                bp.add_run(item.lstrip("-• ").strip())
+            else:
+                bp = document.add_paragraph(item)
+                bp.paragraph_format.keep_together = True
+
+    # Consistent typography, left-aligned headings and readable body text throughout.
+    for para in document.paragraphs:
+        if para.style.name == "Heading 1":
+            para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            for run in para.runs:
+                run.bold = True
                 run.font.name = "Times New Roman"
                 run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-                run.font.size = docx.shared.Pt(14)
-                run.font.bold = True
-        else:
-            paragraph.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
-            for run in paragraph.runs:
+                run.font.size = docx.shared.Pt(11)
+                run.font.color.rgb = purple
+        elif para is not name_p:
+            para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            for run in para.runs:
                 run.font.name = "Times New Roman"
                 run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-                run.font.size = docx.shared.Pt(12)
+                run.font.size = docx.shared.Pt(11)
 
-    # Footer follows the same requested typeface and body size.
     footer = section.footer.paragraphs[0]
-    footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
-    fr = footer.add_run("IPER PEPTECH | Professional Resume")
-    fr.font.name = "Times New Roman"
-    fr._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    fr.font.size = docx.shared.Pt(12)
+    footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
+    footer_run = footer.add_run("IPER PEPTECH | Professional Resume")
+    footer_run.font.name = "Times New Roman"
+    footer_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+    footer_run.font.size = docx.shared.Pt(9)
+
     out = BytesIO()
     document.save(out)
     return out.getvalue()
@@ -4009,15 +4024,13 @@ st.sidebar.markdown("---")
 selected_nav = st.sidebar.radio(
     "MAIN MENU",
     [
-        "Progress",
         "Industry & Company Insights",
         "About Myself",
         "Resume Checker & Job Matcher",
-        "Career Development",
         "Interview Preparation Guide",
         "Interview Practice Room",
         "Group Discussion Hub",
-        "Performance Dashboard",
+        "My Progress Dashboard",
         "My Personal Details"
     ],
     key="main_nav"
@@ -4107,126 +4120,7 @@ if selected_nav == "My Personal Details":
                     finally:
                         conn.close()
 
-# SECTION 0: PROGRESS
-elif selected_nav == "Progress":
-    st.title("Weekly Progress")
-    st.caption("A quick view of your weekly placement-practice journey, activity and next steps.")
-
-    scholar_id = st.session_state.get("scholar_id", "")
-    student_id = st.session_state.get("student_id")
-    history = st.session_state.get("history", [])
-
-    # Refresh persisted interview attempts so progress survives login/session refreshes.
-    if student_id:
-        try:
-            persisted_attempts = load_student_attempts(student_id)
-            if persisted_attempts:
-                history = persisted_attempts
-                st.session_state["history"] = persisted_attempts
-        except Exception:
-            pass
-
-    pi_attempts = len(history)
-    pi_scores = [float(item.get("Score", 0) or 0) for item in history]
-    pi_minutes = sum(float(item.get("DurationSeconds", 0) or 0) for item in history) / 60.0
-
-    gd_attempts = 0
-    gd_scores = []
-    gd_minutes = 0.0
-    if scholar_id:
-        try:
-            gd_assessments = get_ai_voice_gd_assessments(scholar_id)
-            gd_attempts = len(gd_assessments)
-            for assessment in gd_assessments:
-                report = assessment.get("report_json") or {}
-                live_feedback = report.get("LiveFeedback") or {}
-                overall_value = live_feedback.get("OverallScore")
-                if overall_value is None:
-                    participant_report = next(
-                        (p for p in (report.get("Participants") or [])
-                         if str(p.get("Name", "")).strip().lower() == str(st.session_state.get("candidate_name", "")).strip().lower()),
-                        None
-                    )
-                    overall_value = participant_report.get("OverallScore") if participant_report else None
-                if overall_value is not None:
-                    numeric_score = float(overall_value or 0)
-                    gd_scores.append(numeric_score * 10 if numeric_score <= 10 else numeric_score)
-                gd_minutes += float(assessment.get("duration_seconds", 0) or 0) / 60.0
-        except Exception:
-            pass
-
-    total_minutes = pi_minutes + gd_minutes
-    all_scores = pi_scores + gd_scores
-    average_score = (sum(all_scores) / len(all_scores)) if all_scores else 0.0
-
-    # Progress is intentionally activity-based: 20 completed practice assessments is the first milestone.
-    target_attempts = 20
-    progress_pct = min(100, round(((pi_attempts + gd_attempts) / target_attempts) * 100))
-
-    st.markdown("### Weekly Progress")
-    st.progress(progress_pct, text=f"{progress_pct}% of your first {target_attempts} practice assessments completed")
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Minutes Utilized", f"{total_minutes:.1f} min")
-    m2.metric("PI Attempted", pi_attempts)
-    m3.metric("GD Attempted", gd_attempts)
-    m4.metric("Average Grade", grade_from_score(average_score) if all_scores else "—")
-
-    st.markdown("### Your Way Ahead")
-    suggestions = []
-    if pi_attempts == 0:
-        suggestions.append("Complete your first PI practice session and establish a baseline score.")
-    elif average_score < 60:
-        suggestions.append("Focus first on answer structure, clarity and confidence before increasing practice volume.")
-    elif average_score < 75:
-        suggestions.append("Continue regular PI practice and strengthen examples from your resume, internship and projects.")
-    else:
-        suggestions.append("Maintain your current performance and practise company-specific and advanced interview questions.")
-    if gd_attempts == 0:
-        suggestions.append("Attempt at least one GD and practise concise points, active listening and balanced participation.")
-    elif gd_attempts < 3:
-        suggestions.append("Complete a few more GDs so your participation and communication patterns become consistent.")
-    else:
-        suggestions.append("Review your GD feedback after each attempt and target one specific improvement in the next discussion.")
-    if total_minutes < 30:
-        suggestions.append("Aim for at least 30 minutes of meaningful placement practice before your next review.")
-    else:
-        suggestions.append("Keep a steady weekly practice routine rather than relying on last-minute preparation.")
-
-    for suggestion in suggestions[:3]:
-        st.markdown(f"• {suggestion}")
-
-    # GD feedback is now part of the weekly progress view, not only the GD tab.
-    if scholar_id:
-        try:
-            weekly_gd_assessments = get_ai_voice_gd_assessments(scholar_id)
-            if weekly_gd_assessments:
-                _render_live_gd_feedback_summary(
-                    weekly_gd_assessments[0],
-                    st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")),
-                    heading="### Latest GD Feedback"
-                )
-        except Exception as gd_feedback_error:
-            st.info(f"GD feedback could not be loaded right now: {gd_feedback_error}")
-
-    st.markdown("### Activity Snapshot")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric("PI Practice Minutes", f"{pi_minutes:.1f}")
-    with c2:
-        st.metric("GD Practice Minutes", f"{gd_minutes:.1f}")
-
-    render_grade_slabs()
-    if history:
-        st.markdown("### PI Grade Trend")
-        grade_rows = [
-            {"Attempt": i, "Date & Time": item.get("Timestamp", ""), "Grade": grade_from_score(item.get("Score", 0)), "Domain": item.get("Domain", "")}
-            for i, item in enumerate(history, 1)
-        ]
-        st.dataframe(grade_rows, use_container_width=True, hide_index=True)
-    else:
-        st.info("Your progress will start building as soon as you complete your first PI or GD practice assessment.")
-
+# SECTION 0: MY PROGRESS DASHBOARD is consolidated into the dashboard section below.
 # SECTION 1: INDUSTRY & COMPANY INSIGHTS
 elif selected_nav == "Industry & Company Insights":
     st.title("Industry & Company Insights")
@@ -4685,6 +4579,8 @@ elif selected_nav == "Industry & Company Insights":
                     st.write(company.get("Note") or f"{company['Company']} is listed under {selected_sector}. Generate a company-specific profile below rather than relying on a generic checklist.")
                     if company.get("Website"):
                         st.link_button("Open official company website", company["Website"])
+                    else:
+                        st.link_button("Find official website", "https://www.google.com/search?q=" + quote_plus(company["Company"] + " official website"))
                     profile_key = "sector_company_profile_" + re.sub(r"[^a-zA-Z0-9]+", "_", company["Company"] + "_" + selected_sector).strip("_").lower()
                     if st.button("Show detailed company profile", key=profile_key):
                         prompt = f"""Prepare a detailed, company-specific MBA placement research brief for {company['Company']} (sector: {selected_sector}). The goal is accurate company intelligence, not generic advice.
@@ -4703,7 +4599,9 @@ Use clear headings and cover EVERY item:
 11. Main business risks/challenges and likely management priorities.
 12. MBA career pathways across marketing, sales, finance, HR, operations, analytics or other relevant functions; distinguish likely roles from confirmed vacancies.
 13. Five useful facts/metrics a student should verify in the latest annual report or official sources.
-14. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
+14. Official website: provide the company's official website URL only when you know it confidently; otherwise clearly say 'Official website needs verification' and provide the exact company-name search phrase the student should use. Never invent a domain.
+15. Financial performance: explain the latest available financial performance using official company website material only (annual report, investor relations page, quarterly results, investor presentation). Include revenue, profit, growth, margins, debt or segment performance only when figures and period are confidently known. State the reporting period and currency. If live official information is not available to you, say 'Check the latest annual report/results on the official website' and list the metrics to verify; never fabricate figures.
+16. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
 
 Be concrete and company-specific. If a fact is uncertain or may have changed, label it 'Verify current information'. Do not use filler or repeat the question. Format in readable Markdown."""
                         if profile_key + "_result" not in st.session_state:
@@ -4767,6 +4665,8 @@ Be concrete and company-specific. If a fact is uncertain or may have changed, la
                     st.write(company.get("Note") or f"{company['Company']} is listed in {company['Sector']}. Generate a company-specific profile below.")
                     if company.get("Website"):
                         st.link_button("Open official company website", company["Website"])
+                    else:
+                        st.link_button("Find official website", "https://www.google.com/search?q=" + quote_plus(company["Company"] + " official website"))
                     profile_key = "search_company_profile_" + re.sub(r"[^a-zA-Z0-9]+", "_", company["Company"] + "_" + company["Sector"]).strip("_").lower()
                     if st.button("Show detailed company profile", key=profile_key):
                         prompt = f"""Prepare a detailed, company-specific MBA placement research brief for {company['Company']} (sector: {company['Sector']}). The goal is accurate company intelligence, not generic advice.
@@ -4785,7 +4685,9 @@ Use clear headings and cover EVERY item:
 11. Main business risks/challenges and likely management priorities.
 12. MBA career pathways across marketing, sales, finance, HR, operations, analytics or other relevant functions; distinguish likely roles from confirmed vacancies.
 13. Five useful facts/metrics a student should verify in the latest annual report or official sources.
-14. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
+14. Official website: provide the company's official website URL only when you know it confidently; otherwise clearly say 'Official website needs verification' and provide the exact company-name search phrase the student should use. Never invent a domain.
+15. Financial performance: explain the latest available financial performance using official company website material only (annual report, investor relations page, quarterly results, investor presentation). Include revenue, profit, growth, margins, debt or segment performance only when figures and period are confidently known. State the reporting period and currency. If live official information is not available to you, say 'Check the latest annual report/results on the official website' and list the metrics to verify; never fabricate figures.
+16. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
 
 Be concrete and company-specific. If a fact is uncertain or may have changed, label it 'Verify current information'. Do not use filler or repeat the question. Format in readable Markdown."""
                         if profile_key + "_result" not in st.session_state:
@@ -7004,20 +6906,40 @@ elif selected_nav == "Group Discussion Hub":
             placeholder="Example: Should India prioritise economic growth over environmental protection?",
             key="uploaded_gd_topic",
         )
+        upload_version = int(st.session_state.get("uploaded_gd_upload_version", 0) or 0)
         gd_video_file = st.file_uploader(
             "Upload GD video",
             type=["mp4", "mov", "m4v", "webm", "mpeg", "mpg"],
             help="For the prototype, use a clear recording of up to 10–15 minutes. Audio is extracted before sending it for transcription.",
-            key="uploaded_gd_video_file",
+            key=f"uploaded_gd_video_file_{upload_version}",
         )
         if gd_video_file:
-            st.video(gd_video_file)
-            st.caption(f"File: {gd_video_file.name} • {gd_video_file.size / (1024 * 1024):.1f} MB")
+            st.session_state["uploaded_gd_video_bytes"] = gd_video_file.getvalue()
+            st.session_state["uploaded_gd_video_original_name"] = gd_video_file.name
+            st.session_state["uploaded_gd_video_size"] = gd_video_file.size
+        saved_video_bytes = st.session_state.get("uploaded_gd_video_bytes")
+        saved_video_name = st.session_state.get("uploaded_gd_video_original_name", "Uploaded GD video")
+        saved_video_size = int(st.session_state.get("uploaded_gd_video_size", len(saved_video_bytes or b"")) or 0)
+        if saved_video_bytes:
+            st.video(saved_video_bytes)
+            st.caption(f"Saved in this session: {saved_video_name} • {saved_video_size / (1024 * 1024):.1f} MB. It will remain available when you switch tabs in this session.")
+            if st.button("Reset / Remove Uploaded GD Video and Feedback", key="reset_uploaded_gd_video_and_feedback", use_container_width=True):
+                reset_keys = [
+                    "uploaded_gd_video_bytes", "uploaded_gd_video_original_name", "uploaded_gd_video_size",
+                    "uploaded_gd_segments", "uploaded_gd_topic_processed", "uploaded_gd_filename_processed",
+                    "uploaded_gd_speaker_map", "uploaded_gd_visual_frames", "uploaded_gd_audio_bytes",
+                    "uploaded_gd_final_speaker_records", "uploaded_gd_final_speaker_map", "uploaded_gd_final_stats",
+                    "uploaded_gd_report", "uploaded_gd_upload_error",
+                ]
+                for reset_key in reset_keys:
+                    st.session_state.pop(reset_key, None)
+                st.session_state["uploaded_gd_upload_version"] = upload_version + 1
+                st.rerun()
 
         if st.button(" Transcribe and Identify Speakers", use_container_width=True, key="run_uploaded_gd_diarization"):
             if not video_topic.strip():
                 st.error("Please enter the GD topic.")
-            elif not gd_video_file:
+            elif not st.session_state.get("uploaded_gd_video_bytes"):
                 st.error("Please upload a GD video first.")
             elif not openai_client:
                 st.error("OpenAI is not configured. Add OPENAI_API_KEY to Streamlit Secrets.")
@@ -7027,9 +6949,10 @@ elif selected_nav == "Group Discussion Hub":
                 video_temp_path = None
                 audio_temp_path = None
                 try:
-                    suffix = Path(gd_video_file.name).suffix or ".mp4"
+                    active_video_name = st.session_state.get("uploaded_gd_video_original_name", getattr(gd_video_file, "name", "uploaded_gd_video.mp4"))
+                    suffix = Path(active_video_name).suffix or ".mp4"
                     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_video:
-                        tmp_video.write(gd_video_file.getvalue())
+                        tmp_video.write(st.session_state.get("uploaded_gd_video_bytes") or gd_video_file.getvalue())
                         video_temp_path = tmp_video.name
                     with st.spinner("Extracting audio and generating speaker-labelled transcript..."):
                         audio_temp_path = _ffmpeg_extract_gd_audio(video_temp_path)
@@ -7042,7 +6965,7 @@ elif selected_nav == "Group Discussion Hub":
                             else:
                                 st.session_state["uploaded_gd_segments"] = segments
                                 st.session_state["uploaded_gd_topic_processed"] = video_topic.strip()
-                                st.session_state["uploaded_gd_filename_processed"] = gd_video_file.name
+                                st.session_state["uploaded_gd_filename_processed"] = st.session_state.get("uploaded_gd_video_original_name", getattr(gd_video_file, "name", "Uploaded GD video"))
                                 st.session_state["uploaded_gd_speaker_map"] = {}
                                 sampled_frames, frame_sample_error = _extract_gd_visual_samples(video_temp_path)
                                 st.session_state["uploaded_gd_visual_frames"] = sampled_frames
@@ -7267,9 +7190,103 @@ elif selected_nav == "Group Discussion Hub":
 # SECTION 5: PERFORMANCE DASHBOARD
 
 
-elif selected_nav == "Performance Dashboard":
-    st.title("Performance Dashboard")
-    st.caption("Review your previous interview and group discussion attempts, read the feedback from each performance, and download mentor-ready reports.")
+elif selected_nav == "My Progress Dashboard":
+    st.title("My Progress Dashboard")
+    st.caption("One place for overall performance, weekly practice targets, PI feedback, GD feedback and your next action plans.")
+
+    # Weekly practice tracker: target is 4 PI attempts and 2 GD attempts.
+    weekly_history = st.session_state.get("history", [])
+    weekly_student_id = st.session_state.get("student_id")
+    if weekly_student_id:
+        try:
+            refreshed_weekly_history = load_student_attempts(weekly_student_id)
+            if refreshed_weekly_history:
+                weekly_history = refreshed_weekly_history
+                st.session_state["history"] = refreshed_weekly_history
+        except Exception:
+            pass
+    weekly_scholar = st.session_state.get("scholar_id", "")
+    weekly_gd_items = get_gd_video_assessments(weekly_scholar) if weekly_scholar else []
+    # Include older live-GD records as well, without double-counting the uploaded-video records.
+    if weekly_scholar:
+        try:
+            live_gd_items = get_ai_voice_gd_assessments(weekly_scholar)
+        except Exception:
+            live_gd_items = []
+    else:
+        live_gd_items = []
+    weekly_cutoff = (datetime.now().date() - timedelta(days=6)).isoformat()
+    def _is_within_last_seven_days(value):
+        try:
+            return str(value or "")[:10] >= weekly_cutoff
+        except Exception:
+            return False
+    weekly_pi_items = [item for item in weekly_history if _is_within_last_seven_days(item.get("Timestamp") or item.get("timestamp"))]
+    weekly_gd_video_items = [item for item in weekly_gd_items if _is_within_last_seven_days(item.get("created_at") or item.get("timestamp"))]
+    weekly_live_gd_items = [item for item in live_gd_items if _is_within_last_seven_days(item.get("created_at") or item.get("timestamp"))]
+    weekly_pi_count = len(weekly_history)
+    weekly_gd_count = len(weekly_gd_items) + len(live_gd_items)
+    weekly_pi_recent_count = len(weekly_pi_items)
+    weekly_gd_recent_count = len(weekly_gd_video_items) + len(weekly_live_gd_items)
+    weekly_target_count = 6
+    weekly_done_count = min(weekly_pi_recent_count, 4) + min(weekly_gd_recent_count, 2)
+    weekly_pct = int(round(100 * weekly_done_count / weekly_target_count))
+
+    st.markdown("### 1. Overall Performance")
+    overall_cols = st.columns(4)
+    overall_cols[0].metric("PI Attempts", weekly_pi_count)
+    overall_cols[1].metric("GD Attempts", weekly_gd_count)
+    pi_last = weekly_history[-1] if weekly_history else {}
+    pi_fb = pi_last.get("Feedback") or {}
+    overall_cols[2].metric("Latest PI Grade", grade_from_score(pi_last.get("Score", 0)) if pi_last else "—")
+    latest_gd_item = (weekly_gd_items or live_gd_items or [None])[0]
+    latest_gd_fb = _live_gd_report_for_student(latest_gd_item, st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))) if latest_gd_item else {}
+    gd_latest_score = (latest_gd_fb or {}).get("OverallScore")
+    overall_cols[3].metric("Latest GD Grade", grade_from_score(gd_latest_score) if gd_latest_score is not None else "—")
+
+    st.markdown("### 2. Weekly Performance")
+    st.caption("Weekly target: complete 4 Personal Interview (PI) attempts and 2 Group Discussion (GD) attempts.")
+    st.progress(weekly_pct, text=f"{weekly_done_count} of 6 weekly practice targets completed ({weekly_pct}%)")
+    weekly_cols = st.columns(2)
+    weekly_cols[0].metric("PI target (last 7 days)", f"{min(weekly_pi_recent_count, 4)} / 4")
+    weekly_cols[1].metric("GD target (last 7 days)", f"{min(weekly_gd_recent_count, 2)} / 2")
+
+    st.markdown("### 3. Action Plans for the Week Ahead")
+    action_plans = []
+    if weekly_pi_recent_count < 4:
+        action_plans.append(f"Complete {4 - weekly_pi_recent_count} more PI practice attempt(s) in the last-seven-day target window. Review each answer for structure, relevance and evidence.")
+    else:
+        action_plans.append("Review your PI feedback and practise improving one recurring communication or technical gap.")
+    if weekly_gd_recent_count < 2:
+        action_plans.append(f"Complete {2 - weekly_gd_recent_count} more GD practice attempt(s) in the last-seven-day target window. Focus on concise contributions, listening and balanced participation.")
+    else:
+        action_plans.append("Review your GD feedback and prepare one specific improvement for your next discussion.")
+    if len(weekly_history) and pi_fb:
+        action_plans.append(str(pi_fb.get("NextPracticeFocus") or "Use your latest PI feedback to practise one answer and record a stronger second attempt."))
+    else:
+        action_plans.append("After your next PI attempt, read the feedback and turn the top recommendation into a concrete practice task.")
+    for plan in action_plans[:3]:
+        st.markdown(f"- {plan}")
+
+    st.markdown("### PI Overall Feedback")
+    if pi_fb:
+        st.write(pi_fb.get("CommunicationAssessment", "Communication feedback is not available for the latest PI attempt."))
+        st.write(pi_fb.get("TechnicalKnowledgeAssessment", "Technical feedback is not available for the latest PI attempt."))
+        if pi_fb.get("NextPracticeFocus"):
+            st.info(pi_fb.get("NextPracticeFocus"))
+    else:
+        st.info("Complete an Interview Practice attempt to see your overall PI feedback here.")
+
+    st.markdown("### GD Overall Feedback")
+    if latest_gd_item:
+        _render_live_gd_feedback_summary(latest_gd_item, st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")), heading="")
+    else:
+        st.info("Complete a GD assessment to see your overall GD feedback here.")
+
+    st.markdown("---")
+    st.markdown("### Detailed Performance History")
+    history = weekly_history
+    dashboard_gd_assessments = weekly_gd_items + live_gd_items
 
     history = st.session_state.get("history", [])
     dashboard_gd_assessments = get_gd_video_assessments(st.session_state.get("scholar_id", "")) if st.session_state.get("scholar_id") else []
