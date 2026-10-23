@@ -2729,39 +2729,104 @@ def _format_gd_transcript(segments, speaker_map=None):
     return "\n".join(lines)
 
 
-def detect_gd_speaker_identity_conflicts(segments):
-    """Detect likely diarisation merges when one speaker ID contains multiple self-introduced names.
-
-    This is a conservative safeguard: it does not attempt to split a voice automatically,
-    because a text transcript alone cannot reliably determine where one voice ends and
-    another begins. It returns conflicts that would make individual grading unsafe.
-    """
-    intro_patterns = [
-        r"\bmy name is ([A-Z][a-z]+(?:[ '-][A-Z][a-z]+){0,3})\b",
-        r"\bi am ([A-Z][a-z]+(?:[ '-][A-Z][a-z]+){0,3})(?=\s+(?:and|,|\.|pursuing|currently|from|doing|studying|a|an|the))",
-        r"\bmyself ([A-Z][a-z]+(?:[ '-][A-Z][a-z]+){0,3})\b",
+def _extract_gd_self_introductions(text):
+    """Return clean names explicitly spoken in common self-introduction phrases."""
+    text = str(text or "")
+    patterns = [
+        r"\bmy name is\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})(?=\s*(?:[,.;!?]|$))",
+        r"\bI\s+am\s+([A-Z][a-z]+(?:[ '-][A-Z][a-z]+){0,2})(?=\s+(?:pursuing|currently|from|doing|studying|a|an|the|and|with|at)\b)",
+        r"\bI['’]?m\s+([A-Z][a-z]+(?:[ '-][A-Z][a-z]+){0,2})(?=\s+(?:pursuing|currently|from|doing|studying|a|an|the|and|with|at)\b)",
+        r"\bmyself\s+is\s+([A-Z][a-z]+(?:[ '-][A-Z][a-z]+){0,3})\b",
     ]
+    found = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.I):
+            name = re.sub(r"\s+", " ", match.group(1)).strip(" .,'-")
+            if name and name.casefold() not in {"good", "thank", "technology", "everyone", "agree"}:
+                if name.casefold() not in {n.casefold() for n in found}:
+                    found.append(name)
+    return found
+
+
+def split_gd_segments_on_conflicting_introductions(segments):
+    """Split a diarisation ID at a later, conflicting explicit self-introduction.
+
+    This is a transcript-guided repair, not acoustic proof. It creates a new stable ID
+    at the later introduction and assigns subsequent turns carrying that original ID to
+    the new ID. The UI explains that the split is inferred and should be checked against
+    the recording; ambiguous conflicts remain blocked from grading.
+    """
     by_speaker = {}
     for seg in segments or []:
         sid = str(seg.get("speaker") or "speaker_0")
-        text = str(seg.get("text") or "")
-        for pattern in intro_patterns:
-            for match in re.finditer(pattern, text, flags=re.I):
-                name = re.sub(r"\s+", " ", match.group(1)).strip(" .,'-")
-                # Avoid treating common sentence starts / generic phrases as names.
-                if len(name.split()) == 1 and name.casefold() in {"good", "thank", "technology", "everyone", "myself"}:
-                    continue
-                by_speaker.setdefault(sid, set()).add(name.casefold())
+        for name in _extract_gd_self_introductions(seg.get("text", "")):
+            by_speaker.setdefault(sid, []).append((float(seg.get("start") or 0), name.casefold(), name))
+    split_at = {}
+    for sid, intros in by_speaker.items():
+        seen = set()
+        for start, norm, name in sorted(intros, key=lambda x: x[0]):
+            if seen and norm not in seen:
+                split_at.setdefault(sid, []).append((start, name))
+            seen.add(norm)
+    if not split_at:
+        return [dict(seg) for seg in segments or []], []
+
+    counters = {sid: 0 for sid in split_at}
+    active_split = {}
+    result = []
+    notes = []
+    for sid, splits in split_at.items():
+        for idx, (start, name) in enumerate(splits, 1):
+            notes.append(f"{sid} was split at {start:.1f}s for the self-introduction '{name}'.")
+    for original in segments or []:
+        seg = dict(original)
+        sid = str(seg.get("speaker") or "speaker_0")
+        start = float(seg.get("start") or 0)
+        if sid in split_at:
+            for split_start, name in split_at[sid]:
+                if start >= split_start:
+                    active_split[sid] = (split_start, name)
+            if sid in active_split:
+                split_start, _name = active_split[sid]
+                idx = next(i for i, item in enumerate(split_at[sid], 1) if item[0] == split_start)
+                seg["speaker"] = f"{sid}_split_{idx}"
+        result.append(seg)
+    return result, notes
+
+
+def detect_gd_speaker_identity_conflicts(segments):
+    """Detect unresolved cases where one diarisation ID contains multiple introductions."""
+    by_speaker = {}
+    for seg in segments or []:
+        sid = str(seg.get("speaker") or "speaker_0")
+        for name in _extract_gd_self_introductions(seg.get("text", "")):
+            by_speaker.setdefault(sid, set()).add(name.casefold())
     return {sid: sorted(names) for sid, names in by_speaker.items() if len(names) > 1}
 
 
 def identify_gd_speaker_names(segments, fallback_map):
-    """Identify names using chronological turns and preserve uncertainty on conflicts."""
-    if not client or not segments:
-        return dict(fallback_map), "Name identification is unavailable; keeping speaker labels."
-
+    """Identify names from explicit introductions first; use the LLM only as support."""
     speaker_ids = list(dict.fromkeys(str(seg.get("speaker") or "speaker_0") for seg in segments))
-    # Preserve the chronology so a moderator's direct address can be interpreted in context.
+    intro_names = {}
+    for seg in segments:
+        sid = str(seg.get("speaker") or "speaker_0")
+        for name in _extract_gd_self_introductions(seg.get("text", "")):
+            intro_names.setdefault(sid, [])
+            if name.casefold() not in {x.casefold() for x in intro_names[sid]}:
+                intro_names[sid].append(name)
+
+    # Deterministic self-introductions outrank any model-generated guess.
+    resolved = dict(fallback_map)
+    used = set()
+    for sid in speaker_ids:
+        names = intro_names.get(sid, [])
+        if len(names) == 1 and names[0].casefold() not in used:
+            resolved[sid] = names[0]
+            used.add(names[0].casefold())
+
+    if not client or not segments:
+        return resolved, "Explicit self-introductions were used where available; uncertain identities remain speaker-labelled."
+
     chronological = [
         {"speaker_id": str(seg.get("speaker") or "speaker_0"),
          "start": round(float(seg.get("start") or 0), 2),
@@ -2769,14 +2834,11 @@ def identify_gd_speaker_names(segments, fallback_map):
         for seg in segments if str(seg.get("text") or "").strip()
     ]
     prompt = f"""
-You are identifying participants in an MBA group discussion from a chronological diarised transcript.
-Use explicit self-introductions first (for example, 'my name is Riya' or 'I am Riya Sharma').
-You may use a moderator directly calling a participant by name only when the next response clearly
-belongs to that participant. Do not assume the moderator is a student. Do not infer names from voice,
-accent, topic, or general context. If one speaker ID appears to contain introductions by two different
-people, return an empty name for that ID rather than choosing one. Do not assign one person's name to
-multiple speaker IDs. When uncertain, return an empty string.
-Return ONLY valid JSON: {{"names": {{"speaker_id": "full name or empty string"}}}}
+Identify speakers in this chronological MBA group discussion transcript. Use an exact self-introduction
+when present. A moderator's direct address may be used only if the next response clearly belongs to that
+person. Do not treat moderator as a student, do not infer from voice/accent/topic, and do not add words to
+names. Do not assign the same name to multiple speaker IDs. For any ID with an explicit self-introduction,
+copy only the introduced name exactly. Return ONLY JSON: {{"names": {{"speaker_id": "full name or empty string"}}}}
 
 CHRONOLOGICAL TURNS:
 {json.dumps(chronological, ensure_ascii=False)}
@@ -2785,7 +2847,7 @@ CHRONOLOGICAL TURNS:
         raw = client.chat.completions.create(
             model=GROQ_MODEL,
             messages=[
-                {"role": "system", "content": "Extract only transcript-supported personal names. Never fabricate identities. Return JSON only."},
+                {"role": "system", "content": "Extract transcript-supported personal names only. Never fabricate or embellish a name. Return JSON only."},
                 {"role": "user", "content": prompt},
             ],
             temperature=0,
@@ -2793,24 +2855,21 @@ CHRONOLOGICAL TURNS:
         clean = raw.replace("```json", "").replace("```", "").strip()
         parsed = json.loads(clean)
         names = parsed.get("names", {}) if isinstance(parsed, dict) else {}
-        resolved = dict(fallback_map)
-        used = set()
-        conflicts = detect_gd_speaker_identity_conflicts(segments)
         for sid in speaker_ids:
-            if sid in conflicts:
+            if sid in intro_names:
+                # Never let the LLM overwrite a deterministic intro or resolve multiple intros by guessing.
                 continue
-            candidate = re.sub(r"\s+", " ", str(names.get(sid, "") or "")).strip()
-            if candidate and len(candidate) <= 70 and re.fullmatch(r"[A-Za-z][A-Za-z .'-]*", candidate):
+            candidate = re.sub(r"\s+", " ", str(names.get(sid, "") or "")).strip(" .,:;-'\"\n\t")
+            # Only accept short name-like output, not trailing transcript fragments.
+            if candidate and len(candidate) <= 50 and re.fullmatch(r"[A-Za-z]+(?:[ '-][A-Za-z]+){0,3}", candidate):
                 norm = candidate.casefold()
                 if norm not in used:
                     resolved[sid] = candidate
                     used.add(norm)
-        unidentified = [sid for sid in speaker_ids if resolved.get(sid, "").startswith("Speaker ")]
-        note = (f"Names were found for {len(speaker_ids) - len(unidentified)} of {len(speaker_ids)} detected speaker IDs. "
-                "Uncertain identities remain labelled Speaker A, Speaker B, etc.")
-        return resolved, note
+        identified = sum(1 for sid in speaker_ids if resolved.get(sid, "").casefold() != str(fallback_map.get(sid, "")).casefold())
+        return resolved, f"Names identified for {identified} of {len(speaker_ids)} speaker IDs; explicit self-introductions take priority."
     except Exception:
-        return dict(fallback_map), "AI name extraction could not be completed; keeping speaker labels."
+        return resolved, "Explicit self-introductions were used where available; AI name matching was unavailable."
 
 
 def _gd_speaker_stats(segments, speaker_map=None):
@@ -7029,6 +7088,7 @@ elif selected_nav == "Group Discussion Hub":
                     "uploaded_gd_segments", "uploaded_gd_topic_processed", "uploaded_gd_filename_processed",
                     "uploaded_gd_speaker_map", "uploaded_gd_visual_frames", "uploaded_gd_audio_bytes",
                     "uploaded_gd_final_speaker_records", "uploaded_gd_final_speaker_map", "uploaded_gd_final_stats",
+                    "uploaded_gd_split_notes",
                     "uploaded_gd_report", "uploaded_gd_upload_error",
                 ]
                 for reset_key in reset_keys:
@@ -7086,6 +7146,14 @@ elif selected_nav == "Group Discussion Hub":
 
         uploaded_segments = st.session_state.get("uploaded_gd_segments") or []
         if uploaded_segments:
+            # Repair obvious ID collisions at later explicit self-introductions before grading.
+            # This is a transcript-guided split and is visibly disclosed to the reviewer.
+            split_segments, newly_split_notes = split_gd_segments_on_conflicting_introductions(uploaded_segments)
+            if newly_split_notes:
+                uploaded_segments = split_segments
+                st.session_state["uploaded_gd_segments"] = uploaded_segments
+                st.session_state["uploaded_gd_split_notes"] = newly_split_notes
+            split_notes = st.session_state.get("uploaded_gd_split_notes", [])
             st.markdown("#### Step 2 — Review speaker-labelled transcript")
             # Assign stable, readable labels by first appearance in the recording.
             raw_speakers = list(dict.fromkeys(str(seg.get("speaker") or "speaker_0") for seg in uploaded_segments))
@@ -7103,6 +7171,13 @@ elif selected_nav == "Group Discussion Hub":
             if len(raw_speakers) > 7:
                 st.warning(f"{len(raw_speakers)} distinct voices were detected. The first seven are labelled Speaker A to Speaker G; additional detected voices remain labelled separately.")
             st.caption(name_identification_note + " Names cannot be reliably identified if participants never say their names in the recording.")
+            if split_notes:
+                st.warning(
+                    "The transcript contained a repeated diarisation ID with a later, different self-introduction. "
+                    "The portal created a separate speaker ID at that introduction. This is an AI-assisted transcript split, "
+                    "not acoustic certainty; please review the transcript against the recording before relying on individual grades.\n\n"
+                    + "\n".join(split_notes)
+                )
             if identity_conflicts:
                 conflict_lines = []
                 for conflict_sid, names_found in identity_conflicts.items():
