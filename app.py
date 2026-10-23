@@ -811,12 +811,11 @@ import sqlite3
 import hashlib
 import secrets
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 import base64
 import hmac
 import urllib.parse
-from urllib.parse import quote_plus
 import re
 import subprocess
 import wave
@@ -1490,6 +1489,142 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
     out = BytesIO()
     document.save(out)
     return out.getvalue()
+
+
+def build_iper_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
+    """Render the resume in an IPER-inspired format with grey section bars and no photo box."""
+    from io import BytesIO
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    import zipfile
+
+    document = docx.Document()
+    section = document.sections[0]
+    section.top_margin = Inches(0.48)
+    section.bottom_margin = Inches(0.48)
+    section.left_margin = Inches(0.62)
+    section.right_margin = Inches(0.62)
+    normal = document.styles["Normal"]
+    normal.font.name = "Arial"
+    normal.font.size = Pt(9.5)
+    normal.paragraph_format.space_after = Pt(2)
+
+    # Extract the IPER logo from the uploaded institutional template when bundled beside app.py.
+    logo_path = None
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Resume Format 2026(2).docx")
+    try:
+        if os.path.exists(template_path):
+            with zipfile.ZipFile(template_path) as zf:
+                candidates = [n for n in zf.namelist() if n.startswith("word/media/") and n.lower().endswith((".png", ".jpg", ".jpeg"))]
+                if candidates:
+                    ext = os.path.splitext(candidates[0])[1] or ".png"
+                    logo_path = os.path.join(tempfile.gettempdir(), "iper_resume_logo" + ext)
+                    with open(logo_path, "wb") as f:
+                        f.write(zf.read(candidates[0]))
+    except Exception:
+        logo_path = None
+
+    # Header: institutional logo at left and candidate contact details; intentionally no photo placeholder.
+    header_table = document.add_table(rows=1, cols=2)
+    header_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    header_table.autofit = False
+    header_table.columns[0].width = Inches(1.15)
+    header_table.columns[1].width = Inches(5.9)
+    left, right = header_table.rows[0].cells
+    left.width = Inches(1.15); right.width = Inches(5.9)
+    if logo_path and os.path.exists(logo_path):
+        lp = left.paragraphs[0]
+        lp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        try: lp.add_run().add_picture(logo_path, width=Inches(0.82))
+        except Exception: pass
+    rp = right.paragraphs[0]
+    rp.paragraph_format.space_after = Pt(2)
+    rr = rp.add_run(str(candidate_name or "Candidate").strip())
+    rr.bold = True; rr.font.name = "Arial"; rr.font.size = Pt(14); rr.font.color.rgb = RGBColor(55, 43, 91)
+    contacts = [x.strip() for x in (phone, email, linkedin) if x and x.strip()]
+    if contacts:
+        cp = right.add_paragraph(" | ".join(contacts))
+        cp.paragraph_format.space_after = Pt(2)
+        for run in cp.runs: run.font.size = Pt(8.5)
+    document.add_paragraph().paragraph_format.space_after = Pt(1)
+
+    aliases = {
+        "PROFESSIONAL SUMMARY":"CAREER OBJECTIVE", "SUMMARY":"CAREER OBJECTIVE", "PROFILE":"CAREER OBJECTIVE", "CAREER OBJECTIVE":"CAREER OBJECTIVE", "OBJECTIVE":"CAREER OBJECTIVE",
+        "EDUCATION":"EDUCATION QUALIFICATION", "EDUCATIONAL QUALIFICATIONS":"EDUCATION QUALIFICATION", "EDUCATION QUALIFICATION":"EDUCATION QUALIFICATION", "ACADEMIC QUALIFICATIONS":"EDUCATION QUALIFICATION",
+        "SKILLS":"SKILLS & PROFICIENCY", "KEY SKILLS":"SKILLS & PROFICIENCY", "TECHNICAL SKILLS":"SKILLS & PROFICIENCY", "CORE SKILLS":"SKILLS & PROFICIENCY", "CORE COMPETENCIES":"SKILLS & PROFICIENCY",
+        "EXPERIENCE":"PROFESSIONAL EXPERIENCE", "WORK EXPERIENCE":"PROFESSIONAL EXPERIENCE", "PROFESSIONAL EXPERIENCE":"PROFESSIONAL EXPERIENCE", "EMPLOYMENT HISTORY":"PROFESSIONAL EXPERIENCE",
+        "INTERNSHIP":"INTERNSHIP", "INTERNSHIPS":"INTERNSHIP", "PROJECTS":"PROJECTS & ACTIVITIES", "ACADEMIC PROJECTS":"PROJECTS & ACTIVITIES", "PROJECTS & ACTIVITIES":"PROJECTS & ACTIVITIES",
+        "CERTIFICATIONS":"ONLINE CERTIFICATIONS", "CERTIFICATES":"ONLINE CERTIFICATIONS", "COURSES":"ONLINE CERTIFICATIONS", "ONLINE CERTIFICATIONS":"ONLINE CERTIFICATIONS",
+        "ACHIEVEMENTS":"ACHIEVEMENTS", "AWARDS":"ACHIEVEMENTS", "PUBLICATIONS":"RESEARCH & PUBLICATIONS", "RESEARCH":"RESEARCH & PUBLICATIONS", "RESEARCH & PUBLICATIONS":"RESEARCH & PUBLICATIONS",
+        "ACTIVITIES":"EXTRA CURRICULAR ACTIVITIES", "EXTRACURRICULAR ACTIVITIES":"EXTRA CURRICULAR ACTIVITIES", "LEADERSHIP & ACTIVITIES":"EXTRA CURRICULAR ACTIVITIES", "VOLUNTEERING":"EXTRA CURRICULAR ACTIVITIES",
+        "INTERESTS":"INTERESTS & HOBBIES", "HOBBIES":"INTERESTS & HOBBIES", "ADDITIONAL INFORMATION":"ADDITIONAL INFORMATION", "LANGUAGES":"ADDITIONAL INFORMATION"
+    }
+    order = ["CAREER OBJECTIVE", "EDUCATION QUALIFICATION", "SKILLS & PROFICIENCY", "PROFESSIONAL EXPERIENCE", "INTERNSHIP", "PROJECTS & ACTIVITIES", "ONLINE CERTIFICATIONS", "RESEARCH & PUBLICATIONS", "ACHIEVEMENTS", "EXTRA CURRICULAR ACTIVITIES", "INTERESTS & HOBBIES", "ADDITIONAL INFORMATION"]
+    buckets = {h: [] for h in order}
+    current = "CAREER OBJECTIVE"
+    for raw in str(resume_text or "").splitlines():
+        line = clean_resume_draft(raw).strip()
+        if not line: continue
+        normalized = re.sub(r"[^A-Z& ]", "", line.upper()).strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        if normalized in aliases:
+            current = aliases[normalized]; continue
+        if normalized in {"NAME", "CANDIDATE NAME", "CONTACT", "CONTACT DETAILS"}: continue
+        line = re.sub(r"^[\s•*?)+\-\d.]+", "", line).strip()
+        if line: buckets.setdefault(current, []).append(line)
+
+    # Grey section bars matching the uploaded IPER format.
+    def add_section_bar(label):
+        table = document.add_table(rows=1, cols=1)
+        table.autofit = True
+        cell = table.cell(0, 0)
+        cell.text = label
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd"); shd.set(qn("w:fill"), "D9D9D9"); tcPr.append(shd)
+        for para in cell.paragraphs:
+            para.paragraph_format.space_before = Pt(0); para.paragraph_format.space_after = Pt(0)
+            for run in para.runs:
+                run.bold = True; run.font.name = "Arial"; run.font.size = Pt(9.5)
+        spacer = document.add_paragraph(); spacer.paragraph_format.space_after = Pt(1); spacer.paragraph_format.space_before = Pt(0)
+
+    for heading in order:
+        items = buckets.get(heading, [])
+        if not items: continue
+        add_section_bar(heading)
+        if heading == "EDUCATION QUALIFICATION":
+            # Keep education readable and compact in a four-column table when entries are separated by pipes.
+            table = document.add_table(rows=1, cols=4)
+            table.style = "Table Grid"; table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            heads = ["Degree / Certificate", "Institute / University", "Year", "Result"]
+            for c, val in zip(table.rows[0].cells, heads):
+                c.text = val
+                for r in c.paragraphs[0].runs: r.bold = True; r.font.size = Pt(8.5)
+            for item in items:
+                parts = [x.strip() for x in item.split("|")]
+                parts = (parts + [""] * 4)[:4]
+                cells = table.add_row().cells
+                for c, val in zip(cells, parts):
+                    c.text = val
+                    c.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    for para in c.paragraphs:
+                        para.paragraph_format.space_after = Pt(0)
+                        for r in para.runs: r.font.size = Pt(8.5)
+        else:
+            for item in items:
+                p = document.add_paragraph(style="List Bullet")
+                p.paragraph_format.left_indent = Inches(0.18)
+                p.paragraph_format.first_line_indent = Inches(-0.12)
+                p.paragraph_format.space_after = Pt(1)
+                p.add_run(item)
+
+    footer = section.footer.paragraphs[0]
+    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    fr = footer.add_run("IPER PEPTECH")
+    fr.font.name = "Arial"; fr.font.size = Pt(8); fr.font.color.rgb = RGBColor(100, 100, 100)
+    out = BytesIO(); document.save(out); return out.getvalue()
 
 def init_database():
     conn = get_db_connection()
@@ -2225,78 +2360,35 @@ def clean_generated_about_yourself(text):
 
 
 def generate_about_yourself(profile):
-    """Generate a self-introduction using the agreed MBA-first structure.
-    Class 10 and 12 percentages are included at the end when supplied.
-    """
     if not client:
         return ""
+    prompt = f"""Create a professional, natural and interview-ready 'About Yourself' response for an MBA placement student at IPER Bhopal.
+Use ONLY the information supplied below. Do not invent companies, roles, percentages, achievements, skills, responsibilities or experience.
+Write in first person, confident but not exaggerated, suitable for a 60-90 second interview answer.
+Integrate only the student's supplied education, internship, certifications, activities, achievements and professional interests.
+If a field is blank, do not mention it. Do not add an AI preamble, heading, quotation marks, bullets or commentary. Return ONLY the spoken response.
 
-    # Explicit whitelist: academic percentages enter the prompt so the model can
-    # reliably include Class 10 and Class 12 percentages at the end of every draft.
-    approved_profile = {
-        "Class 10 percentage (include near the end if supplied)": profile.get("tenth_percentage", ""),
-        "Class 12 percentage (include near the end if supplied)": profile.get("twelfth_percentage", ""),
-        "MBA institute and location": profile.get("mba_institute", ""),
-        "MBA percentage (include only if supplied and relevant)": profile.get("mba_percentage", ""),
-        "Why MBA / objectives": profile.get("mba_choice", ""),
-        "Specialisation and reason for choosing it": profile.get("mba_specialisation", ""),
-        "MBA learning (case studies, simulations, projects, group assignments)": profile.get("mba_learning", ""),
-        "Committees, clubs, events and competitions": profile.get("activities_participated", ""),
-        "Internship / live project": profile.get("internship", ""),
-        "Special skills and certifications, including where learned": profile.get("certification_courses", ""),
-        "Graduation": profile.get("undergraduation", ""),
-        "Graduation percentage (include only if supplied and relevant)": profile.get("ug_percentage", ""),
-        "School background (only meaningful experiences; no marks)": profile.get("school_background", ""),
-        "Family values (only details the student is comfortable sharing)": profile.get("family_values", ""),
-        "Personality, strengths and uniqueness": profile.get("personality", ""),
-        "Career aspirations": profile.get("professional_interest", ""),
-    }
-    approved_context = json.dumps(approved_profile, ensure_ascii=False)
-    prompt = f"""Write an interview-ready answer to “Tell me about yourself” for an MBA placement student at IPER Bhopal.
-
-FOLLOW THIS STRUCTURE STRICTLY:
-1. MBA JOURNEY — MAIN FOCUS, approximately 70% of the answer:
-   - MBA institute and location, and what makes it special (only if supplied).
-   - Why the student chose an MBA and their objectives.
-   - Specialisation and the reason for choosing it.
-   - Learning from case studies, simulations, projects and group assignments, including the student's contribution.
-   - Committees, clubs, events and competitions.
-   - Internship/live project: organisation, place, duration, contribution, learning and achievements, only where supplied.
-   - Special skills, where they were learned, and their relevance to an organisation.
-   - Career aspirations: desired role/function and future direction.
-2. GRADUATION: institute/location, course choice, relevant achievements, and learning connected to management/MBA.
-3. SCHOOL BACKGROUND: briefly mention meaningful school experiences if supplied.
-4. FAMILY AND VALUES: include only supplied details the student is comfortable discussing.
-5. PERSONALITY AND UNIQUENESS: authentic strengths, interests and experiences that distinguish the student.
-6. ACADEMIC PERCENTAGES — ENDING: at the very end of the answer, include the supplied Class 10 and Class 12 percentages in one short, natural sentence. Include both if both are available; include only the one supplied if the other is blank. Do not invent, calculate, or infer any percentage.
-
-STRICT RULES:
-- Class 10 and Class 12 percentages must be included at the end whenever supplied, as specified in step 6.
-- MBA and graduation percentages may be mentioned only if supplied and they fit naturally; never invent or infer them.
-- Only use facts explicitly provided below. Never invent institutions, roles, achievements, skills, responsibilities, durations, outcomes or goals.
-- If a section is blank, omit it. Do not compensate with generic claims.
-- Write in first person, simple and natural English, confident but not exaggerated, suitable for a 60–90 second spoken answer.
-- Keep the MBA journey clearly dominant; do not give equal weight to every section.
-- Return only the spoken answer: no title, bullets, preamble, quotation marks or commentary.
-
-APPROVED STUDENT INFORMATION (the only source of facts):
-{approved_context}
+Student profile:
+10th Percentage: {profile.get('tenth_percentage','')}
+12th Percentage: {profile.get('twelfth_percentage','')}
+Undergraduation: {profile.get('undergraduation','')}
+Post Graduation: {profile.get('post_graduation','')}
+Internship: {profile.get('internship','')}
+Certification Courses: {profile.get('certification_courses','')}
+Activities Participated: {profile.get('activities_participated','')}
+Achievements: {profile.get('achievements','')}
+Professional Interest: {profile.get('professional_interest','')}
 """
     try:
         response = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are an expert MBA placement interview coach. Follow the requested structure and exclusions exactly. Use only the provided facts and never invent details."},
-                {"role": "user", "content": prompt},
+                {"role":"system","content":"You are an expert MBA placement interview coach. Produce only a factual spoken response using the student's supplied information. Never invent facts."},
+                {"role":"user","content":prompt}
             ],
             model=GROQ_MODEL,
-            temperature=0.1,
+            temperature=0.15
         )
-        generated = clean_generated_about_yourself(response.choices[0].message.content)
-        # Final deterministic guard: remove any sentence mentioning Class 10/12 marks.
-        sentences = re.split(r"(?<=[.!?])\\s+", generated)
-        disallowed = re.compile(r"\\b(class\\s*(10|ten|12|twelve)|10th|12th|secondary school marks|higher secondary marks)\\b", re.I)
-        generated = " ".join(sentence for sentence in sentences if not disallowed.search(sentence)).strip()
-        return generated
+        return clean_generated_about_yourself(response.choices[0].message.content)
     except Exception:
         return ""
 
@@ -4067,13 +4159,15 @@ st.sidebar.markdown("---")
 selected_nav = st.sidebar.radio(
     "MAIN MENU",
     [
+        "Progress",
         "Industry & Company Insights",
         "About Myself",
         "Resume Checker & Job Matcher",
+        "Career Development",
         "Interview Preparation Guide",
         "Interview Practice Room",
         "Group Discussion Hub",
-        "My Progress Dashboard",
+        "Performance Dashboard",
         "My Personal Details"
     ],
     key="main_nav"
@@ -4163,7 +4257,126 @@ if selected_nav == "My Personal Details":
                     finally:
                         conn.close()
 
-# SECTION 0: MY PROGRESS DASHBOARD is consolidated into the dashboard section below.
+# SECTION 0: PROGRESS
+elif selected_nav == "Progress":
+    st.title("Weekly Progress")
+    st.caption("A quick view of your weekly placement-practice journey, activity and next steps.")
+
+    scholar_id = st.session_state.get("scholar_id", "")
+    student_id = st.session_state.get("student_id")
+    history = st.session_state.get("history", [])
+
+    # Refresh persisted interview attempts so progress survives login/session refreshes.
+    if student_id:
+        try:
+            persisted_attempts = load_student_attempts(student_id)
+            if persisted_attempts:
+                history = persisted_attempts
+                st.session_state["history"] = persisted_attempts
+        except Exception:
+            pass
+
+    pi_attempts = len(history)
+    pi_scores = [float(item.get("Score", 0) or 0) for item in history]
+    pi_minutes = sum(float(item.get("DurationSeconds", 0) or 0) for item in history) / 60.0
+
+    gd_attempts = 0
+    gd_scores = []
+    gd_minutes = 0.0
+    if scholar_id:
+        try:
+            gd_assessments = get_ai_voice_gd_assessments(scholar_id)
+            gd_attempts = len(gd_assessments)
+            for assessment in gd_assessments:
+                report = assessment.get("report_json") or {}
+                live_feedback = report.get("LiveFeedback") or {}
+                overall_value = live_feedback.get("OverallScore")
+                if overall_value is None:
+                    participant_report = next(
+                        (p for p in (report.get("Participants") or [])
+                         if str(p.get("Name", "")).strip().lower() == str(st.session_state.get("candidate_name", "")).strip().lower()),
+                        None
+                    )
+                    overall_value = participant_report.get("OverallScore") if participant_report else None
+                if overall_value is not None:
+                    numeric_score = float(overall_value or 0)
+                    gd_scores.append(numeric_score * 10 if numeric_score <= 10 else numeric_score)
+                gd_minutes += float(assessment.get("duration_seconds", 0) or 0) / 60.0
+        except Exception:
+            pass
+
+    total_minutes = pi_minutes + gd_minutes
+    all_scores = pi_scores + gd_scores
+    average_score = (sum(all_scores) / len(all_scores)) if all_scores else 0.0
+
+    # Progress is intentionally activity-based: 20 completed practice assessments is the first milestone.
+    target_attempts = 20
+    progress_pct = min(100, round(((pi_attempts + gd_attempts) / target_attempts) * 100))
+
+    st.markdown("### Weekly Progress")
+    st.progress(progress_pct, text=f"{progress_pct}% of your first {target_attempts} practice assessments completed")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Minutes Utilized", f"{total_minutes:.1f} min")
+    m2.metric("PI Attempted", pi_attempts)
+    m3.metric("GD Attempted", gd_attempts)
+    m4.metric("Average Grade", grade_from_score(average_score) if all_scores else "—")
+
+    st.markdown("### Your Way Ahead")
+    suggestions = []
+    if pi_attempts == 0:
+        suggestions.append("Complete your first PI practice session and establish a baseline score.")
+    elif average_score < 60:
+        suggestions.append("Focus first on answer structure, clarity and confidence before increasing practice volume.")
+    elif average_score < 75:
+        suggestions.append("Continue regular PI practice and strengthen examples from your resume, internship and projects.")
+    else:
+        suggestions.append("Maintain your current performance and practise company-specific and advanced interview questions.")
+    if gd_attempts == 0:
+        suggestions.append("Attempt at least one GD and practise concise points, active listening and balanced participation.")
+    elif gd_attempts < 3:
+        suggestions.append("Complete a few more GDs so your participation and communication patterns become consistent.")
+    else:
+        suggestions.append("Review your GD feedback after each attempt and target one specific improvement in the next discussion.")
+    if total_minutes < 30:
+        suggestions.append("Aim for at least 30 minutes of meaningful placement practice before your next review.")
+    else:
+        suggestions.append("Keep a steady weekly practice routine rather than relying on last-minute preparation.")
+
+    for suggestion in suggestions[:3]:
+        st.markdown(f"• {suggestion}")
+
+    # GD feedback is now part of the weekly progress view, not only the GD tab.
+    if scholar_id:
+        try:
+            weekly_gd_assessments = get_ai_voice_gd_assessments(scholar_id)
+            if weekly_gd_assessments:
+                _render_live_gd_feedback_summary(
+                    weekly_gd_assessments[0],
+                    st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")),
+                    heading="### Latest GD Feedback"
+                )
+        except Exception as gd_feedback_error:
+            st.info(f"GD feedback could not be loaded right now: {gd_feedback_error}")
+
+    st.markdown("### Activity Snapshot")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("PI Practice Minutes", f"{pi_minutes:.1f}")
+    with c2:
+        st.metric("GD Practice Minutes", f"{gd_minutes:.1f}")
+
+    render_grade_slabs()
+    if history:
+        st.markdown("### PI Grade Trend")
+        grade_rows = [
+            {"Attempt": i, "Date & Time": item.get("Timestamp", ""), "Grade": grade_from_score(item.get("Score", 0)), "Domain": item.get("Domain", "")}
+            for i, item in enumerate(history, 1)
+        ]
+        st.dataframe(grade_rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("Your progress will start building as soon as you complete your first PI or GD practice assessment.")
+
 # SECTION 1: INDUSTRY & COMPANY INSIGHTS
 elif selected_nav == "Industry & Company Insights":
     st.title("Industry & Company Insights")
@@ -4622,8 +4835,6 @@ elif selected_nav == "Industry & Company Insights":
                     st.write(company.get("Note") or f"{company['Company']} is listed under {selected_sector}. Generate a company-specific profile below rather than relying on a generic checklist.")
                     if company.get("Website"):
                         st.link_button("Open official company website", company["Website"])
-                    else:
-                        st.link_button("Find official website", "https://www.google.com/search?q=" + quote_plus(company["Company"] + " official website"))
                     profile_key = "sector_company_profile_" + re.sub(r"[^a-zA-Z0-9]+", "_", company["Company"] + "_" + selected_sector).strip("_").lower()
                     if st.button("Show detailed company profile", key=profile_key):
                         prompt = f"""Prepare a detailed, company-specific MBA placement research brief for {company['Company']} (sector: {selected_sector}). The goal is accurate company intelligence, not generic advice.
@@ -4642,9 +4853,7 @@ Use clear headings and cover EVERY item:
 11. Main business risks/challenges and likely management priorities.
 12. MBA career pathways across marketing, sales, finance, HR, operations, analytics or other relevant functions; distinguish likely roles from confirmed vacancies.
 13. Five useful facts/metrics a student should verify in the latest annual report or official sources.
-14. Official website: provide the company's official website URL only when you know it confidently; otherwise clearly say 'Official website needs verification' and provide the exact company-name search phrase the student should use. Never invent a domain.
-15. Financial performance: explain the latest available financial performance using official company website material only (annual report, investor relations page, quarterly results, investor presentation). Include revenue, profit, growth, margins, debt or segment performance only when figures and period are confidently known. State the reporting period and currency. If live official information is not available to you, say 'Check the latest annual report/results on the official website' and list the metrics to verify; never fabricate figures.
-16. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
+14. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
 
 Be concrete and company-specific. If a fact is uncertain or may have changed, label it 'Verify current information'. Do not use filler or repeat the question. Format in readable Markdown."""
                         if profile_key + "_result" not in st.session_state:
@@ -4708,8 +4917,6 @@ Be concrete and company-specific. If a fact is uncertain or may have changed, la
                     st.write(company.get("Note") or f"{company['Company']} is listed in {company['Sector']}. Generate a company-specific profile below.")
                     if company.get("Website"):
                         st.link_button("Open official company website", company["Website"])
-                    else:
-                        st.link_button("Find official website", "https://www.google.com/search?q=" + quote_plus(company["Company"] + " official website"))
                     profile_key = "search_company_profile_" + re.sub(r"[^a-zA-Z0-9]+", "_", company["Company"] + "_" + company["Sector"]).strip("_").lower()
                     if st.button("Show detailed company profile", key=profile_key):
                         prompt = f"""Prepare a detailed, company-specific MBA placement research brief for {company['Company']} (sector: {company['Sector']}). The goal is accurate company intelligence, not generic advice.
@@ -4728,9 +4935,7 @@ Use clear headings and cover EVERY item:
 11. Main business risks/challenges and likely management priorities.
 12. MBA career pathways across marketing, sales, finance, HR, operations, analytics or other relevant functions; distinguish likely roles from confirmed vacancies.
 13. Five useful facts/metrics a student should verify in the latest annual report or official sources.
-14. Official website: provide the company's official website URL only when you know it confidently; otherwise clearly say 'Official website needs verification' and provide the exact company-name search phrase the student should use. Never invent a domain.
-15. Financial performance: explain the latest available financial performance using official company website material only (annual report, investor relations page, quarterly results, investor presentation). Include revenue, profit, growth, margins, debt or segment performance only when figures and period are confidently known. State the reporting period and currency. If live official information is not available to you, say 'Check the latest annual report/results on the official website' and list the metrics to verify; never fabricate figures.
-16. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
+14. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
 
 Be concrete and company-specific. If a fact is uncertain or may have changed, label it 'Verify current information'. Do not use filler or repeat the question. Format in readable Markdown."""
                         if profile_key + "_result" not in st.session_state:
@@ -5004,116 +5209,80 @@ Be concrete and company-specific. If a fact is uncertain or may have changed, la
 # SECTION: ABOUT MYSELF
 elif selected_nav == "About Myself":
     st.title("About Myself")
-    st.caption("Build a truthful, structured introduction for placement interviews. Give the most attention to your MBA journey, then connect it with your education, values and personality.")
+    st.caption("Enter your own information, edit your introduction and save it. AI generation is optional — your personal wording always remains under your control.")
 
     student_id = st.session_state.get("student_id")
     existing_profile = load_student_profile(student_id) if student_id else {}
-    # Store the additional structured fields inside an existing text column to remain
-    # compatible with older SQLite/PostgreSQL schemas; legacy plain-text values remain readable.
-    try:
-        _about_extra = json.loads(existing_profile.get("achievements", "") or "{}")
-        if not isinstance(_about_extra, dict):
-            _about_extra = {"personality": str(existing_profile.get("achievements", "") or "")}
-    except Exception:
-        _about_extra = {"personality": str(existing_profile.get("achievements", "") or "")}
 
-    st.markdown("### Academic Percentages")
-    st.caption("These details are saved to your profile. Supplied Class 10 and Class 12 percentages will be included at the end of the generated interview introduction.")
-    percent_col1, percent_col2 = st.columns(2)
-    with percent_col1:
-        tenth_percentage = st.text_input("Class 10 Percentage", value=existing_profile.get("tenth_percentage", ""), placeholder="e.g., 82%", key="about_tenth_percentage")
-        ug_percentage = st.text_input("Graduation / UG Percentage", value=_about_extra.get("ug_percentage", ""), placeholder="e.g., 76%", key="about_ug_percentage")
-    with percent_col2:
-        twelfth_percentage = st.text_input("Class 12 Percentage", value=existing_profile.get("twelfth_percentage", ""), placeholder="e.g., 78%", key="about_twelfth_percentage")
-        mba_percentage = st.text_input("MBA / PG Percentage", value=_about_extra.get("mba_percentage", ""), placeholder="e.g., 74%", key="about_mba_percentage")
-
-    st.markdown("### 1. MBA Journey — Main Focus")
-    st.caption("Describe your MBA experience in the most detail. Use real examples and explain what you learned.")
-    mba_institute = st.text_input("MBA institute and location", value=existing_profile.get("mba_institute", ""), placeholder="Institute name, city and what makes it special", key="about_mba_institute")
-    mba_choice = st.text_area("Why did you choose an MBA? What are your objectives?", value=existing_profile.get("mba_choice", ""), placeholder="Your reasons for choosing management and what you want to achieve", height=80, key="about_mba_choice")
-    mba_specialisation = st.text_area("Specialisation and reason for choosing it", value=existing_profile.get("mba_specialisation", ""), placeholder="Your specialisation, interests and reasons", height=75, key="about_mba_specialisation")
-    mba_learning = st.text_area("Case studies, simulations, projects and group assignments", value=existing_profile.get("mba_learning", ""), placeholder="What you worked on, your contribution and what you learned", height=90, key="about_mba_learning")
-    mba_activities = st.text_area("Committees, clubs, events and competitions", value=existing_profile.get("activities_participated", ""), placeholder="Activities, your role, contribution and learning", height=85, key="about_activities")
-    internship = st.text_area("Internship / live project", value=existing_profile.get("internship", ""), placeholder="Organisation, location, duration, role, responsibilities, learning and achievements", height=100, key="about_internship")
-    skills = st.text_area("Special skills and where you learned them", value=existing_profile.get("certification_courses", ""), placeholder="Skills, courses/certifications, where you developed them and how they can help an organisation", height=90, key="about_skills")
-    career_goals = st.text_area("Career aspirations", value=existing_profile.get("professional_interest", ""), placeholder="Desired role, sector/function and where you hope to be in the next few years", height=80, key="about_career_goals")
-
-    st.markdown("### 2. Graduation")
-    graduation = st.text_area("Graduation institute, location, course choice and achievements", value=existing_profile.get("undergraduation", ""), placeholder="Degree, college/university, location, why you chose it, awards and learning relevant to management", height=100, key="about_graduation")
-    st.markdown("### 3. School Background")
-    school = st.text_area("School, meaningful experiences and achievements", value=_about_extra.get("school", ""), placeholder="School name/location, achievements and lessons that shaped you", height=75, key="about_school")
-    st.markdown("### 4. Family and Values")
-    family_values = st.text_area("Values and experiences that shaped you", value=_about_extra.get("family_values", ""), placeholder="Share only what you are comfortable discussing in an interview", height=75, key="about_family_values")
-    st.markdown("### 5. Personality and Uniqueness")
-    personality = st.text_area("Strengths, interests and what makes you different", value=_about_extra.get("personality", ""), placeholder="Genuine strengths, interests, responsibilities or experiences that distinguish you", height=85, key="about_personality")
-    # Keep the existing database columns so this update remains compatible with current records.
-    profile_payload = {
-        "undergraduation": graduation.strip(),
-        "post_graduation": "\n".join(x for x in [mba_institute, mba_choice, mba_specialisation, mba_learning] if x.strip()),
-        "internship": internship.strip(), "certification_courses": skills.strip(),
-        "activities_participated": mba_activities.strip(), "achievements": json.dumps({"personality": personality.strip(), "school": school.strip(), "family_values": family_values.strip(), "ug_percentage": ug_percentage.strip(), "mba_percentage": mba_percentage.strip()}, ensure_ascii=False),
-        "tenth_percentage": tenth_percentage.strip(), "twelfth_percentage": twelfth_percentage.strip(),
-        "professional_interest": career_goals.strip(),
-        # Additional structured answers are included in the saved profile hash and draft context.
-        "school_background": school.strip(), "family_values": family_values.strip(),
-        "mba_institute": mba_institute.strip(), "mba_choice": mba_choice.strip(),
-        "mba_specialisation": mba_specialisation.strip(), "mba_learning": mba_learning.strip(),
+    fields = {
+        "tenth_percentage": st.text_input("10th Percentage", value=existing_profile.get("tenth_percentage", ""), placeholder="e.g., 82%"),
+        "twelfth_percentage": st.text_input("12th Percentage", value=existing_profile.get("twelfth_percentage", ""), placeholder="e.g., 78%"),
+        "undergraduation": st.text_area("Undergraduation", value=existing_profile.get("undergraduation", ""), placeholder="Degree, college/university, specialization, year, relevant learning", height=90),
+        "post_graduation": st.text_area("Post Graduation", value=existing_profile.get("post_graduation", ""), placeholder="MBA/PG degree, specialization, institute, relevant learning", height=90),
+        "internship": st.text_area("Internship", value=existing_profile.get("internship", ""), placeholder="Company, role, duration, responsibilities, key learning", height=100),
+        "certification_courses": st.text_area("Certification Courses", value=existing_profile.get("certification_courses", ""), placeholder="Courses, certifications, platforms and key skills learned", height=100),
+        "activities_participated": st.text_area("Activities Participated", value=existing_profile.get("activities_participated", ""), placeholder="Clubs, events, competitions, sports, volunteering, leadership activities", height=100),
+        "achievements": st.text_area("Achievements", value=existing_profile.get("achievements", ""), placeholder="Academic, professional, competition or extracurricular achievements", height=100),
+        "professional_interest": st.text_area("Professional Interest", value=existing_profile.get("professional_interest", ""), placeholder="Roles, sectors, functions or career areas you want to pursue", height=100),
     }
-    profile_hash = hashlib.sha256(json.dumps(profile_payload, sort_keys=True).encode("utf-8")).hexdigest()
 
+    profile_payload = {k: (v or "").strip() for k, v in fields.items()}
+    profile_hash = hashlib.sha256(json.dumps(profile_payload, sort_keys=True).encode("utf-8")).hexdigest()
+    previous_hash = existing_profile.get("profile_hash", "")
+
+    # Editable introduction: never show a preset response when the student has not created one.
+    # If an AI draft was generated on the previous run, load it BEFORE the
+    # text_area widget is instantiated. Streamlit forbids changing a widget
+    # key after that widget has already been created in the same run.
     pending_about = st.session_state.pop("pending_about_yourself_draft", None)
     if pending_about:
         st.session_state["about_yourself_editor"] = pending_about
     elif "about_yourself_editor" not in st.session_state:
         st.session_state["about_yourself_editor"] = existing_profile.get("about_yourself", "") or ""
 
-    st.markdown("### Your Interview Introduction")
-    st.caption("You remain in control of the final wording. AI can prepare a draft from the information you provide; it must not invent details.")
-    about_text = st.text_area("About Yourself", key="about_yourself_editor", height=190, placeholder="Write or edit your introduction here.")
+    st.markdown("### Your About Yourself")
+    st.caption("Write or edit this in your own words. You can use AI to generate a draft, but nothing is saved until you click Save About Myself.")
+    about_text = st.text_area(
+        "About Yourself",
+        key="about_yourself_editor",
+        height=190,
+        placeholder="Write your introduction here in your own words. Example structure: present status → education → internship/projects → strengths/skills → career interest. No preset answer is provided.",
+        label_visibility="collapsed",
+    )
+
     col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         save_about_clicked = st.button("Save About Myself", use_container_width=True)
     with col2:
         generate_about_clicked = st.button("Generate Draft with AI", use_container_width=True)
     with col3:
-        st.caption(f"Last saved: {existing_profile['updated_at']}" if existing_profile.get("updated_at") else "Not saved yet")
+        if existing_profile.get("updated_at"):
+            st.caption(f"Last saved: {existing_profile['updated_at']}")
+        else:
+            st.caption("Not saved yet")
 
     if save_about_clicked:
-        if not student_id:
-            st.error("Your student account could not be identified. Please sign in again.")
+        if not about_text.strip():
+            st.warning("Please write your About Yourself response before saving.")
         else:
             save_student_profile(student_id, profile_payload, about_text.strip(), profile_hash)
             st.success("Your About Myself profile and introduction have been saved.")
             st.rerun()
 
     if generate_about_clicked:
-        # Provide named fields in the exact MBA-first order expected by the generator.
-        draft_profile = dict(profile_payload)
-        draft_profile.update({
-            "undergraduation": graduation,
-            "mba_institute": mba_institute,
-            "mba_choice": mba_choice,
-            "mba_specialisation": mba_specialisation,
-            "mba_learning": mba_learning,
-            "internship": internship,
-            "certification_courses": skills,
-            "activities_participated": mba_activities,
-            "school_background": school,
-            "family_values": family_values,
-            "personality": personality,
-            "ug_percentage": ug_percentage,
-            "mba_percentage": mba_percentage,
-            "professional_interest": career_goals,
-        })
         with st.spinner("Preparing a factual draft from your profile..."):
-            generated_about = generate_about_yourself(draft_profile)
+            generated_about = generate_about_yourself(profile_payload)
         if generated_about:
+            # Do not write directly to the text_area's session-state key after
+            # the widget has been instantiated. Store the draft and rerun; the
+            # draft will be loaded into the widget key at the top of the next run.
             st.session_state["pending_about_yourself_draft"] = generated_about
             st.rerun()
         else:
-            st.error("The AI draft could not be generated. Check the AI configuration; your existing introduction has not been changed.")
+            st.error("The AI draft could not be generated. Your existing introduction was not changed or overwritten.")
 
-    st.info("Tip: Keep the MBA journey as the main part of your answer. Use graduation, school, values and personality only where they add a meaningful detail. Do not include information you are uncomfortable sharing.")
+    st.markdown("### Profile Editing")
+    st.caption("You can return to this page anytime, change any profile field or introduction, and save the updated version. AI generation never replaces your saved text automatically.")
 
 # ------------------------------------------------------------------------------
 # LIVE VOICE GD PRACTICE (PILOT)
@@ -6140,26 +6309,36 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
         if st.button("Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
             st.session_state["pending_reset_resume_workspace"] = True
             st.rerun()
-    with download_col:
-        if st.button(" Create Professional Editable DOCX", key="create_resume_docx", use_container_width=True):
+    st.markdown("### 4. Choose Your Resume Format")
+    st.caption("Both formats use the same verified resume content and JD-tailoring workflow. Option A is a modern single-column ATS-first format. Option B follows the IPER institutional style and omits the photo box.")
+    format_col_a, format_col_b = st.columns(2)
+    safe_candidate_filename = re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'
+    with format_col_a:
+        st.markdown("**Option A — Modern ATS Resume**")
+        st.caption("Clean single-column layout for job applications and ATS readability.")
+        if st.button("Generate Option A", key="create_resume_docx_a", use_container_width=True):
             if not resume_editor_text.strip():
                 st.warning("Please add or edit your resume content first.")
             else:
                 docx_email, docx_phone = extract_resume_contacts(resume_editor_text)
-                if not docx_email:
-                    docx_email = str(st.session_state.get("student_email", "") or "").strip()
-                st.session_state["generated_resume_docx_bytes"] = build_professional_resume_docx(
-                    clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone
-                )
-                st.success("Professional, editable Word resume created. Download it below and continue editing in Microsoft Word.")
-    if st.session_state.get("generated_resume_docx_bytes"):
-        st.download_button(
-            "Download My Editable Resume (.docx)",
-            data=st.session_state["generated_resume_docx_bytes"],
-            file_name=f"{re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'}_Resume.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
-        )
+                if not docx_email: docx_email = str(st.session_state.get("student_email", "") or "").strip()
+                st.session_state["generated_resume_docx_bytes_a"] = build_professional_resume_docx(clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone)
+                st.success("Option A is ready to download.")
+        if st.session_state.get("generated_resume_docx_bytes_a"):
+            st.download_button("Download Option A (.docx)", data=st.session_state["generated_resume_docx_bytes_a"], file_name=f"{safe_candidate_filename}_Resume_ATS.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="download_resume_docx_a", use_container_width=True)
+    with format_col_b:
+        st.markdown("**Option B — IPER Resume Format**")
+        st.caption("IPER-style grey section bars and institutional layout, without a photo placeholder.")
+        if st.button("Generate Option B", key="create_resume_docx_b", use_container_width=True):
+            if not resume_editor_text.strip():
+                st.warning("Please add or edit your resume content first.")
+            else:
+                docx_email, docx_phone = extract_resume_contacts(resume_editor_text)
+                if not docx_email: docx_email = str(st.session_state.get("student_email", "") or "").strip()
+                st.session_state["generated_resume_docx_bytes_b"] = build_iper_resume_docx(clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone)
+                st.success("Option B is ready to download.")
+        if st.session_state.get("generated_resume_docx_bytes_b"):
+            st.download_button("Download Option B (.docx)", data=st.session_state["generated_resume_docx_bytes_b"], file_name=f"{safe_candidate_filename}_Resume_IPER.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="download_resume_docx_b", use_container_width=True)
 
 
 # SECTION 2: CAREER DEVELOPMENT
@@ -6985,40 +7164,20 @@ elif selected_nav == "Group Discussion Hub":
             placeholder="Example: Should India prioritise economic growth over environmental protection?",
             key="uploaded_gd_topic",
         )
-        upload_version = int(st.session_state.get("uploaded_gd_upload_version", 0) or 0)
         gd_video_file = st.file_uploader(
             "Upload GD video",
             type=["mp4", "mov", "m4v", "webm", "mpeg", "mpg"],
             help="For the prototype, use a clear recording of up to 10–15 minutes. Audio is extracted before sending it for transcription.",
-            key=f"uploaded_gd_video_file_{upload_version}",
+            key="uploaded_gd_video_file",
         )
         if gd_video_file:
-            st.session_state["uploaded_gd_video_bytes"] = gd_video_file.getvalue()
-            st.session_state["uploaded_gd_video_original_name"] = gd_video_file.name
-            st.session_state["uploaded_gd_video_size"] = gd_video_file.size
-        saved_video_bytes = st.session_state.get("uploaded_gd_video_bytes")
-        saved_video_name = st.session_state.get("uploaded_gd_video_original_name", "Uploaded GD video")
-        saved_video_size = int(st.session_state.get("uploaded_gd_video_size", len(saved_video_bytes or b"")) or 0)
-        if saved_video_bytes:
-            st.video(saved_video_bytes)
-            st.caption(f"Saved in this session: {saved_video_name} • {saved_video_size / (1024 * 1024):.1f} MB. It will remain available when you switch tabs in this session.")
-            if st.button("Reset / Remove Uploaded GD Video and Feedback", key="reset_uploaded_gd_video_and_feedback", use_container_width=True):
-                reset_keys = [
-                    "uploaded_gd_video_bytes", "uploaded_gd_video_original_name", "uploaded_gd_video_size",
-                    "uploaded_gd_segments", "uploaded_gd_topic_processed", "uploaded_gd_filename_processed",
-                    "uploaded_gd_speaker_map", "uploaded_gd_visual_frames", "uploaded_gd_audio_bytes",
-                    "uploaded_gd_final_speaker_records", "uploaded_gd_final_speaker_map", "uploaded_gd_final_stats",
-                    "uploaded_gd_report", "uploaded_gd_upload_error",
-                ]
-                for reset_key in reset_keys:
-                    st.session_state.pop(reset_key, None)
-                st.session_state["uploaded_gd_upload_version"] = upload_version + 1
-                st.rerun()
+            st.video(gd_video_file)
+            st.caption(f"File: {gd_video_file.name} • {gd_video_file.size / (1024 * 1024):.1f} MB")
 
         if st.button(" Transcribe and Identify Speakers", use_container_width=True, key="run_uploaded_gd_diarization"):
             if not video_topic.strip():
                 st.error("Please enter the GD topic.")
-            elif not st.session_state.get("uploaded_gd_video_bytes"):
+            elif not gd_video_file:
                 st.error("Please upload a GD video first.")
             elif not openai_client:
                 st.error("OpenAI is not configured. Add OPENAI_API_KEY to Streamlit Secrets.")
@@ -7028,10 +7187,9 @@ elif selected_nav == "Group Discussion Hub":
                 video_temp_path = None
                 audio_temp_path = None
                 try:
-                    active_video_name = st.session_state.get("uploaded_gd_video_original_name", getattr(gd_video_file, "name", "uploaded_gd_video.mp4"))
-                    suffix = Path(active_video_name).suffix or ".mp4"
+                    suffix = Path(gd_video_file.name).suffix or ".mp4"
                     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_video:
-                        tmp_video.write(st.session_state.get("uploaded_gd_video_bytes") or gd_video_file.getvalue())
+                        tmp_video.write(gd_video_file.getvalue())
                         video_temp_path = tmp_video.name
                     with st.spinner("Extracting audio and generating speaker-labelled transcript..."):
                         audio_temp_path = _ffmpeg_extract_gd_audio(video_temp_path)
@@ -7044,7 +7202,7 @@ elif selected_nav == "Group Discussion Hub":
                             else:
                                 st.session_state["uploaded_gd_segments"] = segments
                                 st.session_state["uploaded_gd_topic_processed"] = video_topic.strip()
-                                st.session_state["uploaded_gd_filename_processed"] = st.session_state.get("uploaded_gd_video_original_name", getattr(gd_video_file, "name", "Uploaded GD video"))
+                                st.session_state["uploaded_gd_filename_processed"] = gd_video_file.name
                                 st.session_state["uploaded_gd_speaker_map"] = {}
                                 sampled_frames, frame_sample_error = _extract_gd_visual_samples(video_temp_path)
                                 st.session_state["uploaded_gd_visual_frames"] = sampled_frames
@@ -7269,354 +7427,219 @@ elif selected_nav == "Group Discussion Hub":
 # SECTION 5: PERFORMANCE DASHBOARD
 
 
-elif selected_nav == "My Progress Dashboard":
-    st.title("My Progress Dashboard")
-    st.caption("A clear view of your GD and PI practice, feedback and progress over time.")
+elif selected_nav == "Performance Dashboard":
+    st.title("Performance Dashboard")
+    st.caption("Review your previous interview and group discussion attempts, read the feedback from each performance, and download mentor-ready reports.")
 
-    # Load the student's complete saved PI and GD history, not only this week's attempts.
-    dashboard_student_id = st.session_state.get("student_id")
-    dashboard_scholar = st.session_state.get("scholar_id", "")
-    pi_history = st.session_state.get("history", [])
-    if dashboard_student_id:
-        try:
-            loaded_pi_history = load_student_attempts(dashboard_student_id)
-            if loaded_pi_history is not None:
-                pi_history = loaded_pi_history
-                st.session_state["history"] = loaded_pi_history
-        except Exception:
-            pass
+    history = st.session_state.get("history", [])
+    dashboard_gd_assessments = get_gd_video_assessments(st.session_state.get("scholar_id", "")) if st.session_state.get("scholar_id") else []
 
-    gd_video_history = get_gd_video_assessments(dashboard_scholar) if dashboard_scholar else []
-    try:
-        gd_live_history = get_ai_voice_gd_assessments(dashboard_scholar) if dashboard_scholar else []
-    except Exception:
-        gd_live_history = []
-
-    # Combine and deduplicate saved GD attempts.
-    gd_history_map = {}
-    for gd_item in list(gd_video_history or []) + list(gd_live_history or []):
-        gd_key = str(gd_item.get("id") or gd_item.get("created_at") or gd_item.get("timestamp") or id(gd_item))
-        gd_history_map[gd_key] = gd_item
-    gd_history = sorted(
-        gd_history_map.values(),
-        key=lambda item: str(item.get("created_at") or item.get("timestamp") or "")
-    )
-
-    def _dashboard_score(value):
-        try:
-            if value is None or str(value).strip() == "":
-                return None
-            return max(0.0, min(100.0, float(value)))
-        except (TypeError, ValueError):
-            return None
-
-    # PI score and feedback normalisation.
-    pi_records = []
-    for item in (pi_history or []):
-        score = _dashboard_score(item.get("Score", item.get("score")))
-        timestamp = item.get("Timestamp") or item.get("timestamp") or "Timestamp unavailable"
-        feedback = item.get("Feedback") or item.get("feedback") or {}
-        pi_records.append({
-            "timestamp": str(timestamp),
-            "score": score,
-            "grade": grade_from_score(score) if score is not None else "Not graded",
-            "feedback": feedback if isinstance(feedback, dict) else {},
-            "details": str(item.get("Company") or item.get("Domain") or item.get("QuestionType") or item.get("Question") or "Interview Practice"),
-            "raw": item,
-        })
-
-    # GD score and feedback normalisation.
-    gd_records = []
-    candidate_label = st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))
-    for item in gd_history:
-        report = _live_gd_report_for_student(item, candidate_label) or {}
-        score = _dashboard_score(report.get("OverallScore"))
-        timestamp = item.get("created_at") or item.get("timestamp") or "Timestamp unavailable"
-        gd_records.append({
-            "timestamp": str(timestamp),
-            "score": score,
-            "grade": grade_from_score(score) if score is not None else "Not graded",
-            "feedback": report if isinstance(report, dict) else {},
-            "details": str(item.get("topic") or item.get("source_type") or "Group Discussion"),
-            "item": item,
-        })
-
-    # Sort both lists chronologically for accurate latest feedback and charts.
-    def _timestamp_sort_key(record):
-        try:
-            return pd.to_datetime(record.get("timestamp"), errors="coerce")
-        except Exception:
-            return pd.NaT
-
-    pi_records.sort(key=lambda record: str(record["timestamp"]))
-    gd_records.sort(key=lambda record: str(record["timestamp"]))
-    pi_scored = [record["score"] for record in pi_records if record["score"] is not None]
-    gd_scored = [record["score"] for record in gd_records if record["score"] is not None]
-    pi_average = sum(pi_scored) / len(pi_scored) if pi_scored else None
-    gd_average = sum(gd_scored) / len(gd_scored) if gd_scored else None
-    combined_scores = pi_scored + gd_scored
-    overall_average = sum(combined_scores) / len(combined_scores) if combined_scores else None
-
-    # 1. Overall feedback summary.
-    st.markdown("## Overall Feedback")
-    overall_cols = st.columns(5)
-    overall_cols[0].metric("GD Attempts", len(gd_records))
-    overall_cols[1].metric("GD Average Grade", grade_from_score(gd_average) if gd_average is not None else "—")
-    overall_cols[2].metric("PI Attempts", len(pi_records))
-    overall_cols[3].metric("PI Average Grade", grade_from_score(pi_average) if pi_average is not None else "—")
-    overall_cols[4].metric("Overall Grade", grade_from_score(overall_average) if overall_average is not None else "—")
-
-    # 2. Weekly progress: count attempts in the last seven days only.
-    st.markdown("## Weekly Progress")
-    st.caption("Weekly target: 4 Personal Interview (PI) attempts and 2 Group Discussion (GD) attempts.")
-    weekly_cutoff = (datetime.now(ZoneInfo("Asia/Kolkata")).date() - timedelta(days=6)).isoformat()
-
-    def _is_current_week(timestamp):
-        try:
-            return str(timestamp or "")[:10] >= weekly_cutoff
-        except Exception:
-            return False
-
-    weekly_pi_count = sum(1 for record in pi_records if _is_current_week(record["timestamp"]))
-    weekly_gd_count = sum(1 for record in gd_records if _is_current_week(record["timestamp"]))
-    weekly_done = min(weekly_pi_count, 4) + min(weekly_gd_count, 2)
-    weekly_percent = int(round(weekly_done / 6 * 100))
-
-    st.progress(weekly_percent, text=f"{weekly_done} of 6 weekly attempts completed ({weekly_percent}%)")
-    progress_cols = st.columns(2)
-    with progress_cols[0]:
-        st.markdown("**Personal Interviews**")
-        st.progress(min(weekly_pi_count, 4) / 4, text=f"{min(weekly_pi_count, 4)} / 4 PI attempts")
-    with progress_cols[1]:
-        st.markdown("**Group Discussions**")
-        st.progress(min(weekly_gd_count, 2) / 2, text=f"{min(weekly_gd_count, 2)} / 2 GD attempts")
-
-    if weekly_pi_count >= 4 and weekly_gd_count >= 2:
-        st.success("🎉 Congratulations! You have completed all 4 PI and 2 GD targets this week. Review your feedback and focus on the quality of your next attempts.")
+    if not history and not dashboard_gd_assessments:
+        st.info("No practice attempts or GD assessments recorded yet. Complete an interview or GD practice session to see your performance here.")
     else:
-        st.info(f"Keep going! You have completed {weekly_pi_count}/4 PI and {weekly_gd_count}/2 GD attempts this week.")
+        scores = [int(item.get("Score", 0) or 0) for item in history]
+        if history:
+            average_score = sum(scores) / len(scores)
+            best_score = max(scores)
+            latest_score = scores[-1]
 
-    # Five specific actions, tailored to progress and the latest feedback available.
-    latest_pi_feedback = next((record["feedback"] for record in reversed(pi_records) if record["feedback"]), {})
-    latest_gd_record = next((record for record in reversed(gd_records) if record["feedback"]), None)
-    latest_gd_feedback = latest_gd_record["feedback"] if latest_gd_record else {}
-    st.markdown("### 5 Actionable Steps for Next Week")
-    pi_focus = latest_pi_feedback.get("NextPracticeFocus") if isinstance(latest_pi_feedback, dict) else ""
-    gd_focus = ""
-    if isinstance(latest_gd_feedback, dict):
-        gd_focus = latest_gd_feedback.get("PriorityImprovements") or latest_gd_feedback.get("NextActionPlan") or ""
-        if isinstance(gd_focus, list):
-            gd_focus = "; ".join(str(value) for value in gd_focus[:2])
-    action_steps = [
-        (f"Complete {max(0, 4 - weekly_pi_count)} more PI attempt(s). Practise a clear, structured answer to ‘Tell me about yourself’ and one role-specific question." if weekly_pi_count < 4 else "Maintain PI consistency: complete a review mock and improve the evidence, examples and structure in your answers."),
-        (f"Complete {max(0, 2 - weekly_gd_count)} more GD attempt(s). Practise opening clearly, building on a peer's point and summarising the discussion." if weekly_gd_count < 2 else "Review one GD performance and practise concise contributions, active listening and respectful turn-taking."),
-        (f"PI improvement focus: {pi_focus}" if pi_focus else "For PI, prepare two genuine STAR examples and revise technical or role-related concepts before your next mock."),
-        (f"GD improvement focus: {gd_focus}" if gd_focus else "For GD, support key points with relevant examples or facts and respond constructively to a different viewpoint."),
-        "After each attempt, write down one strength, one improvement and one specific behaviour to apply in the next session.",
-    ]
-    for step_number, step in enumerate(action_steps, 1):
-        st.markdown(f"**{step_number}.** {step}")
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.metric("PI Attempts", len(history))
+            with m2:
+                st.metric("PI Average Grade", grade_from_score(average_score))
+            with m3:
+                st.metric("PI Best Grade", grade_from_score(best_score))
 
-    def _simple_feedback_text(value):
-        """Flatten saved feedback into readable, factual text for student summaries."""
-        if isinstance(value, dict):
-            return " ".join(_simple_feedback_text(v) for v in value.values() if v not in (None, "", [], {}))
-        if isinstance(value, (list, tuple)):
-            return " ".join(_simple_feedback_text(v) for v in value if v not in (None, "", [], {}))
-        return str(value).strip() if value is not None else ""
+            st.markdown("### Latest Interview Performance")
+            st.metric("Latest Grade", grade_from_score(latest_score))
+            render_grade_slabs()
 
-    def _past_performance_paragraphs(records, activity_name):
-        if not records:
-            return (
-                f"You have not completed a saved {activity_name} attempt yet, so there is not enough history to describe your past performance.",
-                f"After your first attempt, review the feedback and choose one or two clear actions to practise before the next session."
-            )
-        scored = [r for r in records if r.get("score") is not None]
-        latest = records[-1]
-        if len(records) == 1:
-            first = f"You have completed one saved {activity_name} attempt ({latest.get('grade', 'Not graded')}). This is an early picture of your current performance, not a long-term trend."
-        else:
-            first = f"You have completed {len(records)} saved {activity_name} attempts. "
-            if len(scored) >= 2:
-                movement = scored[-1]['score'] - scored[0]['score']
-                if movement > 3:
-                    first += "Your latest recorded score is higher than your first recorded score, showing a positive change in the available results."
-                elif movement < -3:
-                    first += "Your latest recorded score is lower than your first recorded score, so revisit the feedback and identify what changed."
-                else:
-                    first += "Your first and latest recorded scores are fairly close, so focus on building consistency and improving specific skills."
-            else:
-                first += "Some attempts do not have a usable score, so the available records do not support a reliable score trend yet."
-        latest_text = _simple_feedback_text(latest.get("feedback", {}))
-        latest_text = re.sub(r"\s+", " ", latest_text).strip()
-        if latest_text:
-            # Avoid displaying an entire raw report in the narrative paragraph.
-            latest_text = latest_text[:420].rstrip(" .;,")
-            second = f"Your latest feedback includes these points: {latest_text}. Read the detailed report below for the full comments. Use one specific suggestion from that report in your next practice session."
-        else:
-            second = "Detailed comments are not available for the latest attempt. Open the individual attempt below if a report is available, and set one clear practice goal for your next session."
-        return first, second
+            latest = history[-1]
+            latest_feedback = latest.get("Feedback") or {}
+            if latest_feedback:
+                st.markdown("### Latest Subjective Feedback")
+                latest_cols = st.columns(2)
+                with latest_cols[0]:
+                    st.markdown("**Communication Feedback**")
+                    st.write(latest_feedback.get("CommunicationAssessment", "No communication assessment was stored for this attempt."))
+                    st.markdown("**Communication Strengths**")
+                    strengths = latest_feedback.get("CommunicationStrengths", [])
+                    if strengths:
+                        for item in strengths:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.write("No specific strengths recorded.")
+                    st.markdown("**Communication Improvements**")
+                    improvements = latest_feedback.get("CommunicationImprovements", [])
+                    if improvements:
+                        for item in improvements:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.write("No specific communication improvements recorded.")
+                with latest_cols[1]:
+                    st.markdown("**Technical Feedback**")
+                    st.write(latest_feedback.get("TechnicalKnowledgeAssessment", "No technical assessment was stored for this attempt."))
+                    st.markdown("**Technical Errors / Knowledge Gaps**")
+                    gaps = latest_feedback.get("TechnicalErrorsOrGaps", [])
+                    if gaps:
+                        for item in gaps:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.write("No specific technical gaps recorded.")
+                    st.markdown("**Suggestions & Recommendations**")
+                    st.info(latest_feedback.get("NextPracticeFocus", "No next-practice recommendation was stored."))
 
-    # 3. Overall GD feedback: show the full feedback report for every saved GD attempt.
-    st.markdown("## Overall GD Feedback")
-    gd_past_1, gd_past_2 = _past_performance_paragraphs(gd_records, "Group Discussion (GD)")
-    st.markdown(gd_past_1)
-    st.markdown(gd_past_2)
-    if gd_records:
-        for attempt_number, record in enumerate(reversed(gd_records), 1):
-            with st.expander(
-                f"GD Attempt {attempt_number} • {record['grade']} • {record['timestamp']}",
-                expanded=(attempt_number == 1),
-            ):
-                st.caption(f"Topic / activity: {record['details']}")
-                _render_live_gd_feedback_summary(
-                    record["item"],
-                    candidate_label,
-                    heading="Detailed GD Feedback",
-                )
-                if not record["feedback"]:
-                    st.info("Detailed feedback is not available for this saved GD attempt.")
-    else:
-        st.info("Your GD feedback will appear here after you complete a GD assessment.")
+            st.markdown("### Performance History & Subjective Feedback")
+            st.caption("Open any attempt to review the actual feedback generated for that performance. Feedback is retained with the attempt so students can discuss it with mentors.")
 
-    # 4. Overall PI feedback: show the full saved feedback for every PI attempt.
-    st.markdown("## Overall PI Feedback")
-    pi_past_1, pi_past_2 = _past_performance_paragraphs(pi_records, "Personal Interview (PI)")
-    st.markdown(pi_past_1)
-    st.markdown(pi_past_2)
-    if pi_records:
-        # These fields cover the full structured PI assessment and preserve any
-        # additional feedback fields that may be present in older/newer records.
-        pi_field_labels = {
-            "CommunicationAssessment": "Communication Assessment",
-            "TechnicalKnowledgeAssessment": "Technical Knowledge Assessment",
-            "TechnicalAssessment": "Technical Assessment",
-            "TechnicalCorrectness": "Technical Correctness",
-            "CorrectPoints": "Correct Points",
-            "TechnicalErrorsOrGaps": "Technical Errors or Gaps",
-            "GrammarIssues": "Grammar Issues",
-            "FillerWordsUsed": "Filler Words Used",
-            "RateOfSpeechAssessment": "Rate of Speech",
-            "ToneAssessment": "Tone",
-            "ClarityAssessment": "Clarity",
-            "CommunicationStrengths": "Communication Strengths",
-            "CommunicationImprovements": "Communication Improvements",
-            "TechnicalStrengths": "Technical Strengths",
-            "TechnicalImprovements": "Technical Improvements",
-            "KeyCorrections": "Key Corrections",
-            "BenchmarkAnswer": "Benchmark / Suggested Answer",
-            "NextPracticeFocus": "Next Practice Focus",
-            "ExecutiveSummary": "Overall Feedback",
-            "OverallFeedback": "Overall Feedback",
-            "Summary": "Summary",
-        }
+            for index, item in reversed(list(enumerate(history, 1))):
+                fb = item.get("Feedback") or {}
+                attempt_grade = grade_from_score(item.get("Score", 0))
+                label = f"Attempt {index} • {item.get('Timestamp', '—')} • {item.get('Domain', 'Interview')} • {attempt_grade}"
+                with st.expander(label, expanded=(index == len(history))):
+                    top = st.columns(4)
+                    top[0].metric("Final Grade", attempt_grade)
+                    top[1].metric("Communication", grade_from_score(item.get("CommunicationScore", 0)))
+                    top[2].metric("Technical", grade_from_score(item.get("TechnicalScore", 0)))
+                    top[3].write(f"**Mode**\n{item.get('Mode', '—')}")
 
-        def _display_pi_feedback_value(value):
-            if value is None or value == "":
-                return
-            if isinstance(value, list):
-                for entry in value:
-                    st.write(f"• {entry}")
-            elif isinstance(value, dict):
-                for subkey, subvalue in value.items():
-                    st.markdown(f"**{str(subkey).replace('_', ' ')}**")
-                    _display_pi_feedback_value(subvalue)
-            else:
-                st.write(str(value))
+                    st.markdown(f"**Question / Assessment:** {item.get('Question', '—')}")
 
-        for attempt_number, record in enumerate(reversed(pi_records), 1):
-            with st.expander(
-                f"PI Attempt {attempt_number} • {record['grade']} • {record['timestamp']}",
-                expanded=(attempt_number == 1),
-            ):
-                st.caption(f"Interview context: {record['details']}")
-                feedback = record.get("feedback") or {}
-                if not feedback:
-                    st.info("Detailed feedback is not available for this saved PI attempt.")
-                    continue
+                    if not fb:
+                        st.warning("Subjective feedback was not stored for this older attempt. New attempts will retain the full AI feedback here.")
+                    else:
+                        st.markdown("#### Communication")
+                        st.write(fb.get("CommunicationAssessment", "No communication assessment recorded."))
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown("**Strengths**")
+                            vals = fb.get("CommunicationStrengths", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
+                        with c2:
+                            st.markdown("**Improvements**")
+                            vals = fb.get("CommunicationImprovements", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
 
-                displayed_keys = set()
-                for key, label in pi_field_labels.items():
-                    value = feedback.get(key)
-                    if value is not None and value != "":
-                        st.markdown(f"**{label}**")
-                        _display_pi_feedback_value(value)
-                        displayed_keys.add(key)
+                        st.markdown("#### Technical Knowledge")
+                        st.write(fb.get("TechnicalKnowledgeAssessment", "No technical assessment recorded."))
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown("**What You Got Right**")
+                            vals = fb.get("CorrectPoints", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
+                        with c2:
+                            st.markdown("**Technical Errors / Knowledge Gaps**")
+                            vals = fb.get("TechnicalErrorsOrGaps", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
 
-                # Include additional assessment feedback fields instead of silently
-                # dropping details from historical versions of the PI evaluator.
-                ignored_metadata = {
-                    "CandidateName", "Timestamp", "timestamp", "Score", "score",
-                    "FinalScore", "CommunicationScore", "TechnicalKnowledgeScore",
-                    "FinalGrade", "Grade", "grade",
-                }
-                extra_keys = [
-                    key for key, value in feedback.items()
-                    if key not in displayed_keys
-                    and key not in ignored_metadata
-                    and value is not None and value != ""
-                ]
-                for key in extra_keys:
-                    st.markdown(f"**{str(key).replace('_', ' ')}**")
-                    _display_pi_feedback_value(feedback[key])
-    else:
-        st.info("Your PI feedback will appear here after you complete an Interview Practice attempt.")
+                        st.markdown("#### Key Corrections")
+                        vals = fb.get("KeyCorrections", [])
+                        if vals:
+                            for val in vals: st.markdown(f"- {val}")
+                        else:
+                            st.write("—")
 
-    # 5. Past attempts: timestamp and grade for every saved GD and PI attempt.
-    st.markdown("## GD and PI Attempt History")
-    timeline_rows = []
-    for record in pi_records:
-        timeline_rows.append({
-            "Timestamp": record["timestamp"],
-            "Practice": "PI",
-            "Grade": record["grade"],
-            "Details": record["details"],
-        })
-    for record in gd_records:
-        timeline_rows.append({
-            "Timestamp": record["timestamp"],
-            "Practice": "GD",
-            "Grade": record["grade"],
-            "Details": record["details"],
-        })
-    if timeline_rows:
-        timeline_df = pd.DataFrame(timeline_rows)
-        timeline_df["_sort"] = pd.to_datetime(timeline_df["Timestamp"], errors="coerce")
-        timeline_df = timeline_df.sort_values("_sort", ascending=False, na_position="last").drop(columns=["_sort"])
-        st.dataframe(timeline_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("Your saved GD and PI attempts will appear here after your first assessment.")
+                        st.markdown("#### Suggestions & Recommendations")
+                        st.info(fb.get("NextPracticeFocus", "No recommendation recorded."))
 
-    # 6. Simple performance analysis: line graph and bar graph at the bottom.
-    st.markdown("## Performance Analysis")
-    chart_cols = st.columns(2)
-    if pi_scored or gd_scored:
-        # Plot PI and GD scores by attempt sequence so each series forms a readable line.
-        pi_chart_scores = [record["score"] for record in pi_records if record["score"] is not None]
-        gd_chart_scores = [record["score"] for record in gd_records if record["score"] is not None]
-        chart_attempt_count = max(len(pi_chart_scores), len(gd_chart_scores))
-        line_rows = []
-        for index in range(chart_attempt_count):
-            line_rows.append({
-                "Attempt": f"Attempt {index + 1}",
-                "PI score": pi_chart_scores[index] if index < len(pi_chart_scores) else np.nan,
-                "GD score": gd_chart_scores[index] if index < len(gd_chart_scores) else np.nan,
-            })
-        line_df = pd.DataFrame(line_rows)
-        if not line_df.empty:
-            with chart_cols[0]:
-                st.markdown("**Performance over attempts**")
-                st.line_chart(line_df.set_index("Attempt"), height=280)
-                st.caption("Each point represents a saved attempt. The line chart helps you track score movement over time.")
-        averages_rows = []
-        if pi_average is not None:
-            averages_rows.append({"Practice": "PI average", "Average score": round(pi_average, 1)})
-        if gd_average is not None:
-            averages_rows.append({"Practice": "GD average", "Average score": round(gd_average, 1)})
-        if averages_rows:
-            with chart_cols[1]:
-                st.markdown("**PI vs GD average performance**")
-                st.bar_chart(pd.DataFrame(averages_rows).set_index("Practice"), y="Average score", height=280)
-                st.caption("Compare the average recorded score across your PI and GD attempts.")
-    else:
-        st.info("Performance graphs will appear after at least one graded PI or GD attempt.")
+                        suggested = fb.get("BenchmarkAnswer", fb.get("SuggestedAnswer", ""))
+                        if suggested:
+                            st.markdown("#### Suggested Answer")
+                            st.write(suggested)
+
+                    # Every saved attempt can be exported from the dashboard. This is
+                    # intentionally here as well as on the assessment screen so the
+                    # student can return later and share an older performance with a mentor.
+                    report_feedback = attempt_to_feedback_report(item)
+                    report_history = history
+                    report_base = re.sub(
+                        r"[^A-Za-z0-9_-]+", "_",
+                        f"{st.session_state.get('first_name', 'Student')}_{st.session_state.get('scholar_id', '')}_Attempt_{index}_Feedback"
+                    ).strip("_") or f"IPER_Attempt_{index}_Feedback"
+                    st.markdown("#### Download & Share This Feedback")
+                    st.caption("The report contains this performance as Present Feedback, other saved attempts as Historical Feedback, plus blank Mentor Feedback and Mentor Sign sections.")
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        try:
+                            word_report = build_feedback_report_docx(
+                                st.session_state.get("first_name", item.get("Candidate", "Student")),
+                                st.session_state.get("scholar_id", ""),
+                                report_feedback,
+                                report_history,
+                            )
+                            st.download_button(
+                                " Download Word Feedback",
+                                data=word_report,
+                                file_name=f"{report_base}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True,
+                                key=f"dashboard_word_feedback_{index}",
+                            )
+                        except Exception as report_error:
+                            st.error(f"Word report could not be prepared: {report_error}")
+                    with d2:
+                        if REPORTLAB_AVAILABLE:
+                            try:
+                                pdf_report = build_feedback_report_pdf(
+                                    st.session_state.get("first_name", item.get("Candidate", "Student")),
+                                    st.session_state.get("scholar_id", ""),
+                                    report_feedback,
+                                    report_history,
+                                )
+                                st.download_button(
+                                    " Download PDF Feedback",
+                                    data=pdf_report,
+                                    file_name=f"{report_base}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    key=f"dashboard_pdf_feedback_{index}",
+                                )
+                            except Exception as report_error:
+                                st.error(f"PDF report could not be prepared: {report_error}")
+                        else:
+                            st.warning("PDF export is unavailable in this deployment. Ensure reportlab>=4.2,<5 is present in requirements.txt and redeploy the app.")
+
+        # GD feedback is a first-class part of the Performance Dashboard.
+        if dashboard_gd_assessments:
+            gd_total_sessions = len(dashboard_gd_assessments)
+            gd_total_minutes = sum(float(item.get("duration_seconds", 0) or 0) for item in dashboard_gd_assessments) / 60.0
+            gd_latest_feedback = _live_gd_report_for_student(
+                dashboard_gd_assessments[0],
+                st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")),
+            ) or {}
+            gd_latest_score = float(gd_latest_feedback.get("OverallScore", 0) or 0)
+
+            st.markdown("### Group Discussion Practice Summary")
+            gd_metric_cols = st.columns(3)
+            gd_metric_cols[0].metric("GD Sessions", gd_total_sessions)
+            gd_metric_cols[1].metric("Total GD Practice Minutes", f"{gd_total_minutes:.1f}")
+            gd_metric_cols[2].metric("Latest GD Grade", grade_from_score(gd_latest_score) if gd_latest_feedback else "—")
+
+            st.markdown("### Group Discussion Feedback")
+            latest_gd = dashboard_gd_assessments[0]
+            student_name = st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))
+            _render_live_gd_feedback_summary(latest_gd, student_name, heading="#### Latest GD Feedback")
+
+            st.markdown("#### GD Feedback History (AI Voice and Uploaded Video) ")
+            for gd_index, gd_item in enumerate(dashboard_gd_assessments[:10], 1):
+                gd_feedback = _live_gd_report_for_student(gd_item, student_name)
+                if gd_feedback:
+                    gd_score = float(gd_feedback.get("OverallScore", 0) or 0)
+                    with st.expander(f"GD {gd_index} • {gd_item.get('created_at', '—')} • {gd_item.get('topic', 'GD')} • {grade_from_score(gd_score)}", expanded=(gd_index == 1)):
+                        _render_live_gd_feedback_summary(gd_item, student_name, heading="")
+
+        st.markdown("### Grade Progression")
+        grade_progression = [
+            {"Attempt": i, "Date & Time": item.get("Timestamp", ""), "Grade": grade_from_score(item.get("Score", 0))}
+            for i, item in enumerate(history, 1)
+        ]
+        st.dataframe(grade_progression, use_container_width=True, hide_index=True)
