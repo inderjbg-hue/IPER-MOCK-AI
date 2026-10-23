@@ -4539,369 +4539,114 @@ elif selected_nav == "Industry & Company Insights":
         official_site = COMPANY_WEBSITES.get(base)
         company_rows.append({"No": source_no, "Company": clean_name, "Sector": sector, "Note": note, "Website": official_site})
 
-    # Student-friendly sector selector
-    st.markdown("### Explore Indian Sectors")
-    selected_sector = st.selectbox("Select a sector", list(SECTOR_INFO.keys()))
-    sector_data = SECTOR_INFO[selected_sector]
+    # Simple sector-first company explorer. This includes major companies across
+    # each sector, not only organisations that have visited IPER for placements.
+    GENERAL_SECTOR_COMPANIES = {
+        "Banking & Financial Services": ["HDFC Bank", "ICICI Bank", "State Bank of India", "Axis Bank", "Kotak Mahindra Bank", "IndusInd Bank", "IDFC FIRST Bank", "Bajaj Finserv", "Bajaj Finance", "Shriram Finance", "Cholamandalam Investment and Finance", "Muthoot Finance"],
+        "Insurance": ["LIC", "HDFC Life", "ICICI Prudential Life Insurance", "SBI Life Insurance", "Axis Max Life Insurance", "Tata AIA Life Insurance", "Bajaj Allianz Life Insurance", "Star Health Insurance", "ICICI Lombard", "New India Assurance"],
+        "Financial Services": ["Nuvama Wealth Management", "Motilal Oswal Financial Services", "Angel One", "Groww", "Zerodha", "Upstox", "Nippon India Mutual Fund", "HDFC Asset Management", "ICICI Securities", "CAMS", "KFin Technologies"],
+        "FMCG & Food": ["Hindustan Unilever", "ITC", "Nestlé India", "Britannia Industries", "Dabur India", "Marico", "Godrej Consumer Products", "Tata Consumer Products", "Amul", "Parle Products", "PepsiCo India", "Coca-Cola India", "Haleon", "Himalaya Wellness"],
+        "Paints & Building Materials": ["Asian Paints", "Berger Paints", "Kansai Nerolac Paints", "Indigo Paints", "JSW Paints", "Pidilite Industries", "UltraTech Cement", "ACC", "Ambuja Cements", "Shree Cement", "Dalmia Bharat", "Kajaria Ceramics"],
+        "Consumer Durables & Electricals": ["Havells India", "Crompton Greaves Consumer Electricals", "Voltas", "Blue Star", "Whirlpool India", "LG Electronics India", "Samsung India", "Godrej Appliances", "V-Guard Industries", "Polycab India", "Dixon Technologies", "Bajaj Electricals"],
+        "Technology & IT Services": ["Tata Consultancy Services", "Infosys", "Wipro", "HCLTech", "Tech Mahindra", "LTIMindtree", "Accenture India", "Cognizant India", "Capgemini India", "Persistent Systems", "Zoho", "Freshworks", "IndiaMART", "CarTrade Tech", "Naukri.com"],
+        "EdTech & Education": ["Physics Wallah", "upGrad", "Simplilearn", "Unacademy", "Vedantu", "Coursera", "Pearson India", "Allen Career Institute", "Aakash Educational Services", "Jaro Education", "AISECT", "Tata ClassEdge", "Toprankers"],
+        "Telecom & Digital Services": ["Reliance Jio", "Bharti Airtel", "Vodafone Idea", "BSNL", "Tata Communications", "Indus Towers", "Airtel Payments Bank", "Paytm", "PhonePe", "Google India", "Amazon India"],
+        "Automotive & Mobility": ["Maruti Suzuki", "Tata Motors", "Mahindra & Mahindra", "Hyundai Motor India", "Toyota Kirloskar Motor", "Kia India", "Honda Cars India", "Hero MotoCorp", "Bajaj Auto", "TVS Motor Company", "Ashok Leyland", "Bosch India", "Motherson", "Eastman Auto"],
+        "Manufacturing & Engineering": ["Larsen & Toubro", "Siemens India", "ABB India", "Bharat Heavy Electricals Limited", "Tata Steel", "JSW Steel", "Reliance Industries", "Cipla", "Sun Pharmaceutical Industries", "Dr. Reddy's Laboratories", "Ceasefire Industries", "Methodex Systems"],
+        "Textiles": ["Trident Group", "Arvind Limited", "Welspun Living", "Vardhman Textiles", "Raymond", "KPR Mill", "Page Industries", "Gokaldas Exports", "Indo Count Industries", "Grasim Industries"],
+        "Hospitality & Tourism": ["Indian Hotels Company (Taj)", "Marriott International", "ITC Hotels", "EIH (Oberoi Hotels)", "Lemon Tree Hotels", "Radisson Hotel Group", "MakeMyTrip", "Yatra Online", "Thomas Cook India", "Club Mahindra", "EaseMyTrip"],
+        "Media & Entertainment": ["The Times Group", "DB Corp (Dainik Bhaskar)", "Network18", "Zee Entertainment", "Sony Pictures Networks India", "Disney Star India", "JioStar", "Netflix India", "Amazon Prime Video India", "Spotify India", "PVR INOX", "Saregama India"],
+        "Retail & E-commerce": ["Reliance Retail", "DMart", "Trent (Westside/Zudio)", "Aditya Birla Fashion and Retail", "Shoppers Stop", "Lifestyle International", "Pantaloons", "Amazon India", "Flipkart", "Myntra", "Meesho", "Nykaa", "Blinkit", "Swiggy Instamart", "BlueStone", "Titan Company"],
+        "Real Estate & Housing Finance": ["DLF", "Godrej Properties", "Prestige Estates Projects", "Lodha (Macrotech Developers)", "Oberoi Realty", "Brigade Enterprises", "Sobha", "Phoenix Mills", "Home First Finance", "Bajaj Housing Finance", "LIC Housing Finance", "India Shelter Finance"],
+        "Renewable Energy": ["Tata Power Renewable Energy", "Adani Green Energy", "ReNew", "Suzlon Energy", "Waaree Energies", "NTPC Green Energy", "JSW Energy", "SolarSquare", "Vikram Solar", "Azure Power"],
+        "HR & Recruitment Services": ["TeamLease Services", "Quess Corp", "Randstad India", "Adecco India", "ManpowerGroup India", "Naukri.com", " foundit", "Artech", "Collabera", "Futur Staffing Solutions", "Sarthee Consultancy", "Sygnific Careers"],
+        "Business & Professional Services": ["Deloitte", "PwC India", "EY India", "KPMG India", "Accenture", "McKinsey & Company", "Boston Consulting Group", "Bain & Company", "Teleperformance", "Genpact", "WNS Global Services", "Anaxee Digital Runners", "Cogent Infotech"],
+        "Diversified / Conglomerate": ["Tata Group", "Aditya Birla Group", "Reliance Industries", "Mahindra Group", "Adani Group", "Godrej Industries Group", "ITC", "Larsen & Toubro", "JSW Group", "Bajaj Group"],
+    }
 
-    c1, c2 = st.columns([1.65, 1])
-    with c1:
-        st.markdown(f"#### {selected_sector}")
+    # Combine the broader sector directory with the original IPER placement list.
+    # The directory is representative, not an exhaustive register of every company in India.
+    company_directory = {}
+    for sector_name, names in GENERAL_SECTOR_COMPANIES.items():
+        for name in names:
+            company_directory[name] = {"Company": name, "Sector": sector_name, "Website": None, "Note": f"Research {name}'s products/services, customer groups, business model, competitors and current priorities."}
+    for row in company_rows:
+        name = display_company_name(row["Company"])
+        company_directory[name] = {"Company": name, "Sector": row["Sector"], "Website": row.get("Website"), "Note": row.get("Note", "")}
+
+    # Resolve official websites using the portal's existing curated website list.
+    for item in company_directory.values():
+        if not item.get("Website"):
+            item["Website"] = COMPANY_WEBSITES.get(item["Company"])
+
+    st.markdown("## 1. Know the Sector")
+    st.caption("Choose a sector first. You can then explore the companies operating in it.")
+    sector_options = ["Select a sector"] + sorted(SECTOR_INFO.keys())
+    selected_sector = st.selectbox("Which sector would you like to know about?", sector_options, index=0)
+
+    if selected_sector != "Select a sector":
+        sector_data = SECTOR_INFO[selected_sector]
+        st.markdown(f"### {selected_sector}")
         st.write(sector_data["about"])
-        st.markdown("**Typical MBA Roles**")
-        st.info(sector_data["roles"])
-        st.markdown("**Skills to Build**")
-        st.info(sector_data["skills"])
-        st.markdown("**Placement Interview Preparation**")
-        st.write(sector_data["prepare"])
-    with c2:
-        st.markdown("#### IBEF Reference")
-        st.write("Use IBEF for the latest sector reports, market context and India-industry developments.")
-        st.link_button("Open IBEF sector reference", IBEF_SECTOR_URLS[selected_sector], use_container_width=True)
-        st.caption("The portal provides original student-oriented summaries. IBEF is the external reference for sector research.")
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Typical MBA roles**")
+            st.write(sector_data["roles"])
+            st.markdown("**Skills to build**")
+            st.write(sector_data["skills"])
+        with right:
+            st.markdown("**What to prepare for interviews**")
+            st.write(sector_data["prepare"])
+            if IBEF_SECTOR_URLS.get(selected_sector):
+                st.link_button("Read sector overview on IBEF", IBEF_SECTOR_URLS[selected_sector])
+
+        st.markdown("### Companies in this sector")
+        sector_companies = sorted([x for x in company_directory.values() if x["Sector"] == selected_sector], key=lambda x: x["Company"].casefold())
+        st.caption(f"{len(sector_companies)} companies listed. This is a representative directory, not every company in India.")
+        if sector_companies:
+            for company in sector_companies:
+                with st.expander(company["Company"]):
+                    st.write(company.get("Note") or f"{company['Company']} operates in the {selected_sector} sector. Review its official website to understand its business, products/services and customers.")
+                    if company.get("Website"):
+                        st.link_button("Official company website", company["Website"])
+                    st.markdown("**Practice questions — answer in your own words**")
+                    questions = [
+                        f"What do you know about {company['Company']}?",
+                        f"Which products or services does {company['Company']} offer, and who are its customers?",
+                        f"Who are the main competitors of {company['Company']}?",
+                        f"Why would you like to work with {company['Company']}?",
+                        f"How could your MBA specialisation add value to {company['Company']}?",
+                    ]
+                    for i, question in enumerate(questions, 1):
+                        st.markdown(f"{i}. {question}")
 
     st.markdown("---")
-    st.markdown("### Companies Documented in IPER 2025–26")
-    st.caption("The list below is transcribed from IPER's published 2025–26 recruiter graphic. Repeated names/entries are retained where they appear in the source; they should not be interpreted as separate companies or as a guarantee of recruitment every year.")
-
-    search_company = st.text_input("Search company or sector", placeholder="e.g. HDFC, Asian Paints, Deloitte, Banking, EdTech")
-    sector_filter = st.selectbox("Filter by sector", ["All sectors"] + sorted(SECTOR_INFO.keys()))
-    filtered_rows = [
-        row for row in company_rows
-        if (sector_filter == "All sectors" or row["Sector"] == sector_filter)
-        and (not search_company.strip() or search_company.lower() in row["Company"].lower() or search_company.lower() in row["Sector"].lower())
-    ]
-
-    st.markdown(f"**{len(filtered_rows)} source entries shown**")
-
-    # ------------------------------------------------------------------
-    # REDESIGNED COMPANY & SECTOR LEARNING HUB
-    # ------------------------------------------------------------------
-    # This section is intentionally student-facing. It focuses on the few
-    # things a student should know before an IPER placement interaction,
-    # rather than presenting a large financial-research worksheet.
-    SECTOR_CUSTOMERS = {
-        "Banking & Financial Services": "Retail customers, MSMEs, businesses and institutional clients.",
-        "Insurance": "Individuals, families, employers and distribution partners.",
-        "Financial Services": "Retail investors, HNIs, businesses and institutional clients.",
-        "FMCG & Food": "Households, individual consumers, retailers and distributors.",
-        "Paints & Building Materials": "Homeowners, contractors, dealers, builders and institutional buyers.",
-        "Consumer Durables & Electricals": "Households, retailers, dealers, builders and institutional buyers.",
-        "Technology & IT Services": "Enterprises, governments, institutions and digital consumers depending on the offering.",
-        "EdTech & Education": "Students, parents, schools, colleges and corporate learners.",
-        "Telecom & Digital Services": "Consumers, enterprises and institutions using connectivity and digital services.",
-        "Automotive & Mobility": "Vehicle buyers, fleet operators, dealerships, OEMs and mobility customers.",
-        "Manufacturing & Engineering": "Industrial customers, distributors, OEMs and institutional buyers.",
-        "Textiles": "Apparel brands, retailers, exporters, distributors and end consumers depending on the product.",
-        "Hospitality & Tourism": "Leisure travellers, business travellers, families, corporate clients and event customers.",
-        "Media & Entertainment": "Audiences, readers/viewers/listeners, advertisers and brands.",
-        "Retail & E-commerce": "Individual consumers, households and digital shoppers.",
-        "Real Estate & Housing Finance": "Homebuyers, borrowers, investors, developers and property customers.",
-        "Renewable Energy": "Homes, businesses, institutions and industrial customers seeking clean-energy solutions.",
-        "HR & Recruitment Services": "Employers, recruiters, job seekers and organisations requiring workforce solutions.",
-        "Business & Professional Services": "Businesses and institutions requiring specialised professional or operational services.",
-        "Diversified / Conglomerate": "Multiple customer segments across the group's different businesses.",
-    }
-
-    SECTOR_CHANNELS = {
-        "Banking & Financial Services": "Branches, relationship managers, mobile/web banking, call centres and partner channels.",
-        "Insurance": "Agents, bancassurance, brokers, branches, digital channels and corporate partnerships.",
-        "Financial Services": "Relationship teams, offices, digital platforms, distributors and partner networks.",
-        "FMCG & Food": "General trade, modern trade, distributors, e-commerce and direct/brand channels.",
-        "Paints & Building Materials": "Dealers, distributors, retailers, project sales and digital discovery channels.",
-        "Consumer Durables & Electricals": "Dealers, distributors, retail stores, e-commerce and institutional/project sales.",
-        "Technology & IT Services": "Direct enterprise sales, account teams, partnerships, digital channels and global delivery centres.",
-        "EdTech & Education": "Direct sales, counsellors, institutional partnerships, websites/apps and digital marketing.",
-        "Telecom & Digital Services": "Retail outlets, digital channels, direct sales, distributors and enterprise sales teams.",
-        "Automotive & Mobility": "Dealerships, digital platforms, OEM/distributor networks, fleet sales and service centres.",
-        "Manufacturing & Engineering": "Direct sales, distributors, dealers, OEM relationships, tenders and project sales.",
-        "Textiles": "Direct B2B sales, exporters, distributors, retailers, brands and e-commerce where applicable.",
-        "Hospitality & Tourism": "Brand websites/apps, OTAs, travel agents, corporate sales and direct bookings.",
-        "Media & Entertainment": "Print, websites/apps, social platforms, digital properties, subscriptions and advertising sales.",
-        "Retail & E-commerce": "Stores, websites, apps, marketplaces, omnichannel and direct-to-consumer channels.",
-        "Real Estate & Housing Finance": "Branches, field sales, direct sales, brokers/channel partners and digital platforms.",
-        "Renewable Energy": "Direct sales, channel partners, EPC/project teams, digital lead generation and institutional sales.",
-        "HR & Recruitment Services": "Direct enterprise sales, recruiters, staffing teams, digital platforms and client relationships.",
-        "Business & Professional Services": "Direct enterprise sales, consulting/account teams, partnerships and referrals.",
-        "Diversified / Conglomerate": "Business-unit specific; usually a mix of direct sales, retail, digital and partner channels.",
-    }
-
-    SECTOR_PRICING = {
-        "Banking & Financial Services": "Interest rates, fees, commissions and spreads vary by product and customer.",
-        "Insurance": "Risk-based premiums and product-specific charges based on coverage, term and customer profile.",
-        "Financial Services": "Fees, commissions, brokerage, spreads and service/asset-based charges.",
-        "FMCG & Food": "Competitive, volume-driven pricing with different price points across brands and channels.",
-        "Paints & Building Materials": "Market- and channel-based pricing influenced by product segment and competition.",
-        "Consumer Durables & Electricals": "Tiered and competitive pricing across products and channels.",
-        "Technology & IT Services": "Contract, project, subscription or usage-based pricing depending on the offering.",
-        "EdTech & Education": "Program/course/service pricing differentiated by format, duration and customer segment.",
-        "Telecom & Digital Services": "Plan/package-based pricing, often with bundles and usage tiers.",
-        "Automotive & Mobility": "Model/segment-based pricing with financing, dealer and service economics.",
-        "Manufacturing & Engineering": "B2B/project pricing negotiated around volume, specifications, contracts and costs.",
-        "Textiles": "Pricing influenced by fibre, quality, volume, brand, sourcing and market conditions.",
-        "Hospitality & Tourism": "Dynamic pricing influenced by demand, season, location and booking channel.",
-        "Media & Entertainment": "Advertising, subscription and/or transaction-based models depending on the business.",
-        "Retail & E-commerce": "Competitive retail pricing with category, brand, promotion and channel differences.",
-        "Real Estate & Housing Finance": "Property-specific pricing or interest-rate/fee-based pricing depending on the model.",
-        "Renewable Energy": "Project/system pricing based on capacity, technology, financing, installation and service.",
-        "HR & Recruitment Services": "Placement, staffing, contract or service-fee models depending on the offering.",
-        "Business & Professional Services": "Project, retainer, subscription, transaction or contract-based pricing.",
-        "Diversified / Conglomerate": "Varies by business unit.",
-    }
-
-    SECTOR_COMPETITORS = {
-        "Banking & Financial Services": "Major private/public banks and financial institutions serving similar customers.",
-        "Insurance": "Other life/general insurers, bancassurance competitors and digital insurance platforms.",
-        "Financial Services": "Banks, brokerages, wealth managers, asset managers and fintech competitors.",
-        "FMCG & Food": "Large national brands, regional brands, private labels and emerging D2C brands.",
-        "Paints & Building Materials": "Major paints/coatings brands plus regional manufacturers and construction-material competitors.",
-        "Consumer Durables & Electricals": "National consumer-electrical/durable brands, regional players and private labels.",
-        "Technology & IT Services": "Global IT-services firms, Indian IT majors, specialist technology firms and digital-native competitors.",
-        "EdTech & Education": "Traditional institutions, other EdTech platforms, coaching providers and specialised learning companies.",
-        "Telecom & Digital Services": "Other telecom operators and digital-service/platform providers.",
-        "Automotive & Mobility": "Vehicle OEMs, component suppliers, mobility platforms and other relevant category players.",
-        "Manufacturing & Engineering": "Domestic and multinational manufacturers, specialist suppliers and engineering firms.",
-        "Textiles": "Integrated textile groups, specialised manufacturers, exporters and international sourcing competitors.",
-        "Hospitality & Tourism": "Hotel groups, independent properties, OTAs and alternative accommodation providers.",
-        "Media & Entertainment": "Newspapers, broadcasters, digital publishers, OTT platforms and social/video platforms.",
-        "Retail & E-commerce": "Organised retailers, marketplaces, D2C brands and specialist category players.",
-        "Real Estate & Housing Finance": "Developers, housing-finance companies, banks and NBFCs serving the same segment.",
-        "Renewable Energy": "Solar EPCs, developers, installers, equipment providers and energy-service firms.",
-        "HR & Recruitment Services": "Staffing firms, recruitment consultancies, job platforms and specialist workforce providers.",
-        "Business & Professional Services": "Consulting, outsourcing, technology-enabled and specialist professional-services firms.",
-        "Diversified / Conglomerate": "Competitors vary by the group's specific business division.",
-    }
-
-    SECTOR_LEARNING = {
-        sector: {
-            "what": info["about"],
-            "roles": info["roles"],
-            "skills": info["skills"],
-            "prepare": info["prepare"],
-            "customers": SECTOR_CUSTOMERS.get(sector, "Understand the main B2B/B2C customer groups."),
-            "channels": SECTOR_CHANNELS.get(sector, "Understand how products/services reach customers."),
-            "pricing": SECTOR_PRICING.get(sector, "Understand how companies in this sector typically charge customers."),
-            "competitors": SECTOR_COMPETITORS.get(sector, "Identify the major companies competing in this sector."),
-        }
-        for sector, info in SECTOR_INFO.items()
-    }
-
-    SECTOR_INTERVIEW_QUESTIONS = {
-        "Banking & Financial Services": [
-            "What do you understand about retail and corporate banking?",
-            "What is changing in digital banking and customer expectations?",
-            "How would you build trust with a banking customer?",
-        ],
-        "Insurance": [
-            "Why do customers need insurance?",
-            "What is the difference between life and general insurance?",
-            "How would you explain an insurance product to a customer?",
-        ],
-        "Financial Services": [
-            "What financial products/services does this sector provide?",
-            "How do risk and return influence customer decisions?",
-            "What recent change in financial markets interests you?",
-        ],
-        "FMCG & Food": [
-            "How do FMCG companies build strong brands?",
-            "Why are distribution and retail execution important in FMCG?",
-            "How can consumer behaviour influence a product strategy?",
-        ],
-        "Paints & Building Materials": [
-            "Why is dealer/channel management important in this sector?",
-            "How would you increase sales in a territory?",
-            "What factors influence demand for paints/building materials?",
-        ],
-        "Consumer Durables & Electricals": [
-            "What influences a customer's choice of a consumer durable?",
-            "Why are distribution and after-sales service important?",
-            "How would you launch a new product in this sector?",
-        ],
-        "Technology & IT Services": [
-            "How is AI changing technology businesses?",
-            "What is the difference between a product company and an IT-services company?",
-            "How can an MBA professional add value in a technology organisation?",
-        ],
-        "EdTech & Education": [
-            "What makes an education product valuable to a learner?",
-            "How would you improve student acquisition or retention?",
-            "What are the major challenges facing EdTech today?",
-        ],
-        "Telecom & Digital Services": [
-            "How do telecom companies acquire and retain customers?",
-            "What is the business significance of 5G?",
-            "How would you reduce customer churn?",
-        ],
-        "Automotive & Mobility": [
-            "How is the shift towards EVs changing the automotive industry?",
-            "Why are dealerships and after-sales service important?",
-            "What factors influence a vehicle purchase decision?",
-        ],
-        "Manufacturing & Engineering": [
-            "What are the major drivers of manufacturing efficiency?",
-            "How can technology improve manufacturing operations?",
-            "Why are quality and supply-chain management important?",
-        ],
-        "Textiles": [
-            "How does the textile value chain work?",
-            "What challenges can affect textile exports and sourcing?",
-            "How can sustainability influence textile businesses?",
-        ],
-        "Hospitality & Tourism": [
-            "What drives customer choice in hospitality?",
-            "What is revenue management in a hotel business?",
-            "How would you improve guest experience?",
-        ],
-        "Media & Entertainment": [
-            "How are digital platforms changing traditional media?",
-            "How do media companies generate revenue?",
-            "Which audience metric would you track and why?",
-        ],
-        "Retail & E-commerce": [
-            "How is omnichannel retail changing customer behaviour?",
-            "What makes a retail store successful?",
-            "How would you improve customer experience in retail?",
-        ],
-        "Real Estate & Housing Finance": [
-            "What factors influence demand for housing?",
-            "What is the role of credit in housing finance?",
-            "How would you build trust with a prospective homebuyer/borrower?",
-        ],
-        "Renewable Energy": [
-            "What is driving India's renewable-energy transition?",
-            "What factors affect the economics of a solar project?",
-            "How can an MBA professional contribute to a clean-energy company?",
-        ],
-        "HR & Recruitment Services": [
-            "What makes a good recruitment process?",
-            "Which recruitment metrics would you track?",
-            "How would you improve candidate and client experience?",
-        ],
-        "Business & Professional Services": [
-            "What value does a professional-services firm create for clients?",
-            "How would you approach an unfamiliar business problem?",
-            "Why are communication and problem-solving important in consulting/services?",
-        ],
-        "Diversified / Conglomerate": [
-            "Which business of the group interests you most and why?",
-            "How can a diversified group create value across different businesses?",
-            "How would you prepare differently for a role in one of its business divisions?",
-        ],
-    }
-
-    def company_learning_profile(row):
-        company = display_company_name(row["Company"])
-        sector = row["Sector"]
-        sector_data = SECTOR_LEARNING.get(sector, {})
-        note = COMPANY_NOTES.get(company, "")
-        if not note:
-            note = f"{company} appears in IPER's published placement ecosystem under {sector}. Before the interview, learn its main business, products/services, customers, competitors and the specific role offered."
-        return {
-            "company": company,
-            "sector": sector,
-            "about": note,
-            "customers": sector_data.get("customers", "Study the company's primary customer groups."),
-            "channels": sector_data.get("channels", "Study how the company reaches customers."),
-            "roles": sector_data.get("roles", "Study the functions relevant to the role.") ,
-            "skills": sector_data.get("skills", "Communication, analytical thinking and role-specific skills."),
-            "prepare": sector_data.get("prepare", "Read the company's official website and placement/job description."),
-            "competitors": sector_data.get("competitors", "Identify the company's closest competitors."),
-            "pricing": sector_data.get("pricing", "Understand how the company creates and captures value."),
-        }
-
-    st.markdown("###  Placement Intelligence — Learn Before You Face the Interview")
-    st.caption("This section is designed for IPER students: learn the basics of the sector and company first, then practise answering interview questions in your own words.")
-
-    # -------------------- SECTOR LEARNING --------------------
-    st.markdown("## 2. Understanding the Sector")
-    st.caption("A company interview becomes easier when you first understand the industry in which the company operates.")
-
-    sector_data = SECTOR_LEARNING.get(selected_sector, {})
-    s1, s2 = st.columns(2)
-    with s1:
-        st.markdown(f"###  {selected_sector}")
-        st.write(sector_data.get("what", "Understand what this sector sells, who it serves and how it makes money."))
-        st.markdown("**Who are the customers?**")
-        st.write(sector_data.get("customers", "Study the major B2B/B2C customer segments."))
-        st.markdown("**How does the sector reach customers?**")
-        st.write(sector_data.get("channels", "Study the major distribution and sales channels."))
-    with s2:
-        st.markdown("###  What MBA roles can you find here?")
-        st.write(sector_data.get("roles", "Study the functions relevant to your specialisation."))
-        st.markdown("**Skills to prepare**")
-        st.write(sector_data.get("skills", "Communication, analytical thinking and role-specific knowledge."))
-        st.markdown("**What should you know before the interview?**")
-        st.write(sector_data.get("prepare", "Study current sector developments, business models and customer needs."))
-        st.markdown("**Competitive landscape**")
-        st.write(sector_data.get("competitors", "Identify the leading companies in the sector."))
-
-    q1, q2, q3 = st.columns(3)
-    sector_questions = SECTOR_INTERVIEW_QUESTIONS.get(selected_sector, [
-        "What do you know about this sector?",
-        "What are the major trends in this sector?",
-        "What opportunities and challenges do you see in this sector?",
-    ])
-    for col, question in zip((q1, q2, q3), sector_questions[:3]):
-        with col:
-            st.markdown("**Practice Question**")
-            st.info(question)
-
-    if IBEF_SECTOR_URLS.get(selected_sector):
-        st.link_button("Read the IBEF Sector Reference ", IBEF_SECTOR_URLS[selected_sector])
-
-    st.markdown("---")
-
-    # -------------------- COMPANY LEARNING --------------------
-    st.markdown("## 3. Know Your Company")
-    st.caption("Choose a company from IPER's placement ecosystem. The portal gives you the basic knowledge you should be able to explain before the interview.")
-
-    if not filtered_rows:
-        st.warning("No company matches your current search/filter. Try another company or select All sectors.")
+    st.markdown("## 2. Search for Any Company")
+    st.caption("Search across the wider company directory—not only companies that have visited IPER for placements.")
+    company_query = st.text_input("Company name", placeholder="Try HDFC, Nestlé, Tata, Deloitte, DMart, Infosys…", key="all_company_search")
+    if company_query.strip():
+        matches = [x for x in company_directory.values() if company_query.strip().casefold() in x["Company"].casefold()]
+        matches.sort(key=lambda x: (x["Company"].casefold(), x["Sector"].casefold()))
+        if matches:
+            st.caption(f"Showing {len(matches)} matching companies")
+            for company in matches:
+                with st.expander(f"{company['Company']} · {company['Sector']}"):
+                    st.write(company.get("Note") or f"{company['Company']} operates in the {company['Sector']} sector. Explore its official website to learn about its business and offerings.")
+                    if company.get("Website"):
+                        st.link_button("Official company website", company["Website"])
+                    st.markdown("**Practice questions — no model answers**")
+                    for i, question in enumerate([
+                        f"What do you know about {company['Company']}?",
+                        f"What products/services does it offer, and who are its customers?",
+                        f"Who are its major competitors?",
+                        f"Why do you want to work with this company?",
+                        f"How could you contribute in the role you are applying for?",
+                    ], 1):
+                        st.markdown(f"{i}. {question}")
+        else:
+            st.info("No exact name match in the current directory. Try a shorter company name or keyword. This directory is representative, so it may not contain every company in India.")
     else:
-        for row in filtered_rows:
-            profile = company_learning_profile(row)
-            with st.expander(f" {profile['company']}  •  {profile['sector']}", expanded=False):
-                st.markdown(f"### {profile['company']}")
-                st.caption(f"IPER placement ecosystem • Sector: {profile['sector']}")
-
-                a, b = st.columns([1.5, 1])
-                with a:
-                    st.markdown("#### What should I know about this company?")
-                    st.write(profile["about"])
-                    st.markdown("#### Who are its customers?")
-                    st.write(profile["customers"])
-                    st.markdown("#### How does the business reach customers?")
-                    st.write(profile["channels"])
-                    st.markdown("#### What should I prepare for the role?")
-                    st.write(profile["roles"])
-                    st.write(f"**Skills:** {profile['skills']}")
-                    st.markdown("#### What should I read about the business?")
-                    st.write(profile["prepare"])
-                with b:
-                    st.markdown("#### Competitive context")
-                    st.write(profile["competitors"])
-                    st.markdown("#### Pricing / business model")
-                    st.write(profile["pricing"])
-                    st.markdown("#### Official sources")
-                    if row.get("Website"):
-                        st.link_button("Official Website ", row["Website"], use_container_width=True)
-                    if IBEF_SECTOR_URLS.get(profile["sector"]):
-                        st.link_button("Sector Reference ", IBEF_SECTOR_URLS[profile["sector"]], use_container_width=True)
-
-                st.markdown("####  Interview Questions You Should Be Ready For")
-                company_questions = [
-                    f"What do you know about {profile['company']}?",
-                    f"Why do you want to work with {profile['company']}?",
-                    f"Why are you interested in the {profile['sector']} sector?",
-                    f"Which product/service of {profile['company']} interests you and why?",
-                    f"Who are the major competitors of {profile['company']}?",
-                    f"How can your MBA specialisation add value to {profile['company']}?",
-                ]
-                cq_cols = st.columns(2)
-                for i, question in enumerate(company_questions):
-                    with cq_cols[i % 2]:
-                        st.markdown(f"**{i+1}. {question}**")
-
+        st.info("Enter a company name above to search the wider directory.")
 
     # Cross-industry business glossary. Definitions are concise, student-friendly,
     # and intentionally independent of any single company or sector.
