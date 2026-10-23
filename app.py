@@ -7338,22 +7338,102 @@ elif selected_nav == "My Progress Dashboard":
     for step_number, step in enumerate(action_steps, 1):
         st.markdown(f"**{step_number}.** {step}")
 
-    # 3. Overall GD feedback.
+    # 3. Overall GD feedback: show the full feedback report for every saved GD attempt.
     st.markdown("## Overall GD Feedback")
-    if latest_gd_record:
-        _render_live_gd_feedback_summary(latest_gd_record["item"], candidate_label, heading="")
+    if gd_records:
+        for attempt_number, record in enumerate(reversed(gd_records), 1):
+            with st.expander(
+                f"GD Attempt {attempt_number} • {record['grade']} • {record['timestamp']}",
+                expanded=(attempt_number == 1),
+            ):
+                st.caption(f"Topic / activity: {record['details']}")
+                _render_live_gd_feedback_summary(
+                    record["item"],
+                    candidate_label,
+                    heading="Detailed GD Feedback",
+                )
+                if not record["feedback"]:
+                    st.info("Detailed feedback is not available for this saved GD attempt.")
     else:
         st.info("Your GD feedback will appear here after you complete a GD assessment.")
 
-    # 4. Overall PI feedback.
+    # 4. Overall PI feedback: show the full saved feedback for every PI attempt.
     st.markdown("## Overall PI Feedback")
-    if latest_pi_feedback:
-        st.markdown("**Communication**")
-        st.write(latest_pi_feedback.get("CommunicationAssessment") or "Communication feedback is not available for the latest saved PI attempt.")
-        st.markdown("**Technical knowledge**")
-        st.write(latest_pi_feedback.get("TechnicalKnowledgeAssessment") or latest_pi_feedback.get("TechnicalAssessment") or "Technical feedback is not available for the latest saved PI attempt.")
-        if latest_pi_feedback.get("NextPracticeFocus"):
-            st.info(latest_pi_feedback["NextPracticeFocus"])
+    if pi_records:
+        # These fields cover the full structured PI assessment and preserve any
+        # additional feedback fields that may be present in older/newer records.
+        pi_field_labels = {
+            "CommunicationAssessment": "Communication Assessment",
+            "TechnicalKnowledgeAssessment": "Technical Knowledge Assessment",
+            "TechnicalAssessment": "Technical Assessment",
+            "TechnicalCorrectness": "Technical Correctness",
+            "CorrectPoints": "Correct Points",
+            "TechnicalErrorsOrGaps": "Technical Errors or Gaps",
+            "GrammarIssues": "Grammar Issues",
+            "FillerWordsUsed": "Filler Words Used",
+            "RateOfSpeechAssessment": "Rate of Speech",
+            "ToneAssessment": "Tone",
+            "ClarityAssessment": "Clarity",
+            "CommunicationStrengths": "Communication Strengths",
+            "CommunicationImprovements": "Communication Improvements",
+            "TechnicalStrengths": "Technical Strengths",
+            "TechnicalImprovements": "Technical Improvements",
+            "KeyCorrections": "Key Corrections",
+            "BenchmarkAnswer": "Benchmark / Suggested Answer",
+            "NextPracticeFocus": "Next Practice Focus",
+            "ExecutiveSummary": "Overall Feedback",
+            "OverallFeedback": "Overall Feedback",
+            "Summary": "Summary",
+        }
+
+        def _display_pi_feedback_value(value):
+            if value is None or value == "":
+                return
+            if isinstance(value, list):
+                for entry in value:
+                    st.write(f"• {entry}")
+            elif isinstance(value, dict):
+                for subkey, subvalue in value.items():
+                    st.markdown(f"**{str(subkey).replace('_', ' ')}**")
+                    _display_pi_feedback_value(subvalue)
+            else:
+                st.write(str(value))
+
+        for attempt_number, record in enumerate(reversed(pi_records), 1):
+            with st.expander(
+                f"PI Attempt {attempt_number} • {record['grade']} • {record['timestamp']}",
+                expanded=(attempt_number == 1),
+            ):
+                st.caption(f"Interview context: {record['details']}")
+                feedback = record.get("feedback") or {}
+                if not feedback:
+                    st.info("Detailed feedback is not available for this saved PI attempt.")
+                    continue
+
+                displayed_keys = set()
+                for key, label in pi_field_labels.items():
+                    value = feedback.get(key)
+                    if value is not None and value != "":
+                        st.markdown(f"**{label}**")
+                        _display_pi_feedback_value(value)
+                        displayed_keys.add(key)
+
+                # Include additional assessment feedback fields instead of silently
+                # dropping details from historical versions of the PI evaluator.
+                ignored_metadata = {
+                    "CandidateName", "Timestamp", "timestamp", "Score", "score",
+                    "FinalScore", "CommunicationScore", "TechnicalKnowledgeScore",
+                    "FinalGrade", "Grade", "grade",
+                }
+                extra_keys = [
+                    key for key, value in feedback.items()
+                    if key not in displayed_keys
+                    and key not in ignored_metadata
+                    and value is not None and value != ""
+                ]
+                for key in extra_keys:
+                    st.markdown(f"**{str(key).replace('_', ' ')}**")
+                    _display_pi_feedback_value(feedback[key])
     else:
         st.info("Your PI feedback will appear here after you complete an Interview Practice attempt.")
 
