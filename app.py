@@ -4608,17 +4608,35 @@ elif selected_nav == "Industry & Company Insights":
         if sector_companies:
             for company in sector_companies:
                 with st.expander(company["Company"]):
-                    st.markdown("**Company at a glance**")
-                    st.write(company.get("Note") or f"{company['Company']} operates in the {selected_sector} sector. Use the official source below to verify its current business activities.")
-                    st.markdown("- **Vision and mission:** Read the company's exact current statements on its official website or latest annual report; do not rely on unverified quotes.")
-                    st.markdown("- **Products and services:** Identify its main product categories, services, brands and solutions.")
-                    st.markdown("- **Customers and markets:** Note whether it serves consumers, businesses, institutions, government, or a mix; identify its major markets.")
-                    st.markdown("- **Business model and revenue:** Explain how it earns revenue and how its products reach customers.")
-                    st.markdown("- **Competitors and positioning:** Name 2–3 relevant competitors and compare the company's value proposition.")
-                    st.markdown("- **Recent developments:** Check the latest official news, annual report, product launches and business priorities.")
-                    st.markdown("- **MBA career connection:** Identify relevant roles, required skills and how your specialisation could contribute.")
+                    st.markdown("**Company profile**")
+                    st.write(company.get("Note") or f"{company['Company']} is listed under {selected_sector}. Generate a company-specific profile below rather than relying on a generic checklist.")
                     if company.get("Website"):
-                        st.link_button("Official company website — verify vision, mission and latest facts", company["Website"])
+                        st.link_button("Open official company website", company["Website"])
+                    profile_key = "sector_company_profile_" + re.sub(r"[^a-zA-Z0-9]+", "_", company["Company"] + "_" + selected_sector).strip("_").lower()
+                    if st.button("Show detailed company profile", key=profile_key):
+                        prompt = f"""Prepare a detailed, company-specific MBA placement research brief for {company['Company']} (sector: {selected_sector}). The goal is accurate company intelligence, not generic advice.
+
+Use clear headings and cover EVERY item:
+1. Company overview, ownership/group affiliation and headquarters (only if confidently known).
+2. Vision and mission: give the exact official wording only if confidently known; otherwise explicitly say 'Verify the current wording on the official website/annual report' and explain the company's apparent purpose without presenting it as a quotation.
+3. Core business and business segments.
+4. Products, services, brands and customer value proposition, with concrete examples.
+5. Customer groups, target markets, distribution channels and geographic presence.
+6. Business model: how it creates value, sells, distributes and earns revenue.
+7. Competitors: name at least 3 relevant competitors where possible and explain the basis of comparison; do not list unrelated companies.
+8. Competitive positioning and differentiators.
+9. Industry trends, opportunities and threats.
+10. Recent developments and current strategy: include only developments you can state reliably; otherwise say these must be checked in the latest official newsroom/annual report and do not invent dates, figures or announcements.
+11. Main business risks/challenges and likely management priorities.
+12. MBA career pathways across marketing, sales, finance, HR, operations, analytics or other relevant functions; distinguish likely roles from confirmed vacancies.
+13. Five useful facts/metrics a student should verify in the latest annual report or official sources.
+14. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
+
+Be concrete and company-specific. If a fact is uncertain or may have changed, label it 'Verify current information'. Do not use filler or repeat the question. Format in readable Markdown."""
+                        if profile_key + "_result" not in st.session_state:
+                            st.session_state[profile_key + "_result"] = get_groq_response(prompt)
+                        st.markdown(st.session_state[profile_key + "_result"])
+                    st.caption("Accuracy note: AI-generated research is a study aid, not a live verified source. Confirm current facts, exact vision/mission wording and recent developments on the official website and latest annual report.")
                     st.markdown("**10 practice questions — no model answers**")
                     questions = [
                         f"What does {company['Company']} do, and what are its main businesses?",
@@ -4672,17 +4690,35 @@ elif selected_nav == "Industry & Company Insights":
             st.caption(f"Showing {len(matches)} matching companies")
             for company in matches:
                 with st.expander(f"{company['Company']} · {company['Sector']}"):
-                    st.markdown("**Company at a glance**")
-                    st.write(company.get("Note") or f"{company['Company']} operates in the {company['Sector']} sector. Use the official source below to verify its current business activities.")
-                    st.markdown("- **Vision and mission:** Find the exact current statements in official company materials or its latest annual report.")
-                    st.markdown("- **Products and services:** Identify the company's major offerings, brands and solutions.")
-                    st.markdown("- **Customers and markets:** Identify its key customer groups and markets served.")
-                    st.markdown("- **Business model:** Explain how it creates value, reaches customers and earns revenue.")
-                    st.markdown("- **Competitors and positioning:** Compare it with 2–3 relevant competitors.")
-                    st.markdown("- **Recent developments:** Review official news, annual reports and current business priorities.")
-                    st.markdown("- **Career connection:** Note relevant MBA roles, skills and how you could contribute.")
+                    st.markdown("**Company profile**")
+                    st.write(company.get("Note") or f"{company['Company']} is listed in {company['Sector']}. Generate a company-specific profile below.")
                     if company.get("Website"):
-                        st.link_button("Official company website — verify vision, mission and latest facts", company["Website"])
+                        st.link_button("Open official company website", company["Website"])
+                    profile_key = "search_company_profile_" + re.sub(r"[^a-zA-Z0-9]+", "_", company["Company"] + "_" + company["Sector"]).strip("_").lower()
+                    if st.button("Show detailed company profile", key=profile_key):
+                        prompt = f"""Prepare a detailed, company-specific MBA placement research brief for {company['Company']} (sector: {company['Sector']}). The goal is accurate company intelligence, not generic advice.
+
+Use clear headings and cover EVERY item:
+1. Company overview, ownership/group affiliation and headquarters (only if confidently known).
+2. Vision and mission: give the exact official wording only if confidently known; otherwise explicitly say 'Verify the current wording on the official website/annual report' and explain the company's apparent purpose without presenting it as a quotation.
+3. Core business and business segments.
+4. Products, services, brands and customer value proposition, with concrete examples.
+5. Customer groups, target markets, distribution channels and geographic presence.
+6. Business model: how it creates value, sells, distributes and earns revenue.
+7. Competitors: name at least 3 relevant competitors where possible and explain the basis of comparison; do not list unrelated companies.
+8. Competitive positioning and differentiators.
+9. Industry trends, opportunities and threats.
+10. Recent developments and current strategy: include only developments you can state reliably; otherwise say these must be checked in the latest official newsroom/annual report and do not invent dates, figures or announcements.
+11. Main business risks/challenges and likely management priorities.
+12. MBA career pathways across marketing, sales, finance, HR, operations, analytics or other relevant functions; distinguish likely roles from confirmed vacancies.
+13. Five useful facts/metrics a student should verify in the latest annual report or official sources.
+14. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
+
+Be concrete and company-specific. If a fact is uncertain or may have changed, label it 'Verify current information'. Do not use filler or repeat the question. Format in readable Markdown."""
+                        if profile_key + "_result" not in st.session_state:
+                            st.session_state[profile_key + "_result"] = get_groq_response(prompt)
+                        st.markdown(st.session_state[profile_key + "_result"])
+                    st.caption("Accuracy note: AI-generated research is a study aid, not a live verified source. Confirm current facts, exact vision/mission wording and recent developments on the official website and latest annual report.")
                     st.markdown("**10 practice questions — no model answers**")
                     for i, question in enumerate([
                         f"What does {company['Company']} do, and what are its main businesses?",
