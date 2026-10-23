@@ -2225,35 +2225,71 @@ def clean_generated_about_yourself(text):
 
 
 def generate_about_yourself(profile):
+    """Generate a self-introduction using the agreed MBA-first structure.
+    Class 10 and 12 data is deliberately excluded from the prompt and output.
+    """
     if not client:
         return ""
-    prompt = f"""Create a professional, natural and interview-ready 'About Yourself' response for an MBA placement student at IPER Bhopal.
-Use ONLY the information supplied below. Do not invent companies, roles, percentages, achievements, skills, responsibilities or experience.
-Write in first person, confident but not exaggerated, suitable for a 60-90 second interview answer.
-Integrate only the student's supplied education, internship, certifications, activities, achievements and professional interests.
-If a field is blank, do not mention it. Do not add an AI preamble, heading, quotation marks, bullets or commentary. Return ONLY the spoken response.
 
-Student profile:
-10th Percentage: {profile.get('tenth_percentage','')}
-12th Percentage: {profile.get('twelfth_percentage','')}
-Undergraduation: {profile.get('undergraduation','')}
-Post Graduation: {profile.get('post_graduation','')}
-Internship: {profile.get('internship','')}
-Certification Courses: {profile.get('certification_courses','')}
-Activities Participated: {profile.get('activities_participated','')}
-Achievements: {profile.get('achievements','')}
-Professional Interest: {profile.get('professional_interest','')}
+    # Explicit whitelist: secondary-school percentages cannot enter the AI prompt.
+    approved_profile = {
+        "MBA institute and location": profile.get("mba_institute", ""),
+        "Why MBA / objectives": profile.get("mba_choice", ""),
+        "Specialisation and reason for choosing it": profile.get("mba_specialisation", ""),
+        "MBA learning (case studies, simulations, projects, group assignments)": profile.get("mba_learning", ""),
+        "Committees, clubs, events and competitions": profile.get("activities_participated", ""),
+        "Internship / live project": profile.get("internship", ""),
+        "Special skills and certifications, including where learned": profile.get("certification_courses", ""),
+        "Graduation": profile.get("undergraduation", ""),
+        "School background (only meaningful experiences; no marks)": profile.get("school_background", ""),
+        "Family values (only details the student is comfortable sharing)": profile.get("family_values", ""),
+        "Personality, strengths and uniqueness": profile.get("personality", ""),
+        "Career aspirations": profile.get("professional_interest", ""),
+    }
+    approved_context = json.dumps(approved_profile, ensure_ascii=False)
+    prompt = f"""Write an interview-ready answer to “Tell me about yourself” for an MBA placement student at IPER Bhopal.
+
+FOLLOW THIS STRUCTURE STRICTLY:
+1. MBA JOURNEY — MAIN FOCUS, approximately 70% of the answer:
+   - MBA institute and location, and what makes it special (only if supplied).
+   - Why the student chose an MBA and their objectives.
+   - Specialisation and the reason for choosing it.
+   - Learning from case studies, simulations, projects and group assignments, including the student's contribution.
+   - Committees, clubs, events and competitions.
+   - Internship/live project: organisation, place, duration, contribution, learning and achievements, only where supplied.
+   - Special skills, where they were learned, and their relevance to an organisation.
+   - Career aspirations: desired role/function and future direction.
+2. GRADUATION: institute/location, course choice, relevant achievements, and learning connected to management/MBA.
+3. SCHOOL BACKGROUND: only a meaningful experience or achievement if supplied; no academic marks.
+4. FAMILY AND VALUES: include only supplied details the student is comfortable discussing.
+5. PERSONALITY AND UNIQUENESS: authentic strengths, interests and experiences that distinguish the student.
+
+STRICT RULES:
+- Class 10 and Class 12 must NOT be included. Do not mention school marks, percentages, academic scores or grades.
+- Only use facts explicitly provided below. Never invent institutions, roles, achievements, skills, responsibilities, durations, outcomes or goals.
+- If a section is blank, omit it. Do not compensate with generic claims.
+- Write in first person, simple and natural English, confident but not exaggerated, suitable for a 60–90 second spoken answer.
+- Keep the MBA journey clearly dominant; do not give equal weight to every section.
+- Return only the spoken answer: no title, bullets, preamble, quotation marks or commentary.
+
+APPROVED STUDENT INFORMATION (the only source of facts):
+{approved_context}
 """
     try:
         response = client.chat.completions.create(
             messages=[
-                {"role":"system","content":"You are an expert MBA placement interview coach. Produce only a factual spoken response using the student's supplied information. Never invent facts."},
-                {"role":"user","content":prompt}
+                {"role": "system", "content": "You are an expert MBA placement interview coach. Follow the requested structure and exclusions exactly. Use only the provided facts and never invent details."},
+                {"role": "user", "content": prompt},
             ],
             model=GROQ_MODEL,
-            temperature=0.15
+            temperature=0.1,
         )
-        return clean_generated_about_yourself(response.choices[0].message.content)
+        generated = clean_generated_about_yourself(response.choices[0].message.content)
+        # Final deterministic guard: remove any sentence mentioning Class 10/12 marks.
+        sentences = re.split(r"(?<=[.!?])\\s+", generated)
+        disallowed = re.compile(r"\\b(class\\s*(10|ten|12|twelve)|10th|12th|secondary school marks|higher secondary marks)\\b", re.I)
+        generated = " ".join(sentence for sentence in sentences if not disallowed.search(sentence)).strip()
+        return generated
     except Exception:
         return ""
 
@@ -4993,12 +5029,8 @@ elif selected_nav == "About Myself":
     family_values = st.text_area("Values and experiences that shaped you", value=_about_extra.get("family_values", ""), placeholder="Share only what you are comfortable discussing in an interview", height=75, key="about_family_values")
     st.markdown("### 5. Personality and Uniqueness")
     personality = st.text_area("Strengths, interests and what makes you different", value=_about_extra.get("personality", ""), placeholder="Genuine strengths, interests, responsibilities or experiences that distinguish you", height=85, key="about_personality")
-    tenth = st.text_input("10th Percentage", value=existing_profile.get("tenth_percentage", ""), placeholder="e.g., 82%", key="about_tenth")
-    twelfth = st.text_input("12th Percentage", value=existing_profile.get("twelfth_percentage", ""), placeholder="e.g., 78%", key="about_twelfth")
-
     # Keep the existing database columns so this update remains compatible with current records.
     profile_payload = {
-        "tenth_percentage": tenth.strip(), "twelfth_percentage": twelfth.strip(),
         "undergraduation": graduation.strip(),
         "post_graduation": "\n".join(x for x in [mba_institute, mba_choice, mba_specialisation, mba_learning] if x.strip()),
         "internship": internship.strip(), "certification_courses": skills.strip(),
@@ -5037,12 +5069,22 @@ elif selected_nav == "About Myself":
             st.rerun()
 
     if generate_about_clicked:
-        # Extend the draft context while preserving the existing generator/database interface.
+        # Provide named fields in the exact MBA-first order expected by the generator.
         draft_profile = dict(profile_payload)
-        draft_profile.update({"undergraduation": graduation, "post_graduation": "\n".join([mba_institute, mba_choice, mba_specialisation, mba_learning]),
-                              "internship": internship, "certification_courses": skills,
-                              "activities_participated": mba_activities, "achievements": "\n".join([personality, school, family_values]),
-                              "professional_interest": career_goals})
+        draft_profile.update({
+            "undergraduation": graduation,
+            "mba_institute": mba_institute,
+            "mba_choice": mba_choice,
+            "mba_specialisation": mba_specialisation,
+            "mba_learning": mba_learning,
+            "internship": internship,
+            "certification_courses": skills,
+            "activities_participated": mba_activities,
+            "school_background": school,
+            "family_values": family_values,
+            "personality": personality,
+            "professional_interest": career_goals,
+        })
         with st.spinner("Preparing a factual draft from your profile..."):
             generated_about = generate_about_yourself(draft_profile)
         if generated_about:
