@@ -1283,6 +1283,79 @@ def resume_text_from_data(data):
 
 
 
+def clean_resume_draft(text):
+    """Normalize AI resume output into clean, ATS-readable plain text."""
+    value = str(text or "").replace("```text", "").replace("```", "")
+    cleaned = []
+    for raw in value.splitlines():
+        line = raw.strip()
+        if not line:
+            if cleaned and cleaned[-1] != "":
+                cleaned.append("")
+            continue
+        # Remove markdown headings and noisy list prefixes; use a consistent bullet glyph.
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
+        line = re.sub(r"^\s*(?:\*{1,3}|\)+|\?+|[-•]+)\s*", "", line)
+        line = re.sub(r"^\s*\d+[.)]\s+", "", line)
+        line = line.replace("**", "").replace("__", "").replace("`", "")
+        line = re.sub(r"\s{2,}", " ", line).strip()
+        # Discard common stray formatting-only lines.
+        if not line or re.fullmatch(r"[*)?._\-\s]+", line):
+            continue
+        cleaned.append(line)
+    while cleaned and cleaned[-1] == "":
+        cleaned.pop()
+    return "\n".join(cleaned).strip()
+
+
+def extract_resume_contacts(text):
+    """Extract email and a plausible phone number from the student's own resume text."""
+    source = str(text or "")
+    email_match = re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", source, re.I)
+    phone_matches = re.findall(r"(?<!\w)(?:\+?\d[\d ()\-]{7,}\d)(?!\w)", source)
+    phone = ""
+    for candidate in phone_matches:
+        digits = re.sub(r"\D", "", candidate)
+        if 10 <= len(digits) <= 15:
+            phone = re.sub(r"\s+", " ", candidate).strip()
+            break
+    return (email_match.group(0) if email_match else "", phone)
+
+
+def add_keyword_to_resume_editor(keyword, checkbox_key=None):
+    """Append a selected, user-approved keyword under Skills without duplicates."""
+    if checkbox_key and not st.session_state.get(checkbox_key, False):
+        return
+    keyword = str(keyword or "").strip().strip("`*•- ")
+    if not keyword:
+        return
+    text = str(st.session_state.get("resume_editor_text", "") or "")
+    lines = text.splitlines()
+    skill_headers = {"SKILLS", "KEY SKILLS", "KEY_SKILLS", "TECHNICAL SKILLS", "CORE COMPETENCIES", "CORE SKILLS"}
+    start = next((i for i, line in enumerate(lines) if line.strip().strip(":").upper() in skill_headers), None)
+    if start is None:
+        # Place Skills before Education when possible; otherwise append it at the end.
+        education = next((i for i, line in enumerate(lines) if line.strip().strip(":").upper() in {"EDUCATION", "EDUCATIONAL QUALIFICATIONS"}), None)
+        insert_at = education if education is not None else len(lines)
+        block = ["Skills", keyword]
+        lines[insert_at:insert_at] = ([""] if insert_at and lines[insert_at-1].strip() else []) + block + ([""] if insert_at < len(lines) else [])
+    else:
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().strip(":").upper() in {
+            "PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE", "EDUCATION", "EDUCATIONAL QUALIFICATIONS", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE", "EXPERIENCE", "INTERNSHIP", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "ACTIVITIES"
+        }), len(lines))
+        existing = " ".join(lines[start+1:end]).casefold()
+        if keyword.casefold() in existing:
+            return
+        # Keep skills concise and readable as a comma-separated list.
+        current = [x.strip(" •-*\t") for x in lines[start+1:end] if x.strip()]
+        if current:
+            lines[start+1:end] = [", ".join(current + [keyword])]
+        else:
+            lines.insert(start+1, keyword)
+    st.session_state["resume_editor_text"] = clean_resume_draft("\n".join(lines))
+    st.session_state.pop("generated_resume_docx_bytes", None)
+
+
 def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
     """Create an editable, ATS-friendly resume in Times New Roman with requested sizing/alignment."""
     document = docx.Document()
@@ -5941,6 +6014,11 @@ Resume text:
             "learning a skill, do not claim proficiency in it.\n\n"
             "Remember: five genuine, explainable skills are better than fifteen skills you cannot confidently discuss in an interview."
         )
+        # Apply AI-generated drafts before the editor widget is created (Streamlit widget-state rule).
+        pending_resume = st.session_state.pop("pending_resume_editor_text", None)
+        if pending_resume is not None:
+            st.session_state["resume_editor_text"] = clean_resume_draft(pending_resume)
+            save_resume_workspace(student_id, st.session_state.get("resume_details") or {}, st.session_state["resume_editor_text"], st.session_state.get("resume_workspace_jd", ""), st.session_state.get("resume_source_filename", ""))
         # Students can edit their uploaded/verified resume, then tailor it to the target job.
         resume_editor_text = st.text_area(
             "Editable Professional Resume Draft", key="resume_editor_text", height=360,
@@ -5955,8 +6033,12 @@ Resume text:
                     st.warning("Add or upload the target Job Description first.")
                 else:
                     profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
-                    edit_prompt = f"""You are an ethical resume editor for an IPER Bhopal student. Rewrite the document as a complete structured professional resume tailored to the target role, not an About Myself answer. Use PROFESSIONAL SUMMARY, CORE COMPETENCIES, EDUCATION, EXPERIENCE/INTERNSHIP EXPERIENCE, PROJECTS, SKILLS, CERTIFICATIONS, ACHIEVEMENTS and ACTIVITIES as supported by facts. Do not invent or exaggerate any qualification, skill, employer, metric, responsibility or achievement. If a useful detail is absent, leave a clearly marked [ADD ONLY IF TRUE: ...] prompt instead of fabricating it. Use clean headings and concise bullet points. Return only plain text ready to edit in Word.
-    Account name: {account_name}
+                    source_resume_text = str(resume_editor_text or "") + "\n" + json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)
+                    extracted_email, extracted_phone = extract_resume_contacts(source_resume_text)
+                    edit_prompt = f"""You are an expert ATS resume formatter and ethical resume editor for an IPER Bhopal student. Produce a clean, polished, one-column, ATS-friendly resume tailored to the target job. Use standard plain-text headings and simple hyphen bullets only. Absolutely no Markdown, asterisks, stray question marks, unmatched parentheses, decorative symbols, tables, columns, icons, emojis, text boxes, or numbered list clutter. Keep consistent heading names and concise action-led bullet points. Start with the candidate's full name, then email and phone if found in their own resume; never invent contact details. Use sections only where supported: PROFESSIONAL SUMMARY, SKILLS, EDUCATION, EXPERIENCE, INTERNSHIP, PROJECTS, CERTIFICATIONS, ACHIEVEMENTS, ACTIVITIES. Include important JD keywords naturally only when supported by the student's evidence. Never invent or exaggerate any qualification, skill, employer, metric, responsibility or achievement. Do not insert placeholder text into the final resume. Return only the resume text, no commentary.
+    Candidate account name: {account_name}
+    Email extracted from student's own resume (use if present): {extracted_email}
+    Phone extracted from student's own resume (use if present): {extracted_phone}
     Verified resume data: {json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)}
     About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
     Current editable resume: {resume_editor_text[:9000]}
@@ -5964,7 +6046,8 @@ Resume text:
                     with st.spinner("Tailoring your resume to the JD without adding unsupported claims..."):
                         tailored_text = get_groq_response(edit_prompt)
                     if tailored_text and not tailored_text.strip().lower().startswith("error"):
-                        st.session_state["pending_resume_editor_text"] = tailored_text.strip().replace("```text", "").replace("```", "").strip()
+                        st.session_state["pending_resume_editor_text"] = clean_resume_draft(tailored_text)
+                        st.rerun()
                         st.rerun()
                     else:
                         st.error("The resume draft could not be generated. Your current draft remains unchanged.")
@@ -6000,7 +6083,7 @@ Candidate account: {account_name}
 Verified resume: {json.dumps(resume_context, ensure_ascii=False)}
 Student's edited resume draft: {resume_editor_text[:9000]}
 Job Description: {jd_text[:9000]}
-Do not invent experience, achievements, marks or skills. Distinguish proven skills from suggestions. Return ONLY valid JSON:
+Evaluate ATS compatibility as well as role match: standard headings, readable structure, contact details, relevant evidence, keyword alignment and absence of formatting problems. Do not invent experience, achievements, marks or skills. Distinguish proven skills from suggestions. Return MissingKeywords as short, individual skill/phrase suggestions (not sentences), ordered by relevance. Return ONLY valid JSON:
 {{
  "CandidateName":"{account_name}", "ATSScore":0, "Category":"Needs Improvement",
  "ExecutiveSummary":"A factual summary addressed to the student",
@@ -6015,29 +6098,50 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
                 save_resume_activity(student_id, st.session_state.get("scholar_id", ""), ats_result, jd_text)
                 save_resume_workspace(student_id, resume_context, resume_editor_text, jd_text, st.session_state.get("resume_source_filename", ""))
                 st.session_state["last_resume_ats_result"] = ats_result
-                st.subheader(f"Resume Analysis for {account_name}")
-                score = ats_result.get("ATSScore", 0)
-                m1, m2 = st.columns(2)
-                with m1:
-                    st.metric("Overall Match Grade", grade_from_score(score))
-                    render_grade_slabs()
-                with m2:
-                    st.metric("Fit Status", ats_result.get("Category", "Needs Improvement"))
-                st.write(ats_result.get("ExecutiveSummary", ""))
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("#### Strengths")
-                    for item in ats_result.get("Strengths", []): st.markdown(f"- {item}")
-                    st.markdown("#### Suggested Keywords")
-                    for item in ats_result.get("MissingKeywords", []): st.markdown(f"- `{item}`")
-                with c2:
-                    st.markdown("#### Areas to Improve")
-                    for item in ats_result.get("AreasOfImprovement", []): st.markdown(f"- {item}")
-                    st.markdown("#### Practical Recommendations")
-                    for item in ats_result.get("RecommendedChanges", []): st.markdown(f"- {item}")
             except Exception:
                 st.error("The resume review response could not be processed. Please try again.")
                 st.code(raw_ats_response[:4000], language="text")
+
+
+    # Persist and display the latest match analysis across Streamlit reruns so keywords can be selected.
+    ats_result = st.session_state.get("last_resume_ats_result")
+    if isinstance(ats_result, dict):
+        st.subheader(f"Resume Analysis for {account_name}")
+        score = ats_result.get("ATSScore", 0)
+        m1, m2 = st.columns(2)
+        with m1:
+            st.metric("Overall Match Grade", grade_from_score(score))
+            render_grade_slabs()
+        with m2:
+            st.metric("Fit Status", ats_result.get("Category", "Needs Improvement"))
+        st.write(ats_result.get("ExecutiveSummary", ""))
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### Strengths")
+            for item in ats_result.get("Strengths", []):
+                st.markdown(f"- {item}")
+            st.markdown("#### Suggested Keywords")
+            st.caption("Tick a keyword to add it immediately to the Skills section of your resume. Add only skills you genuinely know and can explain.")
+            keywords = ats_result.get("MissingKeywords", [])
+            if keywords:
+                for idx, item in enumerate(keywords):
+                    keyword = str(item).strip().strip("`*•- ")
+                    if not keyword:
+                        continue
+                    safe_key = re.sub(r"[^a-zA-Z0-9]+", "_", keyword).strip("_").lower()[:50] or str(idx)
+                    check_key = f"resume_keyword_add_{safe_key}"
+                    if check_key not in st.session_state:
+                        st.session_state[check_key] = False
+                    st.checkbox(keyword, key=check_key, on_change=add_keyword_to_resume_editor, args=(keyword, check_key))
+            else:
+                st.caption("No additional keywords were suggested for this JD.")
+        with c2:
+            st.markdown("#### Areas to Improve")
+            for item in ats_result.get("AreasOfImprovement", []):
+                st.markdown(f"- {item}")
+            st.markdown("#### Practical Recommendations")
+            for item in ats_result.get("RecommendedChanges", []):
+                st.markdown(f"- {item}")
 
 
     save_col, reset_col, download_col = st.columns(3)
@@ -6060,9 +6164,11 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
             if not resume_editor_text.strip():
                 st.warning("Please add or edit your resume content first.")
             else:
-                docx_email = str(st.session_state.get("student_email", "") or "").strip()
+                docx_email, docx_phone = extract_resume_contacts(resume_editor_text)
+                if not docx_email:
+                    docx_email = str(st.session_state.get("student_email", "") or "").strip()
                 st.session_state["generated_resume_docx_bytes"] = build_professional_resume_docx(
-                    resume_editor_text, account_name, email=docx_email
+                    clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone
                 )
                 st.success("Professional, editable Word resume created. Download it below and continue editing in Microsoft Word.")
     if st.session_state.get("generated_resume_docx_bytes"):
