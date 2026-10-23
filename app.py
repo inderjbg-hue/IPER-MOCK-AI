@@ -7002,20 +7002,18 @@ elif selected_nav == "Group Discussion Hub":
 
         uploaded_segments = st.session_state.get("uploaded_gd_segments") or []
         if uploaded_segments:
-            st.markdown("#### Step 2 — Review speaker labels")
-            st.caption("OpenAI identifies distinct voices as speaker labels. Confirm the student name and Scholar ID for each speaker before saving individual feedback.")
-            detected_speakers = list(dict.fromkeys(seg.get("speaker", "speaker_0") for seg in uploaded_segments))
-            speaker_map = {}
-            speaker_records = {}
-            for idx, speaker_id in enumerate(detected_speakers):
-                with st.expander(f"Map {speaker_id} to a student", expanded=True):
-                    name_value = st.text_input("Student full name", key=f"uploaded_gd_name_{speaker_id}", placeholder="Enter full name")
-                    scholar_value = st.text_input("Scholar ID (optional for preview)", key=f"uploaded_gd_scholar_{speaker_id}", placeholder="Enter Scholar ID")
-                    speaker_map[speaker_id] = name_value.strip() or speaker_id
-                    speaker_records[speaker_id] = {"name": name_value.strip(), "scholar_id": scholar_value.strip().upper()}
-
+            st.markdown("#### Step 2 — Review speaker-labelled transcript")
+            # Assign stable, readable labels by first appearance in the recording.
+            raw_speakers = list(dict.fromkeys(str(seg.get("speaker") or "speaker_0") for seg in uploaded_segments))
+            speaker_labels = {sid: f"Speaker {chr(65 + idx)}" for idx, sid in enumerate(raw_speakers[:26])}
+            speaker_map = {sid: speaker_labels.get(sid, f"Speaker {sid}") for sid in raw_speakers}
+            speaker_records = {sid: {"name": speaker_map[sid], "scholar_id": ""} for sid in raw_speakers}
+            if len(raw_speakers) > 7:
+                st.warning(f"{len(raw_speakers)} distinct voices were detected. The first seven are labelled Speaker A to Speaker G; additional detected voices remain labelled separately.")
+            else:
+                st.caption("Speakers are labelled automatically in order of first appearance. No student names or Scholar IDs are requested.")
             readable_transcript = _format_gd_transcript(uploaded_segments, speaker_map)
-            with st.expander("Preview diarised transcript", expanded=False):
+            with st.expander("Preview diarised transcript", expanded=True):
                 st.text_area("Speaker-labelled transcript", value=readable_transcript, height=260, key="uploaded_gd_transcript_preview")
                 st.download_button(
                     "Download transcript (.txt)",
@@ -7026,66 +7024,85 @@ elif selected_nav == "Group Discussion Hub":
                 )
 
             speaker_stats = _gd_speaker_stats(uploaded_segments, speaker_map)
-            st.markdown("#### Step 3 — Generate individual feedback")
-            include_nonverbal = st.checkbox(
-                "Include body-language and vocal-tone feedback (uses additional OpenAI processing)",
-                value=False,
-                key="uploaded_gd_include_nonverbal",
-                help="Body language uses a few sampled video frames. Tone uses a short audio sample per detected speaker; it is not a continuous analysis. This adds API usage."
-            )
-            if st.button(" Generate GD Assessment", use_container_width=True, key="generate_uploaded_gd_feedback"):
-                if len(detected_speakers) < 2:
-                    st.warning("Only one distinct speaker was detected. You can still review the transcript, but please confirm the recording contains the full group discussion.")
-                with st.spinner("Evaluating the group and each participant using transcript evidence..."):
+            st.markdown("#### Step 3 — Generate GD assessment")
+            st.caption("Every assessment attempts transcript-based evaluation, vocal tone and delivery analysis, and sampled body-language analysis. Tone/body-language feedback may be marked unavailable if the required audio/video evidence or API service is unavailable.")
+            if st.button("🧠 Generate GD Assessment", use_container_width=True, key="generate_uploaded_gd_feedback"):
+                with st.spinner("Assessing the discussion, speaker delivery and sampled body language..."):
                     report, report_error = generate_gd_video_assessment(
                         st.session_state.get("uploaded_gd_topic_processed", video_topic.strip()),
-                        [{"SpeakerID": sid, "Name": speaker_map.get(sid, sid), "ScholarID": speaker_records[sid]["scholar_id"]} for sid in detected_speakers],
+                        [{"SpeakerID": sid, "Name": speaker_map.get(sid, sid), "ScholarID": ""} for sid in raw_speakers],
                         readable_transcript,
                         speaker_stats,
                     )
                 if report_error:
                     st.error(f"Assessment could not be generated: {report_error}")
                 elif report:
-                    if include_nonverbal:
-                        audio_path_for_tone = None
-                        try:
-                            audio_bytes_for_tone = st.session_state.get("uploaded_gd_audio_bytes")
-                            if audio_bytes_for_tone:
-                                with tempfile.NamedTemporaryFile(delete=False, suffix="_tone_source.mp3") as tone_audio_file:
-                                    tone_audio_file.write(audio_bytes_for_tone)
-                                    audio_path_for_tone = tone_audio_file.name
-                        except Exception as temp_exc:
-                            st.warning(f"Could not prepare temporary audio for tone analysis: {temp_exc}")
-                        mapped_visual_participants = [
-                            {"Name": speaker_map.get(sid, sid)}
-                            for sid in detected_speakers
-                        ]
-                        visual_frames = st.session_state.get("uploaded_gd_visual_frames", [])
-                        if visual_frames:
-                            with st.spinner("Reviewing sampled video frames for observable body-language feedback..."):
-                                visual_report, visual_error = analyze_gd_body_language(visual_frames, mapped_visual_participants)
-                            if visual_report:
-                                report["NonVerbalAssessment"] = visual_report
-                            elif visual_error:
-                                st.warning(f"Body-language feedback was not added: {visual_error}")
-                        if audio_path_for_tone and os.path.exists(audio_path_for_tone):
-                            with st.spinner("Reviewing short audio samples for vocal-tone feedback..."):
-                                tone_report, tone_error = analyze_gd_vocal_tone(audio_path_for_tone, uploaded_segments, speaker_map)
-                            if tone_report:
-                                report["VocalToneAssessment"] = tone_report
-                            if tone_error:
-                                st.warning(f"Some tone feedback may be unavailable: {tone_error}")
+                    # Enforce stable Speaker A-G labels throughout the downloadable/displayed report.
+                    participants = report.get("Participants", []) or []
+                    for idx, participant in enumerate(participants):
+                        if idx < len(raw_speakers):
+                            participant["Name"] = speaker_map[raw_speakers[idx]]
+                            participant["SpeakerID"] = raw_speakers[idx]
+                    audio_path_for_tone = None
+                    try:
+                        audio_bytes_for_tone = st.session_state.get("uploaded_gd_audio_bytes")
+                        if audio_bytes_for_tone:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix="_tone_source.mp3") as tone_audio_file:
+                                tone_audio_file.write(audio_bytes_for_tone)
+                                audio_path_for_tone = tone_audio_file.name
+                    except Exception as temp_exc:
+                        st.warning(f"Could not prepare temporary audio for tone analysis: {temp_exc}")
+
+                    visual_frames = st.session_state.get("uploaded_gd_visual_frames", [])
+                    if visual_frames:
+                        with st.spinner("Reviewing sampled video frames for observable body-language feedback..."):
+                            visual_report, visual_error = analyze_gd_body_language(
+                                visual_frames,
+                                [{"Name": speaker_map[sid]} for sid in raw_speakers[:7]]
+                            )
+                        if visual_report:
+                            # Keep group feedback and use stable speaker labels for any individual results.
+                            for vidx, item in enumerate(visual_report.get("Participants", []) or []):
+                                if vidx < min(len(raw_speakers), 7):
+                                    item["Name"] = speaker_map[raw_speakers[vidx]]
+                            report["NonVerbalAssessment"] = visual_report
                         else:
-                            st.info("The audio sample is unavailable; vocal-tone feedback was skipped. You can re-run transcription and assessment.")
-                        for cleanup_path in (audio_path_for_tone,):
-                            if cleanup_path and os.path.exists(cleanup_path):
-                                try: os.remove(cleanup_path)
-                                except OSError: pass
+                            report["NonVerbalAssessment"] = {
+                                "GroupBodyLanguage": {"Observations": [], "Suggestions": []},
+                                "Participants": [],
+                                "AvailabilityNote": visual_error or "Body-language feedback could not be generated from the available video evidence."
+                            }
+                            st.warning("Body-language feedback could not be generated from the available video evidence.")
+                    else:
+                        report["NonVerbalAssessment"] = {
+                            "GroupBodyLanguage": {"Observations": [], "Suggestions": []},
+                            "Participants": [],
+                            "AvailabilityNote": "No usable video frames were available for body-language analysis."
+                        }
+                        st.warning("Body-language feedback is mandatory, but no usable video frames were available for this recording.")
+
+                    if audio_path_for_tone and os.path.exists(audio_path_for_tone):
+                        with st.spinner("Reviewing short audio samples for vocal-tone feedback..."):
+                            tone_report, tone_error = analyze_gd_vocal_tone(audio_path_for_tone, uploaded_segments, speaker_map)
+                        if tone_report:
+                            report["VocalToneAssessment"] = tone_report
+                        else:
+                            report["VocalToneAssessment"] = {"AvailabilityNote": tone_error or "Vocal-tone feedback could not be generated."}
+                            st.warning("Vocal-tone feedback could not be generated from the available audio.")
+                    else:
+                        report["VocalToneAssessment"] = {"AvailabilityNote": "The audio sample was unavailable; rerun transcription or check the uploaded recording."}
+                        st.warning("Vocal-tone feedback is mandatory, but the audio sample was unavailable.")
+                    if audio_path_for_tone and os.path.exists(audio_path_for_tone):
+                        try:
+                            os.remove(audio_path_for_tone)
+                        except OSError:
+                            pass
+
                     st.session_state["uploaded_gd_report"] = report
                     st.session_state["uploaded_gd_final_speaker_map"] = speaker_map
                     st.session_state["uploaded_gd_final_speaker_records"] = speaker_records
                     st.session_state["uploaded_gd_final_stats"] = speaker_stats
-                    st.success("GD assessment generated. Review the feedback below before saving.")
+                    st.success("GD assessment generated. Download the feedback report below.")
                     group_report = report.get("GroupAssessment", {}) or {}
                     st.markdown("### Group Assessment")
                     st.markdown(f"**Overall Readiness — {grade_from_score(group_report.get('OverallScore', 0))}**")
@@ -7105,42 +7122,34 @@ elif selected_nav == "Group Discussion Hub":
                             st.markdown(f"**{visual_label}**")
                             for visual_value in visual_values:
                                 st.write(f"• {visual_value}")
+                    nonverbal_note = (report.get("NonVerbalAssessment") or {}).get("AvailabilityNote")
+                    if nonverbal_note:
+                        st.info(nonverbal_note)
 
                     st.markdown("### Individual Feedback")
+                    tone_by_speaker = report.get("VocalToneAssessment", {}) or {}
                     for participant in report.get("Participants", []) or []:
-                        pname = participant.get("Name") or "Unmapped participant"
+                        pname = participant.get("Name") or "Unlabelled speaker"
                         with st.expander(f"{pname} — {grade_from_score(participant.get('OverallScore', 0))}", expanded=True):
-                            st.write(f"**Participation:** {grade_from_score(participant.get('ParticipationScore', 0))}")
-                            st.write(f"**Communication:** {grade_from_score(participant.get('CommunicationScore', 0))}")
-                            st.write(f"**Knowledge:** {grade_from_score(participant.get('KnowledgeScore', 0))}")
-                            st.write(f"**Analytical Thinking:** {grade_from_score(participant.get('AnalyticalThinkingScore', 0))}")
-                            st.write(f"**Listening & Teamwork:** {grade_from_score(participant.get('ListeningTeamworkScore', 0))}")
-                            st.write(f"**Leadership:** {grade_from_score(participant.get('LeadershipScore', 0))}")
-                            tone_by_speaker = report.get("VocalToneAssessment", {}) or {}
-                            final_records_for_feedback = st.session_state.get("uploaded_gd_final_speaker_records", {})
-                            final_map_for_feedback = st.session_state.get("uploaded_gd_final_speaker_map", {})
-                            participant_name_for_feedback = str(participant.get("Name") or "").strip()
-                            matched_speaker_for_feedback = next((sid for sid, mapped_name in final_map_for_feedback.items() if mapped_name == participant_name_for_feedback), None)
-                            if matched_speaker_for_feedback and matched_speaker_for_feedback in tone_by_speaker:
-                                tone_item = tone_by_speaker[matched_speaker_for_feedback] or {}
-                                st.markdown("**Vocal Tone & Delivery**")
-                                st.write(tone_item.get("ToneSummary", "No tone summary returned."))
-                                for tone_label, tone_key in (("What went well", "WhatWentWell"), ("To improve", "ToImprove"), ("Evidence limitations", "EvidenceLimitations")):
-                                    tone_values = tone_item.get(tone_key) or []
-                                    if tone_values:
-                                        st.markdown(f"*{tone_label}*")
-                                        for tone_value in tone_values:
-                                            st.write(f"• {tone_value}")
+                            for label, key in (("Participation", "ParticipationScore"), ("Communication", "CommunicationScore"), ("Knowledge", "KnowledgeScore"), ("Analytical Thinking", "AnalyticalThinkingScore"), ("Listening & Teamwork", "ListeningTeamworkScore"), ("Leadership", "LeadershipScore")):
+                                st.write(f"**{label}:** {grade_from_score(participant.get(key, 0))}")
+                            tone_item = tone_by_speaker.get(participant.get("SpeakerID"), {}) if isinstance(tone_by_speaker, dict) else {}
+                            if not tone_item and isinstance(tone_by_speaker, dict):
+                                tone_item = next((v for k, v in tone_by_speaker.items() if speaker_map.get(k, k) == pname), {})
+                            st.markdown("**Vocal Tone & Delivery**")
+                            st.write(tone_item.get("ToneSummary") or tone_by_speaker.get("AvailabilityNote") or "No individual tone summary returned.")
+                            for tone_label, tone_key in (("What went well", "WhatWentWell"), ("To improve", "ToImprove"), ("Evidence limitations", "EvidenceLimitations")):
+                                for tone_value in tone_item.get(tone_key) or []:
+                                    st.write(f"• {tone_label}: {tone_value}")
                             nonverbal_participants = ((report.get("NonVerbalAssessment") or {}).get("Participants") or [])
-                            matched_visual = next((item for item in nonverbal_participants if str(item.get("Name", "")).strip() == participant_name_for_feedback), None)
+                            matched_visual = next((item for item in nonverbal_participants if str(item.get("Name", "")).strip() == pname), None)
+                            st.markdown("**Body Language (sampled video frames)**")
                             if matched_visual:
-                                st.markdown("**Body Language (sampled video frames)**")
                                 for visual_label, visual_key in (("Observations", "BodyLanguageObservations"), ("Suggestions", "BodyLanguageSuggestions"), ("Limitations", "EvidenceLimitations")):
-                                    visual_values = matched_visual.get(visual_key) or []
-                                    if visual_values:
-                                        st.markdown(f"*{visual_label}*")
-                                        for visual_value in visual_values:
-                                            st.write(f"• {visual_value}")
+                                    for visual_value in matched_visual.get(visual_key) or []:
+                                        st.write(f"• {visual_label}: {visual_value}")
+                            else:
+                                st.write((report.get("NonVerbalAssessment") or {}).get("AvailabilityNote") or "Individual body-language feedback could not be reliably assigned from sampled frames.")
                             for label, key in (("Evidence", "Evidence"), ("Strengths", "Strengths"), ("Areas to improve", "AreasToImprove"), ("Next action plan", "NextGDActionPlan")):
                                 values = participant.get(key) or []
                                 st.markdown(f"**{label}**")
@@ -7149,59 +7158,64 @@ elif selected_nav == "Group Discussion Hub":
                                         st.write(f"• {value}")
                                 else:
                                     st.write("No specific points returned.")
-                    st.download_button(
-                        "Download complete GD assessment (.json)",
-                        data=json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8"),
-                        file_name="iper_peptech_gd_assessment.json",
-                        mime="application/json",
-                        key="download_uploaded_gd_report_json",
-                    )
 
+            # Download is available after generation and replaces the old manual mapped-save workflow.
             saved_report = st.session_state.get("uploaded_gd_report")
             if saved_report:
-                st.markdown("#### Step 4 — Save individual assessments")
-                st.caption("Only participants with a confirmed Scholar ID will be saved to their student profile. Verify speaker-to-student mapping before saving.")
-                if st.button(" Save mapped student feedback", use_container_width=True, key="save_uploaded_gd_assessments"):
-                    saved_count = 0
-                    save_errors = []
-                    report_participants = saved_report.get("Participants", []) or []
-                    final_records = st.session_state.get("uploaded_gd_final_speaker_records", {})
-                    final_map = st.session_state.get("uploaded_gd_final_speaker_map", {})
-                    topic_to_save = st.session_state.get("uploaded_gd_topic_processed", video_topic.strip())
-                    source_segments = st.session_state.get("uploaded_gd_segments", [])
-                    for participant in report_participants:
-                        participant_name = str(participant.get("Name") or "").strip()
-                        matched_speaker = next((sid for sid, mapped_name in final_map.items() if mapped_name == participant_name), None)
-                        record = final_records.get(matched_speaker, {}) if matched_speaker else {}
-                        scholar_id = str(record.get("scholar_id") or "").strip().upper()
-                        if not scholar_id:
-                            continue
-                        participant_report = {
-                            "SourceType": "Video GD",
-                            "GroupAssessment": saved_report.get("GroupAssessment", {}),
-                            "Participants": [participant],
-                            "SpeakerStats": st.session_state.get("uploaded_gd_final_stats", {}),
-                            "Transcript": _format_gd_transcript(source_segments, final_map),
-                        }
-                        try:
-                            save_gd_video_assessment(
-                                scholar_id,
-                                topic_to_save,
-                                [participant_name],
-                                source_segments,
-                                participant_report,
-                                st.session_state.get("uploaded_gd_filename_processed", "Uploaded GD video"),
-                                source_type="Video GD",
-                            )
-                            saved_count += 1
-                        except Exception as exc:
-                            save_errors.append(f"{participant_name}: {exc}")
-                    if saved_count:
-                        st.success(f"Saved feedback for {saved_count} participant(s).")
+                readable_feedback = [
+                    "IPER PEPTECH — GROUP DISCUSSION FEEDBACK",
+                    f"Topic: {st.session_state.get('uploaded_gd_topic_processed', video_topic.strip())}",
+                    "",
+                    "GROUP ASSESSMENT",
+                    f"Overall Readiness: {grade_from_score((saved_report.get('GroupAssessment') or {}).get('OverallScore', 0))}",
+                ]
+                saved_group = saved_report.get("GroupAssessment") or {}
+                for label, key in (("Strengths", "Strengths"), ("Improvements", "Improvements")):
+                    readable_feedback.append(f"{label}:")
+                    readable_feedback.extend([f"- {v}" for v in (saved_group.get(key) or [])] or ["- Not provided"])
+                for section_name, section in (("VOCAL TONE & DELIVERY", saved_report.get("VocalToneAssessment") or {}), ("BODY LANGUAGE", saved_report.get("NonVerbalAssessment") or {})):
+                    readable_feedback.extend(["", section_name])
+                    if section.get("AvailabilityNote"):
+                        readable_feedback.append(section["AvailabilityNote"])
+                    if section_name == "VOCAL TONE & DELIVERY":
+                        for speaker, item in section.items():
+                            if isinstance(item, dict):
+                                readable_feedback.extend(["", f"{speaker_map.get(speaker, speaker)}: {item.get('ToneSummary', '')}"])
+                                for key in ("WhatWentWell", "ToImprove", "EvidenceLimitations"):
+                                    readable_feedback.extend([f"- {v}" for v in (item.get(key) or [])])
                     else:
-                        st.warning("No feedback was saved. Enter a Scholar ID for at least one participant and try again.")
-                    for save_error in save_errors:
-                        st.error(save_error)
+                        group_bl = section.get("GroupBodyLanguage") or {}
+                        for key in ("Observations", "Suggestions"):
+                            readable_feedback.extend([f"Group {key.lower()}:"] + [f"- {v}" for v in (group_bl.get(key) or [])])
+                readable_feedback.extend(["", "INDIVIDUAL FEEDBACK"])
+                for participant in saved_report.get("Participants", []) or []:
+                    readable_feedback.extend([
+                        "", f"{participant.get('Name', 'Speaker')} — {grade_from_score(participant.get('OverallScore', 0))}",
+                        f"Participation: {grade_from_score(participant.get('ParticipationScore', 0))}",
+                        f"Communication: {grade_from_score(participant.get('CommunicationScore', 0))}",
+                        f"Knowledge: {grade_from_score(participant.get('KnowledgeScore', 0))}",
+                        f"Analytical Thinking: {grade_from_score(participant.get('AnalyticalThinkingScore', 0))}",
+                        f"Listening & Teamwork: {grade_from_score(participant.get('ListeningTeamworkScore', 0))}",
+                        f"Leadership: {grade_from_score(participant.get('LeadershipScore', 0))}",
+                    ])
+                    for label, key in (("Evidence", "Evidence"), ("Strengths", "Strengths"), ("Areas to improve", "AreasToImprove"), ("Next action plan", "NextGDActionPlan")):
+                        readable_feedback.append(f"{label}:")
+                        readable_feedback.extend([f"- {v}" for v in (participant.get(key) or [])] or ["- Not provided"])
+                st.download_button(
+                    "⬇️ Download Feedback Given (.txt)",
+                    data="\\n".join(readable_feedback).encode("utf-8"),
+                    file_name="iper_peptech_gd_feedback.txt",
+                    mime="text/plain",
+                    key="download_uploaded_gd_feedback_txt",
+                    use_container_width=True,
+                )
+                st.download_button(
+                    "Download complete GD assessment (.json)",
+                    data=json.dumps(saved_report, ensure_ascii=False, indent=2).encode("utf-8"),
+                    file_name="iper_peptech_gd_assessment.json",
+                    mime="application/json",
+                    key="download_uploaded_gd_report_json",
+                )
 
 # SECTION 5: PERFORMANCE DASHBOARD
 
