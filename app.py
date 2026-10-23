@@ -8,10 +8,7 @@ import json
 import queue
 import wave
 import re
-import unicodedata
-import difflib
 import uuid
-import random
 import pandas as pd
 import numpy as np
 import pypdf
@@ -276,68 +273,23 @@ if "candidate_name" not in st.session_state:
     st.session_state["candidate_name"] = "Candidate"
 
 def extract_text_from_file(file_obj):
-    """Extract readable text from supported uploads, including DOCX tables and headers."""
     if file_obj is None:
         return ""
-    filename = str(getattr(file_obj, "name", "") or "").lower()
+    
+    filename = file_obj.name.lower()
     try:
-        # Streamlit UploadedFile is file-like; rewind before parsing so a prior read
-        # cannot leave the parser at EOF.
-        try:
-            file_obj.seek(0)
-        except Exception:
-            pass
         if filename.endswith(".pdf"):
             reader = pypdf.PdfReader(file_obj)
-            chunks = []
-            for page in reader.pages:
-                page_text = page.extract_text() or ""
-                if page_text.strip():
-                    chunks.append(page_text)
-            return "\n".join(chunks).strip()
-        elif filename.endswith(".docx"):
-            document = docx.Document(file_obj)
-            chunks = [para.text.strip() for para in document.paragraphs if para.text.strip()]
-            # Many CV templates place the candidate name and contact details in tables.
-            for table in document.tables:
-                for row in table.rows:
-                    cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                    if cells:
-                        chunks.append(" | ".join(cells))
-            for section in document.sections:
-                for area in (section.header, section.footer):
-                    for para in area.paragraphs:
-                        if para.text.strip():
-                            chunks.append(para.text.strip())
-                    for table in area.tables:
-                        for row in table.rows:
-                            cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                            if cells:
-                                chunks.append(" | ".join(cells))
-            return "\n".join(chunks).strip()
-        elif filename.endswith(".doc"):
-            return "Error extracting content from file: legacy .doc is not supported; save it as .docx or PDF."
+            return "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        elif filename.endswith(".docx") or filename.endswith(".doc"):
+            doc = docx.Document(file_obj)
+            return "\n".join([para.text for para in doc.paragraphs])
         elif filename.endswith((".png", ".jpg", ".jpeg")):
             return f"[Uploaded Image File: {file_obj.name}]"
         else:
-            raw = file_obj.read()
-            if isinstance(raw, bytes):
-                return raw.decode("utf-8-sig", errors="ignore").strip()
-            return str(raw).strip()
+            return file_obj.read().decode("utf-8", errors="ignore")
     except Exception as e:
         return f"Error extracting content from file: {str(e)}"
-
-
-def account_name_appears_in_resume(resume_text, account_name):
-    """Return true only when the complete account name appears in extracted resume text."""
-    def normalise(value):
-        return " ".join(re.findall(r"[a-z]+", str(value or "").casefold()))
-    resume_norm = normalise(resume_text)
-    account_norm = normalise(account_name)
-    if not account_norm or len(account_norm.split()) < 2:
-        return False
-    # Exact contiguous full-name match avoids relying exclusively on an LLM's JSON extraction.
-    return bool(re.search(r"(?<![a-z])" + re.escape(account_norm) + r"(?![a-z])", resume_norm))
 
 def _extract_speech_only_wav(audio_path):
     """Use aggressive WebRTC VAD to keep likely human-speech frames and reject music/noise."""
@@ -811,12 +763,11 @@ import sqlite3
 import hashlib
 import secrets
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 import base64
 import hmac
 import urllib.parse
-from urllib.parse import quote_plus
 import re
 import subprocess
 import wave
@@ -1284,214 +1235,122 @@ def resume_text_from_data(data):
 
 
 
-def clean_resume_draft(text):
-    """Normalize AI resume output into clean, ATS-readable plain text."""
-    value = str(text or "").replace("```text", "").replace("```", "")
-    cleaned = []
-    for raw in value.splitlines():
-        line = raw.strip()
-        if not line:
-            if cleaned and cleaned[-1] != "":
-                cleaned.append("")
-            continue
-        # Remove markdown headings and noisy list prefixes; use a consistent bullet glyph.
-        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
-        line = re.sub(r"^\s*(?:\*{1,3}|\)+|\?+|[-•]+)\s*", "", line)
-        line = re.sub(r"^\s*\d+[.)]\s+", "", line)
-        line = line.replace("**", "").replace("__", "").replace("`", "")
-        line = re.sub(r"\s{2,}", " ", line).strip()
-        # Discard common stray formatting-only lines.
-        if not line or re.fullmatch(r"[*)?._\-\s]+", line):
-            continue
-        cleaned.append(line)
-    while cleaned and cleaned[-1] == "":
-        cleaned.pop()
-    return "\n".join(cleaned).strip()
-
-
-def extract_resume_contacts(text):
-    """Extract email and a plausible phone number from the student's own resume text."""
-    source = str(text or "")
-    email_match = re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", source, re.I)
-    phone_matches = re.findall(r"(?<!\w)(?:\+?\d[\d ()\-]{7,}\d)(?!\w)", source)
-    phone = ""
-    for candidate in phone_matches:
-        digits = re.sub(r"\D", "", candidate)
-        if 10 <= len(digits) <= 15:
-            phone = re.sub(r"\s+", " ", candidate).strip()
-            break
-    return (email_match.group(0) if email_match else "", phone)
-
-
-def add_keyword_to_resume_editor(keyword, checkbox_key=None):
-    """Append a selected, user-approved keyword under Skills without duplicates."""
-    if checkbox_key and not st.session_state.get(checkbox_key, False):
-        return
-    keyword = str(keyword or "").strip().strip("`*•- ")
-    if not keyword:
-        return
-    text = str(st.session_state.get("resume_editor_text", "") or "")
-    lines = text.splitlines()
-    skill_headers = {"SKILLS", "KEY SKILLS", "KEY_SKILLS", "TECHNICAL SKILLS", "CORE COMPETENCIES", "CORE SKILLS"}
-    start = next((i for i, line in enumerate(lines) if line.strip().strip(":").upper() in skill_headers), None)
-    if start is None:
-        # Place Skills before Education when possible; otherwise append it at the end.
-        education = next((i for i, line in enumerate(lines) if line.strip().strip(":").upper() in {"EDUCATION", "EDUCATIONAL QUALIFICATIONS"}), None)
-        insert_at = education if education is not None else len(lines)
-        block = ["Skills", keyword]
-        lines[insert_at:insert_at] = ([""] if insert_at and lines[insert_at-1].strip() else []) + block + ([""] if insert_at < len(lines) else [])
-    else:
-        end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().strip(":").upper() in {
-            "PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE", "EDUCATION", "EDUCATIONAL QUALIFICATIONS", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE", "EXPERIENCE", "INTERNSHIP", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "ACTIVITIES"
-        }), len(lines))
-        existing = " ".join(lines[start+1:end]).casefold()
-        if keyword.casefold() in existing:
-            return
-        # Keep skills concise and readable as a comma-separated list.
-        current = [x.strip(" •-*\t") for x in lines[start+1:end] if x.strip()]
-        if current:
-            lines[start+1:end] = [", ".join(current + [keyword])]
-        else:
-            lines.insert(start+1, keyword)
-    st.session_state["resume_editor_text"] = clean_resume_draft("\n".join(lines))
-    st.session_state.pop("generated_resume_docx_bytes", None)
-
-
 def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
-    """Render every downloadable resume using one consistent, ATS-friendly Word template."""
+    """Create an editable, ATS-friendly resume in Times New Roman with requested sizing/alignment."""
     document = docx.Document()
     section = document.sections[0]
-    section.top_margin = docx.shared.Inches(0.62)
-    section.bottom_margin = docx.shared.Inches(0.62)
-    section.left_margin = docx.shared.Inches(0.72)
-    section.right_margin = docx.shared.Inches(0.72)
+    section.top_margin = docx.shared.Inches(0.65)
+    section.bottom_margin = docx.shared.Inches(0.65)
+    section.left_margin = docx.shared.Inches(0.75)
+    section.right_margin = docx.shared.Inches(0.75)
 
-    purple = docx.shared.RGBColor(83, 49, 131)
+    # Set the document-wide default and common styles explicitly, including East Asian font mapping.
     styles = document.styles
     normal = styles["Normal"]
     normal.font.name = "Times New Roman"
     normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    normal.font.size = docx.shared.Pt(11)
-    normal.paragraph_format.space_after = docx.shared.Pt(3)
-    normal.paragraph_format.line_spacing = 1.0
+    normal.font.size = docx.shared.Pt(12)
+    normal.paragraph_format.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+    normal.paragraph_format.space_after = docx.shared.Pt(4)
+    normal.paragraph_format.line_spacing = 1.08
 
-    for style_name in ("Heading 1", "Heading 2", "List Bullet"):
+    for style_name in ("Heading 1", "Heading 2", "Title", "Subtitle", "List Bullet"):
         style = styles[style_name]
         style.font.name = "Times New Roman"
         style._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-        if style_name == "Heading 1":
-            style.font.size = docx.shared.Pt(11)
+        if style_name in ("Heading 1", "Heading 2", "Title"):
+            style.font.size = docx.shared.Pt(14)
             style.font.bold = True
-            style.font.color.rgb = purple
-            style.paragraph_format.space_before = docx.shared.Pt(7)
-            style.paragraph_format.space_after = docx.shared.Pt(2)
+            style.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
+            style.paragraph_format.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            style.paragraph_format.space_before = docx.shared.Pt(8)
+            style.paragraph_format.space_after = docx.shared.Pt(3)
             style.paragraph_format.keep_with_next = True
-        elif style_name == "Heading 2":
-            style.font.size = docx.shared.Pt(11)
-            style.font.bold = True
         else:
-            style.font.size = docx.shared.Pt(11)
+            style.font.size = docx.shared.Pt(12)
 
-    # One fixed template: consistent name/contact header and predictable section order.
+    # Candidate name is a restrained heading; body content remains 12 pt and justified.
     name_p = document.add_paragraph()
     name_p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-    name_p.paragraph_format.space_after = docx.shared.Pt(2)
-    name_run = name_p.add_run(str(candidate_name or "Candidate").strip())
+    name_p.paragraph_format.space_after = docx.shared.Pt(3)
+    name_run = name_p.add_run((candidate_name or "Candidate").strip())
     name_run.bold = True
     name_run.font.name = "Times New Roman"
     name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    name_run.font.size = docx.shared.Pt(16)
-    name_run.font.color.rgb = purple
+    name_run.font.size = docx.shared.Pt(14)
+    name_run.font.color.rgb = docx.shared.RGBColor(83, 49, 131)
 
     contacts = [x.strip() for x in (email, phone, linkedin) if x and x.strip()]
     if contacts:
         cp = document.add_paragraph(" | ".join(contacts))
-        cp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-        cp.paragraph_format.space_after = docx.shared.Pt(6)
+        cp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+        cp.paragraph_format.space_after = docx.shared.Pt(7)
+        for run in cp.runs:
+            run.font.name = "Times New Roman"
+            run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+            run.font.size = docx.shared.Pt(12)
 
-    # Parse the text into sections, retaining content while mapping common heading variants.
-    section_aliases = {
-        "CAREER OBJECTIVE": "CAREER OBJECTIVE", "OBJECTIVE": "CAREER OBJECTIVE",
-        "PROFESSIONAL SUMMARY": "PROFESSIONAL SUMMARY", "SUMMARY": "PROFESSIONAL SUMMARY",
-        "PROFILE": "PROFESSIONAL SUMMARY",
-        "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS", "KEY COMPETENCIES": "SKILLS",
-        "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
-        "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
-        "INTERNSHIP": "INTERNSHIPS", "INTERNSHIPS": "INTERNSHIPS",
-        "PROJECTS": "PROJECTS", "KEY PROJECTS": "PROJECTS", "ACADEMIC PROJECTS": "PROJECTS", "PROJECTS & ACHIEVEMENTS": "PROJECTS",
-        "CERTIFICATIONS": "CERTIFICATIONS", "CERTIFICATES": "CERTIFICATIONS", "COURSES": "CERTIFICATIONS", "COURSEWORK": "CERTIFICATIONS",
-        "ACHIEVEMENTS": "ACHIEVEMENTS", "AWARDS": "ACHIEVEMENTS", "HONOURS": "ACHIEVEMENTS",
-        "POSITIONS OF RESPONSIBILITY": "LEADERSHIP & ACTIVITIES", "LEADERSHIP": "LEADERSHIP & ACTIVITIES", "ACTIVITIES": "LEADERSHIP & ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "LEADERSHIP & ACTIVITIES", "VOLUNTEERING": "LEADERSHIP & ACTIVITIES",
-        "PUBLICATIONS": "ADDITIONAL INFORMATION", "RESEARCH": "ADDITIONAL INFORMATION", "PROFESSIONAL INTERESTS": "ADDITIONAL INFORMATION", "INTERESTS": "ADDITIONAL INFORMATION", "LANGUAGES": "ADDITIONAL INFORMATION", "PROFESSIONAL AFFILIATIONS": "ADDITIONAL INFORMATION", "PERSONAL DETAILS": "ADDITIONAL INFORMATION", "REFERENCES": "ADDITIONAL INFORMATION"
+    headings = {
+        "PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE", "CAREER OBJECTIVE", "OBJECTIVE",
+        "CORE COMPETENCIES", "KEY SKILLS", "SKILLS", "TECHNICAL SKILLS", "EDUCATION",
+        "EDUCATIONAL QUALIFICATIONS", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE", "EXPERIENCE",
+        "INTERNSHIP", "INTERNSHIPS", "PROJECTS", "KEY PROJECTS", "PROJECTS & ACHIEVEMENTS",
+        "ACHIEVEMENTS", "CERTIFICATIONS", "CERTIFICATES", "POSITIONS OF RESPONSIBILITY", "LEADERSHIP",
+        "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES", "PUBLICATIONS", "RESEARCH", "PROFESSIONAL INTERESTS",
+        "INTERESTS", "LANGUAGES", "AWARDS", "VOLUNTEERING", "PROFESSIONAL AFFILIATIONS", "REFERENCES",
+        "COURSEWORK", "ACADEMIC PROJECTS", "PERSONAL DETAILS", "CAREER HIGHLIGHTS"
     }
-    order = ["CAREER OBJECTIVE", "PROFESSIONAL SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"]
-    sections = {key: [] for key in order}
-    current = "CAREER OBJECTIVE"
-    for raw in str(resume_text or "").splitlines():
-        line = raw.strip()
+    for raw_line in (resume_text or "").splitlines():
+        line = raw_line.strip()
         if not line:
             continue
-        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
-        line = re.sub(r"\*{1,3}|__|`", "", line).strip()
-        line = re.sub(r"^\s*(?:[-•*]+|\d+[.)])\s*", "", line).strip()
-        normalized = re.sub(r"[^A-Z& ]", "", line.upper()).strip()
-        normalized = re.sub(r"\s+", " ", normalized)
-        if normalized in section_aliases:
-            current = section_aliases[normalized]
+        normalized = line.strip(" :#*-•").upper()
+        if normalized in headings:
+            p = document.add_paragraph(style="Heading 1")
+            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            p.add_run(normalized.title())
+        elif normalized in {"NAME", "NAME:"}:
             continue
-        if normalized in {"NAME", "CANDIDATE NAME", "CONTACT", "CONTACT DETAILS"}:
-            continue
-        # Convert model-generated bullets into clean plain-text content for the fixed template.
-        sections.setdefault(current, []).append(line)
+        elif line.startswith(("- ", "• ", "* ")):
+            p = document.add_paragraph(style="List Bullet")
+            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.paragraph_format.left_indent = docx.shared.Inches(0.22)
+            p.paragraph_format.first_line_indent = docx.shared.Inches(-0.14)
+            p.add_run(line[2:].strip())
+        elif line.endswith(":") and len(line) < 65:
+            p = document.add_paragraph(style="Heading 2")
+            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            p.add_run(line.rstrip(":"))
+        else:
+            p = document.add_paragraph(line)
+            p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+            p.paragraph_format.keep_together = True
 
-    # Career Objective is the intended opening profile statement. The tailoring workflow
-    # must not include a Professional Summary; ignore legacy summary headings in downloads.
-    sections["PROFESSIONAL SUMMARY"] = []
-    for heading in order:
-        content = sections.get(heading, [])
-        if not content:
+    # Enforce font family/size and alignment on every generated body run/paragraph.
+    for paragraph_index, paragraph in enumerate(document.paragraphs):
+        if paragraph_index == 0:  # preserve the candidate name as a 14 pt centered heading
             continue
-        hp = document.add_paragraph(style="Heading 1")
-        hp.add_run(heading)
-        for item in content:
-            item = re.sub(r"^[*•?)+\-\s]+", "", item).strip()
-            if not item or re.fullmatch(r"[*)?._\-\s]+", item):
-                continue
-            # Format resume entries as proper bullets; keep objective and longer prose as paragraphs.
-            list_sections = {"SKILLS", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"}
-            if heading in list_sections and len(item) < 500:
-                bp = document.add_paragraph(style="List Bullet")
-                bp.paragraph_format.left_indent = docx.shared.Inches(0.22)
-                bp.paragraph_format.first_line_indent = docx.shared.Inches(-0.12)
-                bp.add_run(item.lstrip("-• ").strip())
-            else:
-                bp = document.add_paragraph(item)
-                bp.paragraph_format.keep_together = True
-
-    # Consistent typography, left-aligned headings and readable body text throughout.
-    for para in document.paragraphs:
-        if para.style.name == "Heading 1":
-            para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
-            for run in para.runs:
-                run.bold = True
+        if paragraph.style.name.startswith("Heading"):
+            paragraph.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            for run in paragraph.runs:
                 run.font.name = "Times New Roman"
                 run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-                run.font.size = docx.shared.Pt(11)
-                run.font.color.rgb = purple
-        elif para is not name_p:
-            para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
-            for run in para.runs:
+                run.font.size = docx.shared.Pt(14)
+                run.font.bold = True
+        else:
+            paragraph.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+            for run in paragraph.runs:
                 run.font.name = "Times New Roman"
                 run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-                run.font.size = docx.shared.Pt(11)
+                run.font.size = docx.shared.Pt(12)
 
+    # Footer follows the same requested typeface and body size.
     footer = section.footer.paragraphs[0]
-    footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer.add_run("IPER PEPTECH | Professional Resume")
-    footer_run.font.name = "Times New Roman"
-    footer_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    footer_run.font.size = docx.shared.Pt(9)
-
+    footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.JUSTIFY
+    fr = footer.add_run("IPER PEPTECH | Professional Resume")
+    fr.font.name = "Times New Roman"
+    fr._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+    fr.font.size = docx.shared.Pt(12)
     out = BytesIO()
     document.save(out)
     return out.getvalue()
@@ -3972,10 +3831,6 @@ if not st.session_state["authenticated"]:
     render_authentication_panel()
     st.stop()
 
-# Legacy career-tip popup state is no longer used.
-st.session_state.pop("show_login_tip", None)
-st.session_state.pop("login_tip_for_session", None)
-
 # Mentors use a separate role-scoped portal; student navigation remains unchanged.
 if st.session_state.get("user_role") == "mentor":
     st.markdown("**IPER PEPTECH · Mentor Portal**")
@@ -4029,13 +3884,15 @@ st.sidebar.markdown("---")
 selected_nav = st.sidebar.radio(
     "MAIN MENU",
     [
+        "Progress",
         "Industry & Company Insights",
         "About Myself",
         "Resume Checker & Job Matcher",
+        "Career Development",
         "Interview Preparation Guide",
         "Interview Practice Room",
         "Group Discussion Hub",
-        "My Progress Dashboard",
+        "Performance Dashboard",
         "My Personal Details"
     ],
     key="main_nav"
@@ -4125,7 +3982,126 @@ if selected_nav == "My Personal Details":
                     finally:
                         conn.close()
 
-# SECTION 0: MY PROGRESS DASHBOARD is consolidated into the dashboard section below.
+# SECTION 0: PROGRESS
+elif selected_nav == "Progress":
+    st.title("Weekly Progress")
+    st.caption("A quick view of your weekly placement-practice journey, activity and next steps.")
+
+    scholar_id = st.session_state.get("scholar_id", "")
+    student_id = st.session_state.get("student_id")
+    history = st.session_state.get("history", [])
+
+    # Refresh persisted interview attempts so progress survives login/session refreshes.
+    if student_id:
+        try:
+            persisted_attempts = load_student_attempts(student_id)
+            if persisted_attempts:
+                history = persisted_attempts
+                st.session_state["history"] = persisted_attempts
+        except Exception:
+            pass
+
+    pi_attempts = len(history)
+    pi_scores = [float(item.get("Score", 0) or 0) for item in history]
+    pi_minutes = sum(float(item.get("DurationSeconds", 0) or 0) for item in history) / 60.0
+
+    gd_attempts = 0
+    gd_scores = []
+    gd_minutes = 0.0
+    if scholar_id:
+        try:
+            gd_assessments = get_ai_voice_gd_assessments(scholar_id)
+            gd_attempts = len(gd_assessments)
+            for assessment in gd_assessments:
+                report = assessment.get("report_json") or {}
+                live_feedback = report.get("LiveFeedback") or {}
+                overall_value = live_feedback.get("OverallScore")
+                if overall_value is None:
+                    participant_report = next(
+                        (p for p in (report.get("Participants") or [])
+                         if str(p.get("Name", "")).strip().lower() == str(st.session_state.get("candidate_name", "")).strip().lower()),
+                        None
+                    )
+                    overall_value = participant_report.get("OverallScore") if participant_report else None
+                if overall_value is not None:
+                    numeric_score = float(overall_value or 0)
+                    gd_scores.append(numeric_score * 10 if numeric_score <= 10 else numeric_score)
+                gd_minutes += float(assessment.get("duration_seconds", 0) or 0) / 60.0
+        except Exception:
+            pass
+
+    total_minutes = pi_minutes + gd_minutes
+    all_scores = pi_scores + gd_scores
+    average_score = (sum(all_scores) / len(all_scores)) if all_scores else 0.0
+
+    # Progress is intentionally activity-based: 20 completed practice assessments is the first milestone.
+    target_attempts = 20
+    progress_pct = min(100, round(((pi_attempts + gd_attempts) / target_attempts) * 100))
+
+    st.markdown("### Weekly Progress")
+    st.progress(progress_pct, text=f"{progress_pct}% of your first {target_attempts} practice assessments completed")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Minutes Utilized", f"{total_minutes:.1f} min")
+    m2.metric("PI Attempted", pi_attempts)
+    m3.metric("GD Attempted", gd_attempts)
+    m4.metric("Average Grade", grade_from_score(average_score) if all_scores else "—")
+
+    st.markdown("### Your Way Ahead")
+    suggestions = []
+    if pi_attempts == 0:
+        suggestions.append("Complete your first PI practice session and establish a baseline score.")
+    elif average_score < 60:
+        suggestions.append("Focus first on answer structure, clarity and confidence before increasing practice volume.")
+    elif average_score < 75:
+        suggestions.append("Continue regular PI practice and strengthen examples from your resume, internship and projects.")
+    else:
+        suggestions.append("Maintain your current performance and practise company-specific and advanced interview questions.")
+    if gd_attempts == 0:
+        suggestions.append("Attempt at least one GD and practise concise points, active listening and balanced participation.")
+    elif gd_attempts < 3:
+        suggestions.append("Complete a few more GDs so your participation and communication patterns become consistent.")
+    else:
+        suggestions.append("Review your GD feedback after each attempt and target one specific improvement in the next discussion.")
+    if total_minutes < 30:
+        suggestions.append("Aim for at least 30 minutes of meaningful placement practice before your next review.")
+    else:
+        suggestions.append("Keep a steady weekly practice routine rather than relying on last-minute preparation.")
+
+    for suggestion in suggestions[:3]:
+        st.markdown(f"• {suggestion}")
+
+    # GD feedback is now part of the weekly progress view, not only the GD tab.
+    if scholar_id:
+        try:
+            weekly_gd_assessments = get_ai_voice_gd_assessments(scholar_id)
+            if weekly_gd_assessments:
+                _render_live_gd_feedback_summary(
+                    weekly_gd_assessments[0],
+                    st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")),
+                    heading="### Latest GD Feedback"
+                )
+        except Exception as gd_feedback_error:
+            st.info(f"GD feedback could not be loaded right now: {gd_feedback_error}")
+
+    st.markdown("### Activity Snapshot")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.metric("PI Practice Minutes", f"{pi_minutes:.1f}")
+    with c2:
+        st.metric("GD Practice Minutes", f"{gd_minutes:.1f}")
+
+    render_grade_slabs()
+    if history:
+        st.markdown("### PI Grade Trend")
+        grade_rows = [
+            {"Attempt": i, "Date & Time": item.get("Timestamp", ""), "Grade": grade_from_score(item.get("Score", 0)), "Domain": item.get("Domain", "")}
+            for i, item in enumerate(history, 1)
+        ]
+        st.dataframe(grade_rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("Your progress will start building as soon as you complete your first PI or GD practice assessment.")
+
 # SECTION 1: INDUSTRY & COMPANY INSIGHTS
 elif selected_nav == "Industry & Company Insights":
     st.title("Industry & Company Insights")
@@ -4513,210 +4489,369 @@ elif selected_nav == "Industry & Company Insights":
         official_site = COMPANY_WEBSITES.get(base)
         company_rows.append({"No": source_no, "Company": clean_name, "Sector": sector, "Note": note, "Website": official_site})
 
-    # Simple sector-first company explorer. This includes major companies across
-    # each sector, not only organisations that have visited IPER for placements.
-    GENERAL_SECTOR_COMPANIES = {
-        "Banking & Financial Services": ["HDFC Bank", "ICICI Bank", "State Bank of India", "Axis Bank", "Kotak Mahindra Bank", "IndusInd Bank", "IDFC FIRST Bank", "Bajaj Finserv", "Bajaj Finance", "Shriram Finance", "Cholamandalam Investment and Finance", "Muthoot Finance"],
-        "Insurance": ["LIC", "HDFC Life", "ICICI Prudential Life Insurance", "SBI Life Insurance", "Axis Max Life Insurance", "Tata AIA Life Insurance", "Bajaj Allianz Life Insurance", "Star Health Insurance", "ICICI Lombard", "New India Assurance"],
-        "Financial Services": ["Nuvama Wealth Management", "Motilal Oswal Financial Services", "Angel One", "Groww", "Zerodha", "Upstox", "Nippon India Mutual Fund", "HDFC Asset Management", "ICICI Securities", "CAMS", "KFin Technologies"],
-        "FMCG & Food": ["Hindustan Unilever", "ITC", "Nestlé India", "Britannia Industries", "Dabur India", "Marico", "Godrej Consumer Products", "Tata Consumer Products", "Amul", "Parle Products", "PepsiCo India", "Coca-Cola India", "Haleon", "Himalaya Wellness"],
-        "Paints & Building Materials": ["Asian Paints", "Berger Paints", "Kansai Nerolac Paints", "Indigo Paints", "JSW Paints", "Pidilite Industries", "UltraTech Cement", "ACC", "Ambuja Cements", "Shree Cement", "Dalmia Bharat", "Kajaria Ceramics"],
-        "Consumer Durables & Electricals": ["Havells India", "Crompton Greaves Consumer Electricals", "Voltas", "Blue Star", "Whirlpool India", "LG Electronics India", "Samsung India", "Godrej Appliances", "V-Guard Industries", "Polycab India", "Dixon Technologies", "Bajaj Electricals"],
-        "Technology & IT Services": ["Tata Consultancy Services", "Infosys", "Wipro", "HCLTech", "Tech Mahindra", "LTIMindtree", "Accenture India", "Cognizant India", "Capgemini India", "Persistent Systems", "Zoho", "Freshworks", "IndiaMART", "CarTrade Tech", "Naukri.com"],
-        "EdTech & Education": ["Physics Wallah", "upGrad", "Simplilearn", "Unacademy", "Vedantu", "Coursera", "Pearson India", "Allen Career Institute", "Aakash Educational Services", "Jaro Education", "AISECT", "Tata ClassEdge", "Toprankers"],
-        "Telecom & Digital Services": ["Reliance Jio", "Bharti Airtel", "Vodafone Idea", "BSNL", "Tata Communications", "Indus Towers", "Airtel Payments Bank", "Paytm", "PhonePe", "Google India", "Amazon India"],
-        "Automotive & Mobility": ["Maruti Suzuki", "Tata Motors", "Mahindra & Mahindra", "Hyundai Motor India", "Toyota Kirloskar Motor", "Kia India", "Honda Cars India", "Hero MotoCorp", "Bajaj Auto", "TVS Motor Company", "Ashok Leyland", "Bosch India", "Motherson", "Eastman Auto"],
-        "Manufacturing & Engineering": ["Larsen & Toubro", "Siemens India", "ABB India", "Bharat Heavy Electricals Limited", "Tata Steel", "JSW Steel", "Reliance Industries", "Cipla", "Sun Pharmaceutical Industries", "Dr. Reddy's Laboratories", "Ceasefire Industries", "Methodex Systems"],
-        "Textiles": ["Trident Group", "Arvind Limited", "Welspun Living", "Vardhman Textiles", "Raymond", "KPR Mill", "Page Industries", "Gokaldas Exports", "Indo Count Industries", "Grasim Industries"],
-        "Hospitality & Tourism": ["Indian Hotels Company (Taj)", "Marriott International", "ITC Hotels", "EIH (Oberoi Hotels)", "Lemon Tree Hotels", "Radisson Hotel Group", "MakeMyTrip", "Yatra Online", "Thomas Cook India", "Club Mahindra", "EaseMyTrip"],
-        "Media & Entertainment": ["The Times Group", "DB Corp (Dainik Bhaskar)", "Network18", "Zee Entertainment", "Sony Pictures Networks India", "Disney Star India", "JioStar", "Netflix India", "Amazon Prime Video India", "Spotify India", "PVR INOX", "Saregama India"],
-        "Retail & E-commerce": ["Reliance Retail", "DMart", "Trent (Westside/Zudio)", "Aditya Birla Fashion and Retail", "Shoppers Stop", "Lifestyle International", "Pantaloons", "Amazon India", "Flipkart", "Myntra", "Meesho", "Nykaa", "Blinkit", "Swiggy Instamart", "BlueStone", "Titan Company"],
-        "Real Estate & Housing Finance": ["DLF", "Godrej Properties", "Prestige Estates Projects", "Lodha (Macrotech Developers)", "Oberoi Realty", "Brigade Enterprises", "Sobha", "Phoenix Mills", "Home First Finance", "Bajaj Housing Finance", "LIC Housing Finance", "India Shelter Finance"],
-        "Renewable Energy": ["Tata Power Renewable Energy", "Adani Green Energy", "ReNew", "Suzlon Energy", "Waaree Energies", "NTPC Green Energy", "JSW Energy", "SolarSquare", "Vikram Solar", "Azure Power"],
-        "HR & Recruitment Services": ["TeamLease Services", "Quess Corp", "Randstad India", "Adecco India", "ManpowerGroup India", "Naukri.com", " foundit", "Artech", "Collabera", "Futur Staffing Solutions", "Sarthee Consultancy", "Sygnific Careers"],
-        "Business & Professional Services": ["Deloitte", "PwC India", "EY India", "KPMG India", "Accenture", "McKinsey & Company", "Boston Consulting Group", "Bain & Company", "Teleperformance", "Genpact", "WNS Global Services", "Anaxee Digital Runners", "Cogent Infotech"],
-        "Diversified / Conglomerate": ["Tata Group", "Aditya Birla Group", "Reliance Industries", "Mahindra Group", "Adani Group", "Godrej Industries Group", "ITC", "Larsen & Toubro", "JSW Group", "Bajaj Group"],
-    }
+    # Student-friendly sector selector
+    st.markdown("### Explore Indian Sectors")
+    selected_sector = st.selectbox("Select a sector", list(SECTOR_INFO.keys()))
+    sector_data = SECTOR_INFO[selected_sector]
 
-    # Combine the broader sector directory with the original IPER placement list.
-    # The directory is representative, not an exhaustive register of every company in India.
-    company_directory = {}
-    for sector_name, names in GENERAL_SECTOR_COMPANIES.items():
-        for name in names:
-            company_directory[name] = {"Company": name, "Sector": sector_name, "Website": None, "Note": f"Research {name}'s products/services, customer groups, business model, competitors and current priorities."}
-    for row in company_rows:
-        name = display_company_name(row["Company"])
-        company_directory[name] = {"Company": name, "Sector": row["Sector"], "Website": row.get("Website"), "Note": row.get("Note", "")}
-
-    # Resolve official websites using the portal's existing curated website list.
-    for item in company_directory.values():
-        if not item.get("Website"):
-            item["Website"] = COMPANY_WEBSITES.get(item["Company"])
-
-    st.markdown("## 1. Know the Sector")
-    st.caption("Choose a sector first. You can then explore the companies operating in it.")
-    sector_options = ["Select a sector"] + sorted(SECTOR_INFO.keys())
-    selected_sector = st.selectbox("Which sector would you like to know about?", sector_options, index=0)
-
-    if selected_sector != "Select a sector":
-        sector_data = SECTOR_INFO[selected_sector]
-        st.markdown(f"### {selected_sector}")
+    c1, c2 = st.columns([1.65, 1])
+    with c1:
+        st.markdown(f"#### {selected_sector}")
         st.write(sector_data["about"])
-        left, right = st.columns(2)
-        with left:
-            st.markdown("**Typical MBA roles**")
-            st.write(sector_data["roles"])
-            st.markdown("**Skills to build**")
-            st.write(sector_data["skills"])
-        with right:
-            st.markdown("**What to prepare for interviews**")
-            st.write(sector_data["prepare"])
-            if IBEF_SECTOR_URLS.get(selected_sector):
-                st.link_button("Read sector overview on IBEF", IBEF_SECTOR_URLS[selected_sector])
-
-        st.markdown("### Companies in this sector")
-        sector_companies = sorted([x for x in company_directory.values() if x["Sector"] == selected_sector], key=lambda x: x["Company"].casefold())
-        st.caption(f"{len(sector_companies)} companies listed. This is a representative directory, not every company in India.")
-        if sector_companies:
-            for company in sector_companies:
-                with st.expander(company["Company"]):
-                    st.markdown("**Company profile**")
-                    st.write(company.get("Note") or f"{company['Company']} is listed under {selected_sector}. Generate a company-specific profile below rather than relying on a generic checklist.")
-                    if company.get("Website"):
-                        st.link_button("Open official company website", company["Website"])
-                    else:
-                        st.link_button("Find official website", "https://www.google.com/search?q=" + quote_plus(company["Company"] + " official website"))
-                    profile_key = "sector_company_profile_" + re.sub(r"[^a-zA-Z0-9]+", "_", company["Company"] + "_" + selected_sector).strip("_").lower()
-                    if st.button("Show detailed company profile", key=profile_key):
-                        prompt = f"""Prepare a detailed, company-specific MBA placement research brief for {company['Company']} (sector: {selected_sector}). The goal is accurate company intelligence, not generic advice.
-
-Use clear headings and cover EVERY item:
-1. Company overview, ownership/group affiliation and headquarters (only if confidently known).
-2. Vision and mission: give the exact official wording only if confidently known; otherwise explicitly say 'Verify the current wording on the official website/annual report' and explain the company's apparent purpose without presenting it as a quotation.
-3. Core business and business segments.
-4. Products, services, brands and customer value proposition, with concrete examples.
-5. Customer groups, target markets, distribution channels and geographic presence.
-6. Business model: how it creates value, sells, distributes and earns revenue.
-7. Competitors: name at least 3 relevant competitors where possible and explain the basis of comparison; do not list unrelated companies.
-8. Competitive positioning and differentiators.
-9. Industry trends, opportunities and threats.
-10. Recent developments and current strategy: include only developments you can state reliably; otherwise say these must be checked in the latest official newsroom/annual report and do not invent dates, figures or announcements.
-11. Main business risks/challenges and likely management priorities.
-12. MBA career pathways across marketing, sales, finance, HR, operations, analytics or other relevant functions; distinguish likely roles from confirmed vacancies.
-13. Five useful facts/metrics a student should verify in the latest annual report or official sources.
-14. Official website: provide the company's official website URL only when you know it confidently; otherwise clearly say 'Official website needs verification' and provide the exact company-name search phrase the student should use. Never invent a domain.
-15. Financial performance: explain the latest available financial performance using official company website material only (annual report, investor relations page, quarterly results, investor presentation). Include revenue, profit, growth, margins, debt or segment performance only when figures and period are confidently known. State the reporting period and currency. If live official information is not available to you, say 'Check the latest annual report/results on the official website' and list the metrics to verify; never fabricate figures.
-16. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
-
-Be concrete and company-specific. If a fact is uncertain or may have changed, label it 'Verify current information'. Do not use filler or repeat the question. Format in readable Markdown."""
-                        if profile_key + "_result" not in st.session_state:
-                            st.session_state[profile_key + "_result"] = get_groq_response(prompt)
-                        st.markdown(st.session_state[profile_key + "_result"])
-                    st.caption("Accuracy note: AI-generated research is a study aid, not a live verified source. Confirm current facts, exact vision/mission wording and recent developments on the official website and latest annual report.")
-                    st.markdown("**10 practice questions — no model answers**")
-                    questions = [
-                        f"What does {company['Company']} do, and what are its main businesses?",
-                        f"What are the vision and mission of {company['Company']}? Explain them in your own words.",
-                        f"What are the main products, services, brands or solutions offered by {company['Company']}?",
-                        f"Who are {company['Company']}'s key customers and target markets?",
-                        f"How does {company['Company']} earn revenue and deliver value to customers?",
-                        f"Who are its main competitors, and how is {company['Company']} different from them?",
-                        f"What recent development or business challenge could affect {company['Company']}?",
-                        f"What trends in the {selected_sector} sector could create opportunities or threats for {company['Company']}?",
-                        f"Which MBA roles or functions could you pursue at {company['Company']}, and what skills would they require?",
-                        f"Why do you want to work for {company['Company']}, and how could you contribute in your chosen role?",
-                    ]
-                    for i, question in enumerate(questions, 1):
-                        st.markdown(f"{i}. {question}")
+        st.markdown("**Typical MBA Roles**")
+        st.info(sector_data["roles"])
+        st.markdown("**Skills to Build**")
+        st.info(sector_data["skills"])
+        st.markdown("**Placement Interview Preparation**")
+        st.write(sector_data["prepare"])
+    with c2:
+        st.markdown("#### IBEF Reference")
+        st.write("Use IBEF for the latest sector reports, market context and India-industry developments.")
+        st.link_button("Open IBEF sector reference", IBEF_SECTOR_URLS[selected_sector], use_container_width=True)
+        st.caption("The portal provides original student-oriented summaries. IBEF is the external reference for sector research.")
 
     st.markdown("---")
-    st.markdown("## 2. Search for Any Company")
-    st.caption("Search across the wider company directory—not only companies that have visited IPER for placements.")
-    company_query = st.text_input("Company name", placeholder="Try HDFC, Nestlé, Tata, Deloitte, DMart, Infosys…", key="all_company_search")
-    if company_query.strip():
-        # Accent-insensitive, partial-name search: e.g. "Nestle" finds "Nestlé India".
-        # Also tolerate punctuation and common legal suffixes so users do not need the exact registered name.
-        def _company_search_key(value):
-            value = unicodedata.normalize("NFKD", str(value or ""))
-            value = "".join(ch for ch in value if not unicodedata.combining(ch))
-            value = value.casefold()
-            value = re.sub(r"[^a-z0-9]+", " ", value)
-            return re.sub(r"\s+", " ", value).strip()
+    st.markdown("### Companies Documented in IPER 2025–26")
+    st.caption("The list below is transcribed from IPER's published 2025–26 recruiter graphic. Repeated names/entries are retained where they appear in the source; they should not be interpreted as separate companies or as a guarantee of recruitment every year.")
 
-        query_key = _company_search_key(company_query)
-        query_tokens = [token for token in query_key.split() if token]
-        all_companies = list(company_directory.values())
-        scored_matches = []
-        for item in all_companies:
-            name_key = _company_search_key(item["Company"])
-            # Primary match: normalized substring, then token-prefix match (e.g. "nest"),
-            # then a forgiving fuzzy match for small spelling mistakes.
-            score = 0
-            if query_key and query_key in name_key:
-                score = 100 + len(query_key)
-            elif query_tokens and all(any(part.startswith(token) for part in name_key.split()) for token in query_tokens):
-                score = 70 + len(query_tokens)
-            elif query_key and difflib.SequenceMatcher(None, query_key, name_key).ratio() >= 0.72:
-                score = int(50 * difflib.SequenceMatcher(None, query_key, name_key).ratio())
-            if score:
-                scored_matches.append((score, item))
-        scored_matches.sort(key=lambda pair: (-pair[0], pair[1]["Company"].casefold(), pair[1]["Sector"].casefold()))
-        matches = [item for _, item in scored_matches]
-        if matches:
-            st.caption(f"Showing {len(matches)} matching companies")
-            for company in matches:
-                with st.expander(f"{company['Company']} · {company['Sector']}"):
-                    st.markdown("**Company profile**")
-                    st.write(company.get("Note") or f"{company['Company']} is listed in {company['Sector']}. Generate a company-specific profile below.")
-                    if company.get("Website"):
-                        st.link_button("Open official company website", company["Website"])
-                    else:
-                        st.link_button("Find official website", "https://www.google.com/search?q=" + quote_plus(company["Company"] + " official website"))
-                    profile_key = "search_company_profile_" + re.sub(r"[^a-zA-Z0-9]+", "_", company["Company"] + "_" + company["Sector"]).strip("_").lower()
-                    if st.button("Show detailed company profile", key=profile_key):
-                        prompt = f"""Prepare a detailed, company-specific MBA placement research brief for {company['Company']} (sector: {company['Sector']}). The goal is accurate company intelligence, not generic advice.
+    search_company = st.text_input("Search company or sector", placeholder="e.g. HDFC, Asian Paints, Deloitte, Banking, EdTech")
+    sector_filter = st.selectbox("Filter by sector", ["All sectors"] + sorted(SECTOR_INFO.keys()))
+    filtered_rows = [
+        row for row in company_rows
+        if (sector_filter == "All sectors" or row["Sector"] == sector_filter)
+        and (not search_company.strip() or search_company.lower() in row["Company"].lower() or search_company.lower() in row["Sector"].lower())
+    ]
 
-Use clear headings and cover EVERY item:
-1. Company overview, ownership/group affiliation and headquarters (only if confidently known).
-2. Vision and mission: give the exact official wording only if confidently known; otherwise explicitly say 'Verify the current wording on the official website/annual report' and explain the company's apparent purpose without presenting it as a quotation.
-3. Core business and business segments.
-4. Products, services, brands and customer value proposition, with concrete examples.
-5. Customer groups, target markets, distribution channels and geographic presence.
-6. Business model: how it creates value, sells, distributes and earns revenue.
-7. Competitors: name at least 3 relevant competitors where possible and explain the basis of comparison; do not list unrelated companies.
-8. Competitive positioning and differentiators.
-9. Industry trends, opportunities and threats.
-10. Recent developments and current strategy: include only developments you can state reliably; otherwise say these must be checked in the latest official newsroom/annual report and do not invent dates, figures or announcements.
-11. Main business risks/challenges and likely management priorities.
-12. MBA career pathways across marketing, sales, finance, HR, operations, analytics or other relevant functions; distinguish likely roles from confirmed vacancies.
-13. Five useful facts/metrics a student should verify in the latest annual report or official sources.
-14. Official website: provide the company's official website URL only when you know it confidently; otherwise clearly say 'Official website needs verification' and provide the exact company-name search phrase the student should use. Never invent a domain.
-15. Financial performance: explain the latest available financial performance using official company website material only (annual report, investor relations page, quarterly results, investor presentation). Include revenue, profit, growth, margins, debt or segment performance only when figures and period are confidently known. State the reporting period and currency. If live official information is not available to you, say 'Check the latest annual report/results on the official website' and list the metrics to verify; never fabricate figures.
-16. A short 'What to read next' section naming the relevant official source types (annual report, investor presentation, product pages, newsroom, sustainability report). Do not fabricate citations, URLs, financial figures, market shares or quotations.
+    st.markdown(f"**{len(filtered_rows)} source entries shown**")
 
-Be concrete and company-specific. If a fact is uncertain or may have changed, label it 'Verify current information'. Do not use filler or repeat the question. Format in readable Markdown."""
-                        if profile_key + "_result" not in st.session_state:
-                            st.session_state[profile_key + "_result"] = get_groq_response(prompt)
-                        st.markdown(st.session_state[profile_key + "_result"])
-                    st.caption("Accuracy note: AI-generated research is a study aid, not a live verified source. Confirm current facts, exact vision/mission wording and recent developments on the official website and latest annual report.")
-                    st.markdown("**10 practice questions — no model answers**")
-                    for i, question in enumerate([
-                        f"What does {company['Company']} do, and what are its main businesses?",
-                        f"What are the vision and mission of {company['Company']}?",
-                        f"What are its main products, services, brands or solutions?",
-                        f"Who are its key customers and target markets?",
-                        f"How does it earn revenue and deliver value to customers?",
-                        f"Who are its main competitors, and what differentiates this company?",
-                        f"What recent development or challenge could affect this company?",
-                        f"What opportunities and threats does the {company['Sector']} sector present?",
-                        f"Which MBA roles could you pursue here, and what skills would they require?",
-                        f"Why do you want to work here, and how could you contribute in your chosen role?",
-                    ], 1):
-                        st.markdown(f"{i}. {question}")
-        else:
-            st.info("No matching company found. Try a shorter name or a distinctive keyword (for example, “Nestle”, “Tata” or “HDFC”). Search is not case-sensitive and ignores accents and punctuation. The directory is representative, so it may not contain every company in India.")
+    # ------------------------------------------------------------------
+    # REDESIGNED COMPANY & SECTOR LEARNING HUB
+    # ------------------------------------------------------------------
+    # This section is intentionally student-facing. It focuses on the few
+    # things a student should know before an IPER placement interaction,
+    # rather than presenting a large financial-research worksheet.
+    SECTOR_CUSTOMERS = {
+        "Banking & Financial Services": "Retail customers, MSMEs, businesses and institutional clients.",
+        "Insurance": "Individuals, families, employers and distribution partners.",
+        "Financial Services": "Retail investors, HNIs, businesses and institutional clients.",
+        "FMCG & Food": "Households, individual consumers, retailers and distributors.",
+        "Paints & Building Materials": "Homeowners, contractors, dealers, builders and institutional buyers.",
+        "Consumer Durables & Electricals": "Households, retailers, dealers, builders and institutional buyers.",
+        "Technology & IT Services": "Enterprises, governments, institutions and digital consumers depending on the offering.",
+        "EdTech & Education": "Students, parents, schools, colleges and corporate learners.",
+        "Telecom & Digital Services": "Consumers, enterprises and institutions using connectivity and digital services.",
+        "Automotive & Mobility": "Vehicle buyers, fleet operators, dealerships, OEMs and mobility customers.",
+        "Manufacturing & Engineering": "Industrial customers, distributors, OEMs and institutional buyers.",
+        "Textiles": "Apparel brands, retailers, exporters, distributors and end consumers depending on the product.",
+        "Hospitality & Tourism": "Leisure travellers, business travellers, families, corporate clients and event customers.",
+        "Media & Entertainment": "Audiences, readers/viewers/listeners, advertisers and brands.",
+        "Retail & E-commerce": "Individual consumers, households and digital shoppers.",
+        "Real Estate & Housing Finance": "Homebuyers, borrowers, investors, developers and property customers.",
+        "Renewable Energy": "Homes, businesses, institutions and industrial customers seeking clean-energy solutions.",
+        "HR & Recruitment Services": "Employers, recruiters, job seekers and organisations requiring workforce solutions.",
+        "Business & Professional Services": "Businesses and institutions requiring specialised professional or operational services.",
+        "Diversified / Conglomerate": "Multiple customer segments across the group's different businesses.",
+    }
+
+    SECTOR_CHANNELS = {
+        "Banking & Financial Services": "Branches, relationship managers, mobile/web banking, call centres and partner channels.",
+        "Insurance": "Agents, bancassurance, brokers, branches, digital channels and corporate partnerships.",
+        "Financial Services": "Relationship teams, offices, digital platforms, distributors and partner networks.",
+        "FMCG & Food": "General trade, modern trade, distributors, e-commerce and direct/brand channels.",
+        "Paints & Building Materials": "Dealers, distributors, retailers, project sales and digital discovery channels.",
+        "Consumer Durables & Electricals": "Dealers, distributors, retail stores, e-commerce and institutional/project sales.",
+        "Technology & IT Services": "Direct enterprise sales, account teams, partnerships, digital channels and global delivery centres.",
+        "EdTech & Education": "Direct sales, counsellors, institutional partnerships, websites/apps and digital marketing.",
+        "Telecom & Digital Services": "Retail outlets, digital channels, direct sales, distributors and enterprise sales teams.",
+        "Automotive & Mobility": "Dealerships, digital platforms, OEM/distributor networks, fleet sales and service centres.",
+        "Manufacturing & Engineering": "Direct sales, distributors, dealers, OEM relationships, tenders and project sales.",
+        "Textiles": "Direct B2B sales, exporters, distributors, retailers, brands and e-commerce where applicable.",
+        "Hospitality & Tourism": "Brand websites/apps, OTAs, travel agents, corporate sales and direct bookings.",
+        "Media & Entertainment": "Print, websites/apps, social platforms, digital properties, subscriptions and advertising sales.",
+        "Retail & E-commerce": "Stores, websites, apps, marketplaces, omnichannel and direct-to-consumer channels.",
+        "Real Estate & Housing Finance": "Branches, field sales, direct sales, brokers/channel partners and digital platforms.",
+        "Renewable Energy": "Direct sales, channel partners, EPC/project teams, digital lead generation and institutional sales.",
+        "HR & Recruitment Services": "Direct enterprise sales, recruiters, staffing teams, digital platforms and client relationships.",
+        "Business & Professional Services": "Direct enterprise sales, consulting/account teams, partnerships and referrals.",
+        "Diversified / Conglomerate": "Business-unit specific; usually a mix of direct sales, retail, digital and partner channels.",
+    }
+
+    SECTOR_PRICING = {
+        "Banking & Financial Services": "Interest rates, fees, commissions and spreads vary by product and customer.",
+        "Insurance": "Risk-based premiums and product-specific charges based on coverage, term and customer profile.",
+        "Financial Services": "Fees, commissions, brokerage, spreads and service/asset-based charges.",
+        "FMCG & Food": "Competitive, volume-driven pricing with different price points across brands and channels.",
+        "Paints & Building Materials": "Market- and channel-based pricing influenced by product segment and competition.",
+        "Consumer Durables & Electricals": "Tiered and competitive pricing across products and channels.",
+        "Technology & IT Services": "Contract, project, subscription or usage-based pricing depending on the offering.",
+        "EdTech & Education": "Program/course/service pricing differentiated by format, duration and customer segment.",
+        "Telecom & Digital Services": "Plan/package-based pricing, often with bundles and usage tiers.",
+        "Automotive & Mobility": "Model/segment-based pricing with financing, dealer and service economics.",
+        "Manufacturing & Engineering": "B2B/project pricing negotiated around volume, specifications, contracts and costs.",
+        "Textiles": "Pricing influenced by fibre, quality, volume, brand, sourcing and market conditions.",
+        "Hospitality & Tourism": "Dynamic pricing influenced by demand, season, location and booking channel.",
+        "Media & Entertainment": "Advertising, subscription and/or transaction-based models depending on the business.",
+        "Retail & E-commerce": "Competitive retail pricing with category, brand, promotion and channel differences.",
+        "Real Estate & Housing Finance": "Property-specific pricing or interest-rate/fee-based pricing depending on the model.",
+        "Renewable Energy": "Project/system pricing based on capacity, technology, financing, installation and service.",
+        "HR & Recruitment Services": "Placement, staffing, contract or service-fee models depending on the offering.",
+        "Business & Professional Services": "Project, retainer, subscription, transaction or contract-based pricing.",
+        "Diversified / Conglomerate": "Varies by business unit.",
+    }
+
+    SECTOR_COMPETITORS = {
+        "Banking & Financial Services": "Major private/public banks and financial institutions serving similar customers.",
+        "Insurance": "Other life/general insurers, bancassurance competitors and digital insurance platforms.",
+        "Financial Services": "Banks, brokerages, wealth managers, asset managers and fintech competitors.",
+        "FMCG & Food": "Large national brands, regional brands, private labels and emerging D2C brands.",
+        "Paints & Building Materials": "Major paints/coatings brands plus regional manufacturers and construction-material competitors.",
+        "Consumer Durables & Electricals": "National consumer-electrical/durable brands, regional players and private labels.",
+        "Technology & IT Services": "Global IT-services firms, Indian IT majors, specialist technology firms and digital-native competitors.",
+        "EdTech & Education": "Traditional institutions, other EdTech platforms, coaching providers and specialised learning companies.",
+        "Telecom & Digital Services": "Other telecom operators and digital-service/platform providers.",
+        "Automotive & Mobility": "Vehicle OEMs, component suppliers, mobility platforms and other relevant category players.",
+        "Manufacturing & Engineering": "Domestic and multinational manufacturers, specialist suppliers and engineering firms.",
+        "Textiles": "Integrated textile groups, specialised manufacturers, exporters and international sourcing competitors.",
+        "Hospitality & Tourism": "Hotel groups, independent properties, OTAs and alternative accommodation providers.",
+        "Media & Entertainment": "Newspapers, broadcasters, digital publishers, OTT platforms and social/video platforms.",
+        "Retail & E-commerce": "Organised retailers, marketplaces, D2C brands and specialist category players.",
+        "Real Estate & Housing Finance": "Developers, housing-finance companies, banks and NBFCs serving the same segment.",
+        "Renewable Energy": "Solar EPCs, developers, installers, equipment providers and energy-service firms.",
+        "HR & Recruitment Services": "Staffing firms, recruitment consultancies, job platforms and specialist workforce providers.",
+        "Business & Professional Services": "Consulting, outsourcing, technology-enabled and specialist professional-services firms.",
+        "Diversified / Conglomerate": "Competitors vary by the group's specific business division.",
+    }
+
+    SECTOR_LEARNING = {
+        sector: {
+            "what": info["about"],
+            "roles": info["roles"],
+            "skills": info["skills"],
+            "prepare": info["prepare"],
+            "customers": SECTOR_CUSTOMERS.get(sector, "Understand the main B2B/B2C customer groups."),
+            "channels": SECTOR_CHANNELS.get(sector, "Understand how products/services reach customers."),
+            "pricing": SECTOR_PRICING.get(sector, "Understand how companies in this sector typically charge customers."),
+            "competitors": SECTOR_COMPETITORS.get(sector, "Identify the major companies competing in this sector."),
+        }
+        for sector, info in SECTOR_INFO.items()
+    }
+
+    SECTOR_INTERVIEW_QUESTIONS = {
+        "Banking & Financial Services": [
+            "What do you understand about retail and corporate banking?",
+            "What is changing in digital banking and customer expectations?",
+            "How would you build trust with a banking customer?",
+        ],
+        "Insurance": [
+            "Why do customers need insurance?",
+            "What is the difference between life and general insurance?",
+            "How would you explain an insurance product to a customer?",
+        ],
+        "Financial Services": [
+            "What financial products/services does this sector provide?",
+            "How do risk and return influence customer decisions?",
+            "What recent change in financial markets interests you?",
+        ],
+        "FMCG & Food": [
+            "How do FMCG companies build strong brands?",
+            "Why are distribution and retail execution important in FMCG?",
+            "How can consumer behaviour influence a product strategy?",
+        ],
+        "Paints & Building Materials": [
+            "Why is dealer/channel management important in this sector?",
+            "How would you increase sales in a territory?",
+            "What factors influence demand for paints/building materials?",
+        ],
+        "Consumer Durables & Electricals": [
+            "What influences a customer's choice of a consumer durable?",
+            "Why are distribution and after-sales service important?",
+            "How would you launch a new product in this sector?",
+        ],
+        "Technology & IT Services": [
+            "How is AI changing technology businesses?",
+            "What is the difference between a product company and an IT-services company?",
+            "How can an MBA professional add value in a technology organisation?",
+        ],
+        "EdTech & Education": [
+            "What makes an education product valuable to a learner?",
+            "How would you improve student acquisition or retention?",
+            "What are the major challenges facing EdTech today?",
+        ],
+        "Telecom & Digital Services": [
+            "How do telecom companies acquire and retain customers?",
+            "What is the business significance of 5G?",
+            "How would you reduce customer churn?",
+        ],
+        "Automotive & Mobility": [
+            "How is the shift towards EVs changing the automotive industry?",
+            "Why are dealerships and after-sales service important?",
+            "What factors influence a vehicle purchase decision?",
+        ],
+        "Manufacturing & Engineering": [
+            "What are the major drivers of manufacturing efficiency?",
+            "How can technology improve manufacturing operations?",
+            "Why are quality and supply-chain management important?",
+        ],
+        "Textiles": [
+            "How does the textile value chain work?",
+            "What challenges can affect textile exports and sourcing?",
+            "How can sustainability influence textile businesses?",
+        ],
+        "Hospitality & Tourism": [
+            "What drives customer choice in hospitality?",
+            "What is revenue management in a hotel business?",
+            "How would you improve guest experience?",
+        ],
+        "Media & Entertainment": [
+            "How are digital platforms changing traditional media?",
+            "How do media companies generate revenue?",
+            "Which audience metric would you track and why?",
+        ],
+        "Retail & E-commerce": [
+            "How is omnichannel retail changing customer behaviour?",
+            "What makes a retail store successful?",
+            "How would you improve customer experience in retail?",
+        ],
+        "Real Estate & Housing Finance": [
+            "What factors influence demand for housing?",
+            "What is the role of credit in housing finance?",
+            "How would you build trust with a prospective homebuyer/borrower?",
+        ],
+        "Renewable Energy": [
+            "What is driving India's renewable-energy transition?",
+            "What factors affect the economics of a solar project?",
+            "How can an MBA professional contribute to a clean-energy company?",
+        ],
+        "HR & Recruitment Services": [
+            "What makes a good recruitment process?",
+            "Which recruitment metrics would you track?",
+            "How would you improve candidate and client experience?",
+        ],
+        "Business & Professional Services": [
+            "What value does a professional-services firm create for clients?",
+            "How would you approach an unfamiliar business problem?",
+            "Why are communication and problem-solving important in consulting/services?",
+        ],
+        "Diversified / Conglomerate": [
+            "Which business of the group interests you most and why?",
+            "How can a diversified group create value across different businesses?",
+            "How would you prepare differently for a role in one of its business divisions?",
+        ],
+    }
+
+    def company_learning_profile(row):
+        company = display_company_name(row["Company"])
+        sector = row["Sector"]
+        sector_data = SECTOR_LEARNING.get(sector, {})
+        note = COMPANY_NOTES.get(company, "")
+        if not note:
+            note = f"{company} appears in IPER's published placement ecosystem under {sector}. Before the interview, learn its main business, products/services, customers, competitors and the specific role offered."
+        return {
+            "company": company,
+            "sector": sector,
+            "about": note,
+            "customers": sector_data.get("customers", "Study the company's primary customer groups."),
+            "channels": sector_data.get("channels", "Study how the company reaches customers."),
+            "roles": sector_data.get("roles", "Study the functions relevant to the role.") ,
+            "skills": sector_data.get("skills", "Communication, analytical thinking and role-specific skills."),
+            "prepare": sector_data.get("prepare", "Read the company's official website and placement/job description."),
+            "competitors": sector_data.get("competitors", "Identify the company's closest competitors."),
+            "pricing": sector_data.get("pricing", "Understand how the company creates and captures value."),
+        }
+
+    st.markdown("###  Placement Intelligence — Learn Before You Face the Interview")
+    st.caption("This section is designed for IPER students: learn the basics of the sector and company first, then practise answering interview questions in your own words.")
+
+    # -------------------- SECTOR LEARNING --------------------
+    st.markdown("## 2. Understanding the Sector")
+    st.caption("A company interview becomes easier when you first understand the industry in which the company operates.")
+
+    sector_data = SECTOR_LEARNING.get(selected_sector, {})
+    s1, s2 = st.columns(2)
+    with s1:
+        st.markdown(f"###  {selected_sector}")
+        st.write(sector_data.get("what", "Understand what this sector sells, who it serves and how it makes money."))
+        st.markdown("**Who are the customers?**")
+        st.write(sector_data.get("customers", "Study the major B2B/B2C customer segments."))
+        st.markdown("**How does the sector reach customers?**")
+        st.write(sector_data.get("channels", "Study the major distribution and sales channels."))
+    with s2:
+        st.markdown("###  What MBA roles can you find here?")
+        st.write(sector_data.get("roles", "Study the functions relevant to your specialisation."))
+        st.markdown("**Skills to prepare**")
+        st.write(sector_data.get("skills", "Communication, analytical thinking and role-specific knowledge."))
+        st.markdown("**What should you know before the interview?**")
+        st.write(sector_data.get("prepare", "Study current sector developments, business models and customer needs."))
+        st.markdown("**Competitive landscape**")
+        st.write(sector_data.get("competitors", "Identify the leading companies in the sector."))
+
+    q1, q2, q3 = st.columns(3)
+    sector_questions = SECTOR_INTERVIEW_QUESTIONS.get(selected_sector, [
+        "What do you know about this sector?",
+        "What are the major trends in this sector?",
+        "What opportunities and challenges do you see in this sector?",
+    ])
+    for col, question in zip((q1, q2, q3), sector_questions[:3]):
+        with col:
+            st.markdown("**Practice Question**")
+            st.info(question)
+
+    if IBEF_SECTOR_URLS.get(selected_sector):
+        st.link_button("Read the IBEF Sector Reference ", IBEF_SECTOR_URLS[selected_sector])
+
+    st.markdown("---")
+
+    # -------------------- COMPANY LEARNING --------------------
+    st.markdown("## 3. Know Your Company")
+    st.caption("Choose a company from IPER's placement ecosystem. The portal gives you the basic knowledge you should be able to explain before the interview.")
+
+    if not filtered_rows:
+        st.warning("No company matches your current search/filter. Try another company or select All sectors.")
     else:
-        st.info("Enter a company name above to search the wider directory.")
+        for row in filtered_rows:
+            profile = company_learning_profile(row)
+            with st.expander(f" {profile['company']}  •  {profile['sector']}", expanded=False):
+                st.markdown(f"### {profile['company']}")
+                st.caption(f"IPER placement ecosystem • Sector: {profile['sector']}")
+
+                a, b = st.columns([1.5, 1])
+                with a:
+                    st.markdown("#### What should I know about this company?")
+                    st.write(profile["about"])
+                    st.markdown("#### Who are its customers?")
+                    st.write(profile["customers"])
+                    st.markdown("#### How does the business reach customers?")
+                    st.write(profile["channels"])
+                    st.markdown("#### What should I prepare for the role?")
+                    st.write(profile["roles"])
+                    st.write(f"**Skills:** {profile['skills']}")
+                    st.markdown("#### What should I read about the business?")
+                    st.write(profile["prepare"])
+                with b:
+                    st.markdown("#### Competitive context")
+                    st.write(profile["competitors"])
+                    st.markdown("#### Pricing / business model")
+                    st.write(profile["pricing"])
+                    st.markdown("#### Official sources")
+                    if row.get("Website"):
+                        st.link_button("Official Website ", row["Website"], use_container_width=True)
+                    if IBEF_SECTOR_URLS.get(profile["sector"]):
+                        st.link_button("Sector Reference ", IBEF_SECTOR_URLS[profile["sector"]], use_container_width=True)
+
+                st.markdown("####  Interview Questions You Should Be Ready For")
+                company_questions = [
+                    f"What do you know about {profile['company']}?",
+                    f"Why do you want to work with {profile['company']}?",
+                    f"Why are you interested in the {profile['sector']} sector?",
+                    f"Which product/service of {profile['company']} interests you and why?",
+                    f"Who are the major competitors of {profile['company']}?",
+                    f"How can your MBA specialisation add value to {profile['company']}?",
+                ]
+                cq_cols = st.columns(2)
+                for i, question in enumerate(company_questions):
+                    with cq_cols[i % 2]:
+                        st.markdown(f"**{i+1}. {question}**")
+
 
     # Cross-industry business glossary. Definitions are concise, student-friendly,
     # and intentionally independent of any single company or sector.
@@ -5704,8 +5839,8 @@ def _render_live_gd_voice_room(topic, student_name):
 
 
 if selected_nav == "Resume Checker & Job Matcher":
-    st.title("Resume & Job Match")
-    st.caption("Upload your resume once, add a job description, and get a clear match report. Your resume is saved for future opportunities; reset the job description when applying for a new role.")
+    st.title("Resume Checker, Job Matcher & Resume Editor")
+    st.caption("Your About Myself profile, your own resume and the target Job Description work together here. Resume data is stored separately for each signed-in student.")
 
     student_id = st.session_state.get("student_id")
     # Read the current account name directly from the authenticated student's saved
@@ -5794,12 +5929,9 @@ if selected_nav == "Resume Checker & Job Matcher":
         )
         if ats_resume_file and st.button("Read and Verify My Resume", key="parse_own_resume", use_container_width=True):
             res_raw_text = extract_text_from_file(ats_resume_file)
-            if not res_raw_text or res_raw_text.startswith("Error") or res_raw_text.startswith("[Uploaded Image File:"):
-                st.error("We could not read text from this resume. Please use a text-based PDF or DOCX file. Scanned/image-only PDFs need OCR or should be saved as a searchable PDF.")
-            elif len(res_raw_text.strip()) < 40:
-                st.error("The resume file contains too little extractable text. Please check the file or upload a searchable PDF/DOCX version.")
+            if not res_raw_text or res_raw_text.startswith("Error"):
+                st.error("We could not read this resume. Please use a text-based PDF or DOCX file.")
             else:
-                st.caption(f"Extracted {len(res_raw_text):,} characters from {ats_resume_file.name}.")
                 parse_prompt = f"""Extract the following resume into STRICT JSON with exact keys:
 {{"Name":"full name printed on resume","Education":"degrees, institutions, specialisations","Work_Experience":"roles, companies, responsibilities","Key_Skills":"skills actually evidenced","Projects_Achievements":"projects, achievements, certifications","Summary":"2-3 sentence factual overview"}}
 Do not invent information. If the name is not visible, return an empty Name string. Return JSON only.
@@ -5813,29 +5945,16 @@ Resume text:
                 except Exception:
                     resume_data = {"Name": "", "Summary": "", "RawText": res_raw_text[:7000]}
                 resume_name = str(resume_data.get("Name", "")).strip()
-                # Some CV templates put the name in a DOCX table or at the top of a PDF;
-                # the LLM may miss it even when text extraction succeeded. Accept only if
-                # the account's full name is visibly present in the extracted document, or
-                # the structured name independently matches the account.
-                full_account_name_found = account_name_appears_in_resume(res_raw_text, account_name)
-                name_verified = resume_name_matches_account(resume_name, account_name) or full_account_name_found
-                if name_verified:
-                    # Use the verified account name as canonical when the model omitted or
-                    # misread it, preventing downstream resume checks from losing the name.
-                    if not resume_name_matches_account(resume_name, account_name):
-                        resume_data["Name"] = account_name
-                    elif resume_name:
-                        resume_data["Name"] = resume_name
-                if not name_verified:
+                if not resume_name or not resume_name_matches_account(resume_name, account_name):
                     st.session_state["resume_upload_rejected"] = {
                         "filename": ats_resume_file.name,
-                        "resume_name": resume_name or ("Full account name not found in extracted text"),
+                        "resume_name": resume_name or "Name not detected",
                     }
                     st.session_state["resume_details"] = None
                     st.error(
                         f"This resume was not accepted. Account name: **{account_name}**; "
                         f"name read from resume: **{resume_name or 'not detected'}**. "
-                        "Please check that the name is visible in the PDF/DOCX text, or save the file as a text-based PDF/DOCX and upload again."
+                        "Please upload a resume belonging to your own student account."
                     )
                 else:
                     # Map About Myself details into the candidate context without overwriting
@@ -5849,12 +5968,7 @@ Resume text:
                     st.session_state["resume_editor_text"] = resume_text_from_data(resume_data)
                     st.session_state["resume_source_filename"] = ats_resume_file.name
                     st.session_state.pop("resume_upload_rejected", None)
-                    # Save the verified resume immediately so it survives navigation and future logins.
-                    save_resume_workspace(
-                        student_id, resume_data, st.session_state.get("resume_editor_text", ""),
-                        st.session_state.get("resume_workspace_jd", ""), ats_resume_file.name
-                    )
-                    st.success(f"Your resume was verified and saved for **{account_name}**.")
+                    st.success(f"Your resume was verified and loaded for **{account_name}**.")
 
         if st.session_state.get("resume_details"):
             loaded_name = st.session_state["resume_details"].get("Name", "Name verified")
@@ -5870,7 +5984,6 @@ Resume text:
             horizontal=True, key="resume_jd_input_option"
         )
         jd_text = ""
-        jd_read_error = False
         if jd_input_option == "Upload File (PDF/DOCX/TXT)":
             jd_file = st.file_uploader(
                 "Upload Job Description File", type=["pdf", "docx", "txt"],
@@ -5878,16 +5991,7 @@ Resume text:
             )
             if jd_file:
                 jd_text = extract_text_from_file(jd_file)
-                if jd_text.startswith("Error extracting content from file:"):
-                    st.error(jd_text)
-                    jd_text = ""
-                    jd_read_error = True
-                elif not jd_text.strip() or jd_text.startswith("[Uploaded Image File:"):
-                    st.error("No selectable text was found in this Job Description. Use a text-based PDF/DOCX/TXT file or paste the JD text directly.")
-                    jd_text = ""
-                    jd_read_error = True
-                else:
-                    st.success(f"Job Description read: {jd_file.name} · {len(jd_text):,} characters")
+                st.info(f"Loaded job description: {jd_file.name}")
         else:
             jd_text = st.text_area(
                 "Paste Job Description Text", height=180,
@@ -5896,91 +6000,107 @@ Resume text:
                 placeholder="Paste responsibilities, required skills, qualifications and role expectations..."
             )
         if jd_text.strip():
-            new_jd_text = jd_text.strip()
-            old_jd_text = str(st.session_state.get("resume_workspace_jd", "") or "").strip()
-            st.session_state["resume_workspace_jd"] = new_jd_text
-            # Persist a readable JD automatically; don't overwrite saved data on extraction errors.
-            if new_jd_text != old_jd_text and student_id:
-                save_resume_workspace(
-                    student_id, st.session_state.get("resume_details") or {},
-                    st.session_state.get("resume_editor_text", ""), new_jd_text,
-                    st.session_state.get("resume_source_filename", "")
-                )
-        elif not jd_read_error and st.session_state.get("resume_workspace_jd"):
+            st.session_state["resume_workspace_jd"] = jd_text.strip()
+        elif st.session_state.get("resume_workspace_jd"):
             jd_text = st.session_state["resume_workspace_jd"]
-            st.caption("Saved job description loaded. Use Reset JD for a different job opportunity.")
+            st.caption("Using the last saved Job Description.")
 
     st.markdown("---")
-    with st.expander("Optional: Edit or build your resume", expanded=False):
-        st.caption("Most students can skip this and go straight to Analyse My Match. Edit or build a resume only if you need to.")
-        st.info(
-            "**Skills You Have Actually Learned**\n\n"
-            "Add only skills you have genuinely learned and understand through coursework, projects, "
-            "internships, certifications, or work experience. Do not add a skill just because it appears "
-            "in a job description. Be ready to explain each skill and give an example. If you are still "
-            "learning a skill, do not claim proficiency in it.\n\n"
-            "Remember: five genuine, explainable skills are better than fifteen skills you cannot confidently discuss in an interview."
-        )
-        # Apply AI-generated drafts before the editor widget is created (Streamlit widget-state rule).
-        pending_resume = st.session_state.pop("pending_resume_editor_text", None)
-        if pending_resume is not None:
-            st.session_state["resume_editor_text"] = clean_resume_draft(pending_resume)
-            save_resume_workspace(student_id, st.session_state.get("resume_details") or {}, st.session_state["resume_editor_text"], st.session_state.get("resume_workspace_jd", ""), st.session_state.get("resume_source_filename", ""))
-        # Students can edit their uploaded/verified resume, then tailor it to the target job.
-        resume_editor_text = st.text_area(
-            "Editable Professional Resume Draft", key="resume_editor_text", height=360,
-            placeholder="Review or edit your uploaded/verified resume here, then tailor it to the target job..."
-        )
-        ai_edit_col, ai_edit_help_col = st.columns([1, 2])
-        with ai_edit_col:
-            if st.button("Tailor Resume to This Job", key="ai_tailor_resume_to_jd", use_container_width=True):
-                if not st.session_state.get("resume_details"):
-                    st.warning("Upload and verify your own resume first.")
-                elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
-                    st.warning("Add or upload the target Job Description first.")
-                else:
-                    profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
-                    source_resume_text = str(resume_editor_text or "") + "\n" + json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)
-                    extracted_email, extracted_phone = extract_resume_contacts(source_resume_text)
-                    edit_prompt = f"""You are the expert ATS resume editor for IPER PEPTECH. Produce a polished, one-column, ATS-friendly resume tailored to the target job description. Use plain-text headings and clean, concise bullets. Do not use Markdown decoration, tables, columns, icons, emojis, text boxes, or numbered-list clutter. Start with the candidate's full name, then contact details only if present in the student's own resume. Never invent contact details.
+    st.markdown("### 3. Edit your resume")
+    st.caption("Review and edit your resume text before saving or downloading. Do not add skills, qualifications or achievements you do not have.")
+    # Do not treat the About Myself answer as a resume. The editor starts empty until
+    # a structured master resume is generated or the student's own resume is verified.
+    # This prevents interview-style prose from becoming the entire downloaded resume.
+    pending_resume_text = st.session_state.pop("pending_resume_editor_text", None)
+    if pending_resume_text is not None:
+        st.session_state["resume_editor_text"] = pending_resume_text
+    gen_col, gen_note_col = st.columns([1, 2])
+    with gen_col:
+        if st.button(" Generate Master Professional Resume", key="generate_master_professional_resume", use_container_width=True):
+            profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
+            verified_resume = st.session_state.get("resume_details") or {}
+            if not profile_context and not verified_resume:
+                st.warning("First complete About Myself or upload and verify your own resume so the builder has factual information to work with.")
+            else:
+                master_prompt = f"""You are a senior executive resume writer and ATS resume specialist. Produce a complete, structured MASTER PROFESSIONAL RESUME, not an About Myself answer, biography, cover letter, or list of profile fields.
+Candidate full name: {account_name}
+Registered email: {st.session_state.get('student_email', '')}
+Verified resume facts (the source of truth): {json.dumps(verified_resume, ensure_ascii=False)}
+Student profile facts (use as supporting source material, not as a section to copy verbatim): {json.dumps(profile_context, ensure_ascii=False)}
+Target Job Description, if provided: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:8000]}
+Current draft, if any: {st.session_state.get('resume_editor_text', '')[:8000]}
 
-MANDATORY STRUCTURE RULES:
-1. Include exactly one CAREER OBJECTIVE section tailored specifically to the target JD and supported by the candidate's real education and experience.
-2. Do NOT include a PROFESSIONAL SUMMARY, SUMMARY, PROFILE, or ABOUT ME section anywhere in the final resume. The Career Objective replaces the Professional Summary.
-3. Keep the Career Objective concise (usually 1–2 sentences), specific to the target role/company, and use confident, powerful professional wording without exaggeration, generic filler, or unsupported claims.
-4. Retain relevant sections only when supported: CAREER OBJECTIVE, SKILLS, EDUCATION, EXPERIENCE, INTERNSHIP, PROJECTS, CERTIFICATIONS, ACHIEVEMENTS, ACTIVITIES.
-5. Refine rough notes and fragments into complete, professional, action-led sentences. In particular, turn achievement fragments such as 'Winner, Inter-College Debate Competition' into a clear sentence such as 'Won the Inter-College Debate Competition, demonstrating persuasive communication and structured argumentation.' Use only the fact stated; do not add dates, rankings, awards, metrics, or other details that were not supplied.
-6. Apply the same refinement to short achievements and activity notes throughout the resume while preserving their factual meaning. Do not turn participation into a win, imply leadership where none is stated, or invent measurable outcomes.
-7. Include JD keywords naturally only when the student's evidence supports them. Never invent or exaggerate qualifications, skills, employers, metrics, responsibilities, achievements, or results. Do not insert placeholder text.
-8. Keep 10th and 12th percentages, undergraduate/postgraduate education, and other supplied profile details when present and relevant; do not silently delete them.
-Return only the final resume text, with no commentary.
-    Candidate account name: {account_name}
-    Email extracted from student's own resume (use if present): {extracted_email}
-    Phone extracted from student's own resume (use if present): {extracted_phone}
-    Verified resume data: {json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)}
-    About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
-    Current editable resume: {resume_editor_text[:9000]}
-    Target Job Description: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:9000]}"""
-                    with st.spinner("Tailoring your resume to the JD without adding unsupported claims..."):
-                        tailored_text = get_groq_response(edit_prompt)
-                    if tailored_text and not tailored_text.strip().lower().startswith("error"):
-                        st.session_state["pending_resume_editor_text"] = clean_resume_draft(tailored_text)
-                        st.rerun()
+Write the document using this professional structure, including each section that has factual support:
+PROFESSIONAL SUMMARY
+CORE COMPETENCIES
+EDUCATION
+INTERNSHIP EXPERIENCE / PROFESSIONAL EXPERIENCE
+ACADEMIC PROJECTS
+TECHNICAL & DIGITAL SKILLS
+CERTIFICATIONS & TRAINING
+ACHIEVEMENTS
+LEADERSHIP & EXTRACURRICULAR ACTIVITIES
+PROFESSIONAL INTERESTS
+
+Requirements:
+- The Professional Summary must be a concise resume summary of 2-4 lines, not an interview answer. Never use first-person wording such as I, me, or my.
+- Education must list each degree/program, institution, and completion or expected completion year where supplied. Keep undergraduate and postgraduate entries separate.
+- Experience and internships must be separate entries with role, organisation, date/year, and 2-4 achievement/responsibility bullets where the supplied facts support them. Do not turn a short profile paragraph into a fake job history.
+- Core Competencies and Skills must be concise lists, not paragraphs. Only include skills evidenced by the supplied facts.
+- Projects, certifications, achievements, activities, and interests must each be placed under the correct heading. Do not create sections filled with 'None'. Omit unsupported sections.
+- Include only facts supported by the verified resume or profile. Never invent employers, responsibilities, dates, degrees, marks, tools, projects, metrics, achievements, or contact details.
+- Where useful facts are missing, add a short [ADD DETAILS: ...] placeholder only in the relevant section. Do not invent details to fill space.
+- Do not include explanations about how the resume was created, interview-ready text, markdown fences, horizontal rules, tables, columns, icons, emojis, decorative symbols, or a footer as resume content.
+- Use uppercase section headings and concise, professional bullets beginning with '- '. The output should be ready to format as a 1-2 page ATS-friendly resume.
+- If a JD is supplied, prioritise relevant truthful skills and experience but retain a master-resume structure.
+Return only the resume itself."""
+                with st.spinner("Building your master resume from your saved profile and verified information..."):
+                    master_text = get_groq_response(master_prompt)
+                if master_text and not master_text.strip().lower().startswith("error"):
+                    cleaned_master = master_text.strip().replace("```text", "").replace("```", "").strip()
+                    required_resume_sections = ("PROFESSIONAL SUMMARY", "EDUCATION")
+                    if all(section_name in cleaned_master.upper() for section_name in required_resume_sections) and len(cleaned_master) >= 500:
+                        st.session_state["pending_resume_editor_text"] = cleaned_master
+                        st.success("Structured master resume generated. Review and edit every section before saving or downloading.")
                         st.rerun()
                     else:
-                        st.error("The resume draft could not be generated. Your current draft remains unchanged.")
-        with ai_edit_help_col:
-            st.caption("AI can reorganise and tailor your real experience to the JD. Review every line before saving or downloading; never keep a claim that is not true.")
-
-    if st.button("Reset JD for Next Job", key="reset_resume_jd", use_container_width=True):
-        st.session_state["pending_reset_jd_only"] = True
-        st.session_state.pop("last_resume_ats_result", None)
-        st.rerun()
+                        st.error("The AI response did not contain enough structured resume content. Please try Generate Master Professional Resume again; your current draft has not been replaced.")
+                else:
+                    st.error("The master resume could not be generated right now. Your current draft remains unchanged.")
+    with gen_note_col:
+        st.caption("Creates a clean, ATS-friendly master resume using the signed-in student's saved profile and verified resume facts. AI must not invent qualifications or experience.")
+    resume_editor_text = st.text_area(
+        "Editable Professional Resume Draft", key="resume_editor_text", height=360,
+        placeholder="Generate a master resume from your profile or upload and verify your own resume, then edit the content here..."
+    )
+    ai_edit_col, ai_edit_help_col = st.columns([1, 2])
+    with ai_edit_col:
+        if st.button(" Tailor Resume to This JD", key="ai_tailor_resume_to_jd", use_container_width=True):
+            if not st.session_state.get("resume_details"):
+                st.warning("Upload and verify your own resume first.")
+            elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
+                st.warning("Add or upload the target Job Description first.")
+            else:
+                profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
+                edit_prompt = f"""You are an ethical resume editor for an IPER Bhopal student. Rewrite the document as a complete structured professional resume tailored to the target role, not an About Myself answer. Use PROFESSIONAL SUMMARY, CORE COMPETENCIES, EDUCATION, EXPERIENCE/INTERNSHIP EXPERIENCE, PROJECTS, SKILLS, CERTIFICATIONS, ACHIEVEMENTS and ACTIVITIES as supported by facts. Do not invent or exaggerate any qualification, skill, employer, metric, responsibility or achievement. If a useful detail is absent, leave a clearly marked [ADD ONLY IF TRUE: ...] prompt instead of fabricating it. Use clean headings and concise bullet points. Return only plain text ready to edit in Word.
+Account name: {account_name}
+Verified resume data: {json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)}
+About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
+Current editable resume: {resume_editor_text[:9000]}
+Target Job Description: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:9000]}"""
+                with st.spinner("Tailoring your resume to the JD without adding unsupported claims..."):
+                    tailored_text = get_groq_response(edit_prompt)
+                if tailored_text and not tailored_text.strip().lower().startswith("error"):
+                    st.session_state["pending_resume_editor_text"] = tailored_text.strip().replace("```text", "").replace("```", "").strip()
+                    st.rerun()
+                else:
+                    st.error("The resume draft could not be generated. Your current draft remains unchanged.")
+    with ai_edit_help_col:
+        st.caption("AI can reorganise and tailor your real experience to the JD. Review every line before saving or downloading; never keep a claim that is not true.")
 
     st.markdown("---")
-    st.markdown("### 3. Your Job Match")
-    st.caption("Your saved resume and current job description are compared in one step.")
-    if st.button("Analyse My Match", key="run_resume_match", use_container_width=True):
+    st.markdown("### 4. Check Match & Review Suggestions")
+    if st.button(" Check Match & Review Suggestions", key="run_resume_match", use_container_width=True):
         if not st.session_state.get("resume_details"):
             st.error("Please upload and verify your own resume first.")
         elif not jd_text.strip():
@@ -6001,7 +6121,7 @@ Candidate account: {account_name}
 Verified resume: {json.dumps(resume_context, ensure_ascii=False)}
 Student's edited resume draft: {resume_editor_text[:9000]}
 Job Description: {jd_text[:9000]}
-Evaluate ATS compatibility as well as role match: standard headings, readable structure, contact details, relevant evidence, keyword alignment and absence of formatting problems. Do not invent experience, achievements, marks or skills. Distinguish proven skills from suggestions. Return MissingKeywords as short, individual skill/phrase suggestions (not sentences), ordered by relevance. Return ONLY valid JSON:
+Do not invent experience, achievements, marks or skills. Distinguish proven skills from suggestions. Return ONLY valid JSON:
 {{
  "CandidateName":"{account_name}", "ATSScore":0, "Category":"Needs Improvement",
  "ExecutiveSummary":"A factual summary addressed to the student",
@@ -6016,53 +6136,32 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
                 save_resume_activity(student_id, st.session_state.get("scholar_id", ""), ats_result, jd_text)
                 save_resume_workspace(student_id, resume_context, resume_editor_text, jd_text, st.session_state.get("resume_source_filename", ""))
                 st.session_state["last_resume_ats_result"] = ats_result
+                st.subheader(f"Resume Analysis for {account_name}")
+                score = ats_result.get("ATSScore", 0)
+                m1, m2 = st.columns(2)
+                with m1:
+                    st.metric("Overall Match Grade", grade_from_score(score))
+                    render_grade_slabs()
+                with m2:
+                    st.metric("Fit Status", ats_result.get("Category", "Needs Improvement"))
+                st.write(ats_result.get("ExecutiveSummary", ""))
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("#### Strengths")
+                    for item in ats_result.get("Strengths", []): st.markdown(f"- {item}")
+                    st.markdown("#### Suggested Keywords")
+                    for item in ats_result.get("MissingKeywords", []): st.markdown(f"- `{item}`")
+                with c2:
+                    st.markdown("#### Areas to Improve")
+                    for item in ats_result.get("AreasOfImprovement", []): st.markdown(f"- {item}")
+                    st.markdown("#### Practical Recommendations")
+                    for item in ats_result.get("RecommendedChanges", []): st.markdown(f"- {item}")
             except Exception:
                 st.error("The resume review response could not be processed. Please try again.")
                 st.code(raw_ats_response[:4000], language="text")
 
 
-    # Persist and display the latest match analysis across Streamlit reruns so keywords can be selected.
-    ats_result = st.session_state.get("last_resume_ats_result")
-    if isinstance(ats_result, dict):
-        st.subheader(f"Resume Analysis for {account_name}")
-        score = ats_result.get("ATSScore", 0)
-        m1, m2 = st.columns(2)
-        with m1:
-            st.metric("Overall Match Grade", grade_from_score(score))
-            render_grade_slabs()
-        with m2:
-            st.metric("Fit Status", ats_result.get("Category", "Needs Improvement"))
-        st.write(ats_result.get("ExecutiveSummary", ""))
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("#### Strengths")
-            for item in ats_result.get("Strengths", []):
-                st.markdown(f"- {item}")
-            st.markdown("#### Suggested Keywords")
-            st.caption("Tick a keyword to add it immediately to the Skills section of your resume. Add only skills you genuinely know and can explain.")
-            keywords = ats_result.get("MissingKeywords", [])
-            if keywords:
-                for idx, item in enumerate(keywords):
-                    keyword = str(item).strip().strip("`*•- ")
-                    if not keyword:
-                        continue
-                    safe_key = re.sub(r"[^a-zA-Z0-9]+", "_", keyword).strip("_").lower()[:50] or str(idx)
-                    check_key = f"resume_keyword_add_{safe_key}"
-                    if check_key not in st.session_state:
-                        st.session_state[check_key] = False
-                    st.checkbox(keyword, key=check_key, on_change=add_keyword_to_resume_editor, args=(keyword, check_key))
-            else:
-                st.caption("No additional keywords were suggested for this JD.")
-        with c2:
-            st.markdown("#### Areas to Improve")
-            for item in ats_result.get("AreasOfImprovement", []):
-                st.markdown(f"- {item}")
-            st.markdown("#### Practical Recommendations")
-            for item in ats_result.get("RecommendedChanges", []):
-                st.markdown(f"- {item}")
-
-
-    save_col, reset_col, download_col = st.columns(3)
+    save_col, reset_col, reset_jd_col, download_col = st.columns(4)
     with save_col:
         if st.button(" Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
             saved = save_resume_workspace(
@@ -6077,16 +6176,18 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
         if st.button("Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
             st.session_state["pending_reset_resume_workspace"] = True
             st.rerun()
+    with reset_jd_col:
+        if st.button("Reset Uploaded JD", key="reset_resume_jd", use_container_width=True):
+            st.session_state["pending_reset_jd_only"] = True
+            st.rerun()
     with download_col:
         if st.button(" Create Professional Editable DOCX", key="create_resume_docx", use_container_width=True):
             if not resume_editor_text.strip():
                 st.warning("Please add or edit your resume content first.")
             else:
-                docx_email, docx_phone = extract_resume_contacts(resume_editor_text)
-                if not docx_email:
-                    docx_email = str(st.session_state.get("student_email", "") or "").strip()
+                docx_email = str(st.session_state.get("student_email", "") or "").strip()
                 st.session_state["generated_resume_docx_bytes"] = build_professional_resume_docx(
-                    clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone
+                    resume_editor_text, account_name, email=docx_email
                 )
                 st.success("Professional, editable Word resume created. Download it below and continue editing in Microsoft Word.")
     if st.session_state.get("generated_resume_docx_bytes"):
@@ -6320,12 +6421,7 @@ Return ONLY valid JSON in this structure:
             if len(jd_override.strip()) < 80:
                 st.warning("Please attach or paste a fuller Job Description so the questions reflect the actual role.")
             else:
-                prompt = f"""You are a strict, practical MBA placement interviewer and answer coach at IPER Bhopal. Generate exactly {jd_question_count} interview questions from the supplied Job Description. Difficulty: {jd_question_level}. Cover role responsibilities, required skills, tools/technical knowledge, business judgement, behavioural examples and resume evidence where relevant. Do not invent company facts. Avoid generic duplicates. For EVERY question, include all four parts in this exact order:
-1. **Question:** the interview question.
-2. **Illustrative Answer:** a clear, credible sample answer that directly answers the question, in simple professional language suitable for an MBA student. For behavioural questions, use a STAR-style example but clearly label any hypothetical details as an example to adapt; never imply invented experiences are the student's real experience. For technical or role-specific questions, give a factually sound answer with steps/examples where useful.
-3. **Logic Behind the Answer:** explain why this answer works, what the interviewer is assessing, and how it connects to the JD requirement.
-4. **Personalise Before Using:** briefly identify details the student must replace with their own genuine experience, figures, knowledge or examples. Do not encourage memorising answers or making false claims.
-Label each question with its category and difficulty. Ensure the answer is substantive, not just a hint or outline. Do not output only the logic. Return a numbered, readable list only.
+                prompt = f"""You are a strict, practical MBA placement interviewer at IPER Bhopal. Generate exactly {jd_question_count} interview questions from the supplied Job Description. Difficulty: {jd_question_level}. Cover role responsibilities, required skills, tools/technical knowledge, business judgement, behavioural examples and resume evidence where relevant. Do not invent company facts. Avoid generic duplicates. Label each question with its category and difficulty. Include a brief note after each question explaining which JD requirement it tests. Return a numbered, readable list only.
 JOB DESCRIPTION:
 {jd_override[:12000]}"""
                 with st.spinner("Generating role-specific interview questions from the JD..."):
@@ -6870,10 +6966,10 @@ Return ONLY valid JSON matching this exact structure:
 # SECTION 4: GROUP DISCUSSION HUB
 elif selected_nav == "Group Discussion Hub":
     st.title("Group Discussion Hub")
-    st.caption("Prepare for group discussions and assess recorded GD performances.")
+    st.caption("Prepare for the GD and practise directly with the IPER PEPTECH AI Voice GD. Your AI Voice GD feedback is saved automatically for Progress and Performance Dashboard.")
 
-    gd_prep_tab, gd_video_tab = st.tabs([
-        " GD Preparation", " Video Assessment"
+    gd_prep_tab, gd_practice_tab, gd_video_tab = st.tabs([
+        " GD Preparation", " AI Voice GD", " Video Assessment"
     ])
 
     with gd_prep_tab:
@@ -6909,9 +7005,25 @@ elif selected_nav == "Group Discussion Hub":
             with st.spinner("Preparing balanced perspectives..."):
                 st.markdown(get_gd_ai_guidance(topic, st.session_state.get("first_name", "Student")))
 
+    with gd_practice_tab:
+        upload_topic = st.session_state.get("live_gd_topic", "")
+        st.markdown("###  IPER PEPTECH AI Voice GD Practice")
+        st.caption("No video upload is required. Choose a topic, start the microphone, speak naturally and practise against an AI participant.")
+        live_topic = st.text_input(
+            "GD Topic",
+            value=upload_topic,
+            placeholder="Example: Is artificial intelligence a threat to jobs?",
+            key="live_gd_topic"
+        ).strip()
+        if not live_topic:
+            live_topic = "Is artificial intelligence a threat to employment?"
+
+        st.markdown("**Practice design:** 5–10 minute GD • short AI interventions • live speech transcription • filler-word tracking • final practice transcript")
+        _render_live_gd_voice_room(live_topic, st.session_state.get("first_name", "Student"))
+
     with gd_video_tab:
         st.markdown("###  Upload and Assess a Recorded Group Discussion")
-        st.caption("Upload a recorded GD, generate a speaker-labelled transcript with OpenAI, review speaker names, and generate evidence-based individual feedback.")
+        st.caption("Upload a recorded GD, generate a transcript labelled Speaker A to Speaker G, and receive group and individual feedback including vocal tone and body language.")
         if not openai_client:
             st.warning("OpenAI API key is not configured. Add OPENAI_API_KEY in Streamlit Community Cloud → App settings → Secrets to enable video diarisation.")
         if not shutil.which("ffmpeg"):
@@ -6922,40 +7034,20 @@ elif selected_nav == "Group Discussion Hub":
             placeholder="Example: Should India prioritise economic growth over environmental protection?",
             key="uploaded_gd_topic",
         )
-        upload_version = int(st.session_state.get("uploaded_gd_upload_version", 0) or 0)
         gd_video_file = st.file_uploader(
             "Upload GD video",
             type=["mp4", "mov", "m4v", "webm", "mpeg", "mpg"],
             help="For the prototype, use a clear recording of up to 10–15 minutes. Audio is extracted before sending it for transcription.",
-            key=f"uploaded_gd_video_file_{upload_version}",
+            key="uploaded_gd_video_file",
         )
         if gd_video_file:
-            st.session_state["uploaded_gd_video_bytes"] = gd_video_file.getvalue()
-            st.session_state["uploaded_gd_video_original_name"] = gd_video_file.name
-            st.session_state["uploaded_gd_video_size"] = gd_video_file.size
-        saved_video_bytes = st.session_state.get("uploaded_gd_video_bytes")
-        saved_video_name = st.session_state.get("uploaded_gd_video_original_name", "Uploaded GD video")
-        saved_video_size = int(st.session_state.get("uploaded_gd_video_size", len(saved_video_bytes or b"")) or 0)
-        if saved_video_bytes:
-            st.video(saved_video_bytes)
-            st.caption(f"Saved in this session: {saved_video_name} • {saved_video_size / (1024 * 1024):.1f} MB. It will remain available when you switch tabs in this session.")
-            if st.button("Reset / Remove Uploaded GD Video and Feedback", key="reset_uploaded_gd_video_and_feedback", use_container_width=True):
-                reset_keys = [
-                    "uploaded_gd_video_bytes", "uploaded_gd_video_original_name", "uploaded_gd_video_size",
-                    "uploaded_gd_segments", "uploaded_gd_topic_processed", "uploaded_gd_filename_processed",
-                    "uploaded_gd_speaker_map", "uploaded_gd_visual_frames", "uploaded_gd_audio_bytes",
-                    "uploaded_gd_final_speaker_records", "uploaded_gd_final_speaker_map", "uploaded_gd_final_stats",
-                    "uploaded_gd_report", "uploaded_gd_upload_error",
-                ]
-                for reset_key in reset_keys:
-                    st.session_state.pop(reset_key, None)
-                st.session_state["uploaded_gd_upload_version"] = upload_version + 1
-                st.rerun()
+            st.video(gd_video_file)
+            st.caption(f"File: {gd_video_file.name} • {gd_video_file.size / (1024 * 1024):.1f} MB")
 
         if st.button(" Transcribe and Identify Speakers", use_container_width=True, key="run_uploaded_gd_diarization"):
             if not video_topic.strip():
                 st.error("Please enter the GD topic.")
-            elif not st.session_state.get("uploaded_gd_video_bytes"):
+            elif not gd_video_file:
                 st.error("Please upload a GD video first.")
             elif not openai_client:
                 st.error("OpenAI is not configured. Add OPENAI_API_KEY to Streamlit Secrets.")
@@ -6965,10 +7057,9 @@ elif selected_nav == "Group Discussion Hub":
                 video_temp_path = None
                 audio_temp_path = None
                 try:
-                    active_video_name = st.session_state.get("uploaded_gd_video_original_name", getattr(gd_video_file, "name", "uploaded_gd_video.mp4"))
-                    suffix = Path(active_video_name).suffix or ".mp4"
+                    suffix = Path(gd_video_file.name).suffix or ".mp4"
                     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_video:
-                        tmp_video.write(st.session_state.get("uploaded_gd_video_bytes") or gd_video_file.getvalue())
+                        tmp_video.write(gd_video_file.getvalue())
                         video_temp_path = tmp_video.name
                     with st.spinner("Extracting audio and generating speaker-labelled transcript..."):
                         audio_temp_path = _ffmpeg_extract_gd_audio(video_temp_path)
@@ -6979,9 +7070,14 @@ elif selected_nav == "Group Discussion Hub":
                             if diarization_error:
                                 st.error(diarization_error)
                             else:
+                                # Use consistent, automatic speaker labels based on first appearance.
+                                speaker_ids_in_order = list(dict.fromkeys(seg.get("speaker", "speaker_0") for seg in segments))
+                                speaker_labels = [f"Speaker {chr(65 + i)}" for i in range(min(7, len(speaker_ids_in_order)))]
+                                speaker_label_map = {sid: speaker_labels[i] if i < 7 else f"Additional speaker {i + 1}" for i, sid in enumerate(speaker_ids_in_order)}
+                                segments = [{**seg, "speaker": speaker_label_map.get(seg.get("speaker", "speaker_0"), "Speaker A")} for seg in segments]
                                 st.session_state["uploaded_gd_segments"] = segments
                                 st.session_state["uploaded_gd_topic_processed"] = video_topic.strip()
-                                st.session_state["uploaded_gd_filename_processed"] = st.session_state.get("uploaded_gd_video_original_name", getattr(gd_video_file, "name", "Uploaded GD video"))
+                                st.session_state["uploaded_gd_filename_processed"] = gd_video_file.name
                                 st.session_state["uploaded_gd_speaker_map"] = {}
                                 sampled_frames, frame_sample_error = _extract_gd_visual_samples(video_temp_path)
                                 st.session_state["uploaded_gd_visual_frames"] = sampled_frames
@@ -7002,17 +7098,14 @@ elif selected_nav == "Group Discussion Hub":
 
         uploaded_segments = st.session_state.get("uploaded_gd_segments") or []
         if uploaded_segments:
-            st.markdown("#### Step 2 — Review speaker labels")
-            st.caption("OpenAI identifies distinct voices as speaker labels. Confirm the student name and Scholar ID for each speaker before saving individual feedback.")
-            detected_speakers = list(dict.fromkeys(seg.get("speaker", "speaker_0") for seg in uploaded_segments))
-            speaker_map = {}
-            speaker_records = {}
-            for idx, speaker_id in enumerate(detected_speakers):
-                with st.expander(f"Map {speaker_id} to a student", expanded=True):
-                    name_value = st.text_input("Student full name", key=f"uploaded_gd_name_{speaker_id}", placeholder="Enter full name")
-                    scholar_value = st.text_input("Scholar ID (optional for preview)", key=f"uploaded_gd_scholar_{speaker_id}", placeholder="Enter Scholar ID")
-                    speaker_map[speaker_id] = name_value.strip() or speaker_id
-                    speaker_records[speaker_id] = {"name": name_value.strip(), "scholar_id": scholar_value.strip().upper()}
+            st.markdown("#### Step 2 — Automatically identified speakers")
+            st.caption("The transcript labels speakers automatically in order of first appearance. No manual name or Scholar ID entry is required.")
+            detected_speakers = list(dict.fromkeys(seg.get("speaker", "Speaker A") for seg in uploaded_segments))
+            speaker_map = {speaker_id: speaker_id for speaker_id in detected_speakers}
+            speaker_records = {speaker_id: {"name": speaker_id, "scholar_id": ""} for speaker_id in detected_speakers}
+            st.write("Detected speaker labels: " + ", ".join(detected_speakers))
+            if len(detected_speakers) > 7:
+                st.info("More than seven distinct voices were detected. The first seven are labelled Speaker A to Speaker G; additional voices are labelled separately.")
 
             readable_transcript = _format_gd_transcript(uploaded_segments, speaker_map)
             with st.expander("Preview diarised transcript", expanded=False):
@@ -7027,12 +7120,8 @@ elif selected_nav == "Group Discussion Hub":
 
             speaker_stats = _gd_speaker_stats(uploaded_segments, speaker_map)
             st.markdown("#### Step 3 — Generate individual feedback")
-            include_nonverbal = st.checkbox(
-                "Include body-language and vocal-tone feedback (uses additional OpenAI processing)",
-                value=False,
-                key="uploaded_gd_include_nonverbal",
-                help="Body language uses a few sampled video frames. Tone uses a short audio sample per detected speaker; it is not a continuous analysis. This adds API usage."
-            )
+            include_nonverbal = True
+            st.info("Mandatory assessment components: transcript-based GD performance, vocal tone and delivery, and observable body language from sampled video frames. Body-language feedback is based on sampled frames, not continuous tracking.")
             if st.button(" Generate GD Assessment", use_container_width=True, key="generate_uploaded_gd_feedback"):
                 if len(detected_speakers) < 2:
                     st.warning("Only one distinct speaker was detected. You can still review the transcript, but please confirm the recording contains the full group discussion.")
@@ -7085,7 +7174,7 @@ elif selected_nav == "Group Discussion Hub":
                     st.session_state["uploaded_gd_final_speaker_map"] = speaker_map
                     st.session_state["uploaded_gd_final_speaker_records"] = speaker_records
                     st.session_state["uploaded_gd_final_stats"] = speaker_stats
-                    st.success("GD assessment generated. Review the feedback below before saving.")
+                    st.success("GD assessment generated. Review the feedback below and download the report when ready.")
                     group_report = report.get("GroupAssessment", {}) or {}
                     st.markdown("### Group Assessment")
                     st.markdown(f"**Overall Readiness — {grade_from_score(group_report.get('OverallScore', 0))}**")
@@ -7149,404 +7238,278 @@ elif selected_nav == "Group Discussion Hub":
                                         st.write(f"• {value}")
                                 else:
                                     st.write("No specific points returned.")
-                    st.download_button(
-                        "Download complete GD assessment (.json)",
-                        data=json.dumps(report, ensure_ascii=False, indent=2).encode("utf-8"),
-                        file_name="iper_peptech_gd_assessment.json",
-                        mime="application/json",
-                        key="download_uploaded_gd_report_json",
-                    )
-
             saved_report = st.session_state.get("uploaded_gd_report")
             if saved_report:
-                st.markdown("#### Step 4 — Save individual assessments")
-                st.caption("Only participants with a confirmed Scholar ID will be saved to their student profile. Verify speaker-to-student mapping before saving.")
-                if st.button(" Save mapped student feedback", use_container_width=True, key="save_uploaded_gd_assessments"):
-                    saved_count = 0
-                    save_errors = []
-                    report_participants = saved_report.get("Participants", []) or []
-                    final_records = st.session_state.get("uploaded_gd_final_speaker_records", {})
-                    final_map = st.session_state.get("uploaded_gd_final_speaker_map", {})
-                    topic_to_save = st.session_state.get("uploaded_gd_topic_processed", video_topic.strip())
-                    source_segments = st.session_state.get("uploaded_gd_segments", [])
-                    for participant in report_participants:
-                        participant_name = str(participant.get("Name") or "").strip()
-                        matched_speaker = next((sid for sid, mapped_name in final_map.items() if mapped_name == participant_name), None)
-                        record = final_records.get(matched_speaker, {}) if matched_speaker else {}
-                        scholar_id = str(record.get("scholar_id") or "").strip().upper()
-                        if not scholar_id:
-                            continue
-                        participant_report = {
-                            "SourceType": "Video GD",
-                            "GroupAssessment": saved_report.get("GroupAssessment", {}),
-                            "Participants": [participant],
-                            "SpeakerStats": st.session_state.get("uploaded_gd_final_stats", {}),
-                            "Transcript": _format_gd_transcript(source_segments, final_map),
-                        }
-                        try:
-                            save_gd_video_assessment(
-                                scholar_id,
-                                topic_to_save,
-                                [participant_name],
-                                source_segments,
-                                participant_report,
-                                st.session_state.get("uploaded_gd_filename_processed", "Uploaded GD video"),
-                                source_type="Video GD",
-                            )
-                            saved_count += 1
-                        except Exception as exc:
-                            save_errors.append(f"{participant_name}: {exc}")
-                    if saved_count:
-                        st.success(f"Saved feedback for {saved_count} participant(s).")
-                    else:
-                        st.warning("No feedback was saved. Enter a Scholar ID for at least one participant and try again.")
-                    for save_error in save_errors:
-                        st.error(save_error)
+                st.markdown("#### Step 4 — Download feedback")
+                st.caption("Download the generated group and individual feedback as a readable text report. No manual student mapping is required.")
+                def _gd_report_as_text(report_data):
+                    lines = [
+                        "IPER PEPTECH — GROUP DISCUSSION ASSESSMENT",
+                        f"Topic: {st.session_state.get('uploaded_gd_topic_processed', video_topic.strip())}",
+                        f"Video: {st.session_state.get('uploaded_gd_filename_processed', 'Uploaded GD video')}",
+                        "",
+                        "GROUP ASSESSMENT",
+                    ]
+                    group = report_data.get("GroupAssessment", {}) or {}
+                    lines.append(f"Overall readiness: {grade_from_score(group.get('OverallScore', 0))}")
+                    for title, key in (("Strengths", "Strengths"), ("Improvements", "Improvements")):
+                        lines.append(f"{title}:")
+                        lines.extend([f"- {x}" for x in (group.get(key) or [])] or ["- Not provided"])
+                    group_body = (report_data.get("NonVerbalAssessment") or {}).get("GroupBodyLanguage", {}) or {}
+                    if group_body:
+                        lines.extend(["", "GROUP BODY LANGUAGE"])
+                        for title, key in (("Observations", "Observations"), ("Suggestions", "Suggestions")):
+                            lines.append(f"{title}:")
+                            lines.extend([f"- {x}" for x in (group_body.get(key) or [])] or ["- Not provided"])
+                    tone_data = report_data.get("VocalToneAssessment", {}) or {}
+                    visual_data = (report_data.get("NonVerbalAssessment") or {}).get("Participants", []) or []
+                    for participant in (report_data.get("Participants", []) or []):
+                        name = participant.get("Name") or "Unlabelled speaker"
+                        lines.extend(["", "=" * 48, f"{name.upper()} — INDIVIDUAL FEEDBACK", f"Overall grade: {grade_from_score(participant.get('OverallScore', 0))}"])
+                        for title, key in (("Participation", "ParticipationScore"), ("Communication", "CommunicationScore"), ("Knowledge", "KnowledgeScore"), ("Analytical Thinking", "AnalyticalThinkingScore"), ("Listening & Teamwork", "ListeningTeamworkScore"), ("Leadership", "LeadershipScore")):
+                            lines.append(f"{title}: {grade_from_score(participant.get(key, 0))}")
+                        for title, key in (("Evidence", "Evidence"), ("Strengths", "Strengths"), ("Areas to improve", "AreasToImprove"), ("Next action plan", "NextGDActionPlan")):
+                            lines.append(f"{title}:")
+                            lines.extend([f"- {x}" for x in (participant.get(key) or [])] or ["- Not provided"])
+                        tone = tone_data.get(name, {}) or {}
+                        lines.extend(["Vocal tone & delivery:", str(tone.get("ToneSummary", "No tone summary returned."))])
+                        for title, key in (("What went well", "WhatWentWell"), ("To improve", "ToImprove"), ("Evidence limitations", "EvidenceLimitations")):
+                            lines.append(f"{title}:")
+                            lines.extend([f"- {x}" for x in (tone.get(key) or [])] or ["- Not provided"])
+                        visual = next((x for x in visual_data if str(x.get("Name", "")).strip() == name), {}) or {}
+                        lines.append("Body language (sampled video frames):")
+                        for title, key in (("Observations", "BodyLanguageObservations"), ("Suggestions", "BodyLanguageSuggestions"), ("Evidence limitations", "EvidenceLimitations")):
+                            lines.append(f"{title}:")
+                            lines.extend([f"- {x}" for x in (visual.get(key) or [])] or ["- Not provided"])
+                    return "\n".join(lines)
+                feedback_text = _gd_report_as_text(saved_report)
+                st.download_button(
+                    "Download Feedback Given (.txt)",
+                    data=feedback_text.encode("utf-8"),
+                    file_name="iper_peptech_gd_feedback.txt",
+                    mime="text/plain",
+                    use_container_width=True,
+                    key="download_uploaded_gd_feedback_text",
+                )
+
+    # AI Voice GD remains available and its feedback continues to appear in Progress and Performance Dashboard.
 
 # SECTION 5: PERFORMANCE DASHBOARD
 
 
-elif selected_nav == "My Progress Dashboard":
-    st.title("My Progress Dashboard")
-    st.caption("A clear view of your GD and PI practice, feedback and progress over time.")
+elif selected_nav == "Performance Dashboard":
+    st.title("Performance Dashboard")
+    st.caption("Review your previous interview and group discussion attempts, read the feedback from each performance, and download mentor-ready reports.")
 
-    # Load the student's complete saved PI and GD history, not only this week's attempts.
-    dashboard_student_id = st.session_state.get("student_id")
-    dashboard_scholar = st.session_state.get("scholar_id", "")
-    pi_history = st.session_state.get("history", [])
-    if dashboard_student_id:
-        try:
-            loaded_pi_history = load_student_attempts(dashboard_student_id)
-            if loaded_pi_history is not None:
-                pi_history = loaded_pi_history
-                st.session_state["history"] = loaded_pi_history
-        except Exception:
-            pass
+    history = st.session_state.get("history", [])
+    dashboard_gd_assessments = get_gd_video_assessments(st.session_state.get("scholar_id", "")) if st.session_state.get("scholar_id") else []
 
-    gd_video_history = get_gd_video_assessments(dashboard_scholar) if dashboard_scholar else []
-    try:
-        gd_live_history = get_ai_voice_gd_assessments(dashboard_scholar) if dashboard_scholar else []
-    except Exception:
-        gd_live_history = []
-
-    # Combine and deduplicate saved GD attempts.
-    gd_history_map = {}
-    for gd_item in list(gd_video_history or []) + list(gd_live_history or []):
-        gd_key = str(gd_item.get("id") or gd_item.get("created_at") or gd_item.get("timestamp") or id(gd_item))
-        gd_history_map[gd_key] = gd_item
-    gd_history = sorted(
-        gd_history_map.values(),
-        key=lambda item: str(item.get("created_at") or item.get("timestamp") or "")
-    )
-
-    def _dashboard_score(value):
-        try:
-            if value is None or str(value).strip() == "":
-                return None
-            return max(0.0, min(100.0, float(value)))
-        except (TypeError, ValueError):
-            return None
-
-    # Recover richer PI feedback from the central activity log when a legacy
-    # interview_attempts row has an empty feedback_json field.
-    pi_activity_by_timestamp = {}
-    if dashboard_scholar:
-        try:
-            activity_conn = get_db_connection()
-            try:
-                activity_rows = activity_conn.execute(
-                    """
-                    SELECT activity_timestamp, grade, summary, feedback_json
-                    FROM student_activity_log
-                    WHERE UPPER(scholar_id)=UPPER(?) AND activity_type='Personal Interview'
-                    ORDER BY activity_timestamp ASC, id ASC
-                    """,
-                    (dashboard_scholar,),
-                ).fetchall()
-            finally:
-                activity_conn.close()
-            for activity_row in activity_rows:
-                activity_feedback = _safe_json_dict(activity_row["feedback_json"])
-                activity_timestamp = str(activity_row["activity_timestamp"] or "")
-                if activity_timestamp:
-                    pi_activity_by_timestamp[activity_timestamp] = {
-                        "feedback": activity_feedback,
-                        "summary": activity_row["summary"] or "",
-                        "grade": activity_row["grade"] or "",
-                    }
-        except Exception:
-            pi_activity_by_timestamp = {}
-
-    # PI score and feedback normalisation.
-    pi_records = []
-    for item in (pi_history or []):
-        score = _dashboard_score(item.get("Score", item.get("score")))
-        timestamp = item.get("Timestamp") or item.get("timestamp") or "Timestamp unavailable"
-        feedback = item.get("Feedback") or item.get("feedback") or {}
-        activity_fallback = pi_activity_by_timestamp.get(str(timestamp), {})
-        if not isinstance(feedback, dict) or not feedback:
-            recovered_feedback = activity_fallback.get("feedback") or {}
-            if isinstance(recovered_feedback, dict) and recovered_feedback:
-                feedback = recovered_feedback
-        details = (
-            item.get("Company") or item.get("Domain") or item.get("QuestionType")
-            or item.get("Question") or activity_fallback.get("summary") or "Interview Practice"
-        )
-        pi_records.append({
-            "timestamp": str(timestamp),
-            "score": score,
-            "grade": grade_from_score(score) if score is not None else (activity_fallback.get("grade") or "Not graded"),
-            "feedback": feedback if isinstance(feedback, dict) else {},
-            "details": str(details),
-            "raw": item,
-        })
-
-    # GD score and feedback normalisation.
-    gd_records = []
-    candidate_label = st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))
-    for item in gd_history:
-        report = _live_gd_report_for_student(item, candidate_label) or {}
-        score = _dashboard_score(report.get("OverallScore"))
-        timestamp = item.get("created_at") or item.get("timestamp") or "Timestamp unavailable"
-        gd_records.append({
-            "timestamp": str(timestamp),
-            "score": score,
-            "grade": grade_from_score(score) if score is not None else "Not graded",
-            "feedback": report if isinstance(report, dict) else {},
-            "details": str(item.get("topic") or item.get("source_type") or "Group Discussion"),
-            "item": item,
-        })
-
-    # Sort both lists chronologically for accurate latest feedback and charts.
-    def _timestamp_sort_key(record):
-        try:
-            return pd.to_datetime(record.get("timestamp"), errors="coerce")
-        except Exception:
-            return pd.NaT
-
-    pi_records.sort(key=lambda record: str(record["timestamp"]))
-    gd_records.sort(key=lambda record: str(record["timestamp"]))
-    pi_scored = [record["score"] for record in pi_records if record["score"] is not None]
-    gd_scored = [record["score"] for record in gd_records if record["score"] is not None]
-    pi_average = sum(pi_scored) / len(pi_scored) if pi_scored else None
-    gd_average = sum(gd_scored) / len(gd_scored) if gd_scored else None
-    combined_scores = pi_scored + gd_scored
-    overall_average = sum(combined_scores) / len(combined_scores) if combined_scores else None
-
-    # 1. Overall feedback summary.
-    st.markdown("## Overall Feedback")
-    overall_cols = st.columns(5)
-    overall_cols[0].metric("GD Attempts", len(gd_records))
-    overall_cols[1].metric("GD Average Grade", grade_from_score(gd_average) if gd_average is not None else "—")
-    overall_cols[2].metric("PI Attempts", len(pi_records))
-    overall_cols[3].metric("PI Average Grade", grade_from_score(pi_average) if pi_average is not None else "—")
-    overall_cols[4].metric("Overall Grade", grade_from_score(overall_average) if overall_average is not None else "—")
-
-    # 2. Weekly progress: count attempts in the last seven days only.
-    st.markdown("## Weekly Progress")
-    st.caption("Weekly target: 4 Personal Interview (PI) attempts and 2 Group Discussion (GD) attempts.")
-    weekly_cutoff = (datetime.now(ZoneInfo("Asia/Kolkata")).date() - timedelta(days=6)).isoformat()
-
-    def _is_current_week(timestamp):
-        try:
-            return str(timestamp or "")[:10] >= weekly_cutoff
-        except Exception:
-            return False
-
-    weekly_pi_count = sum(1 for record in pi_records if _is_current_week(record["timestamp"]))
-    weekly_gd_count = sum(1 for record in gd_records if _is_current_week(record["timestamp"]))
-    weekly_done = min(weekly_pi_count, 4) + min(weekly_gd_count, 2)
-    weekly_percent = int(round(weekly_done / 6 * 100))
-
-    st.progress(weekly_percent, text=f"{weekly_done} of 6 weekly attempts completed ({weekly_percent}%)")
-    progress_cols = st.columns(2)
-    with progress_cols[0]:
-        st.markdown("**Personal Interviews**")
-        st.progress(min(weekly_pi_count, 4) / 4, text=f"{min(weekly_pi_count, 4)} / 4 PI attempts")
-    with progress_cols[1]:
-        st.markdown("**Group Discussions**")
-        st.progress(min(weekly_gd_count, 2) / 2, text=f"{min(weekly_gd_count, 2)} / 2 GD attempts")
-
-    if weekly_pi_count >= 4 and weekly_gd_count >= 2:
-        st.success("🎉 Congratulations! You have completed all 4 PI and 2 GD targets this week. Review your feedback and focus on the quality of your next attempts.")
+    if not history and not dashboard_gd_assessments:
+        st.info("No practice attempts or GD assessments recorded yet. Complete an interview or GD practice session to see your performance here.")
     else:
-        st.info(f"Keep going! You have completed {weekly_pi_count}/4 PI and {weekly_gd_count}/2 GD attempts this week.")
+        scores = [int(item.get("Score", 0) or 0) for item in history]
+        if history:
+            average_score = sum(scores) / len(scores)
+            best_score = max(scores)
+            latest_score = scores[-1]
 
-    # Five specific actions, tailored to progress and the latest feedback available.
-    latest_pi_feedback = next((record["feedback"] for record in reversed(pi_records) if record["feedback"]), {})
-    latest_gd_record = next((record for record in reversed(gd_records) if record["feedback"]), None)
-    latest_gd_feedback = latest_gd_record["feedback"] if latest_gd_record else {}
-    st.markdown("### 5 Actionable Steps for Next Week")
-    pi_focus = latest_pi_feedback.get("NextPracticeFocus") if isinstance(latest_pi_feedback, dict) else ""
-    gd_focus = ""
-    if isinstance(latest_gd_feedback, dict):
-        gd_focus = latest_gd_feedback.get("PriorityImprovements") or latest_gd_feedback.get("NextActionPlan") or ""
-        if isinstance(gd_focus, list):
-            gd_focus = "; ".join(str(value) for value in gd_focus[:2])
-    action_steps = [
-        (f"Complete {max(0, 4 - weekly_pi_count)} more PI attempt(s). Practise a clear, structured answer to ‘Tell me about yourself’ and one role-specific question." if weekly_pi_count < 4 else "Maintain PI consistency: complete a review mock and improve the evidence, examples and structure in your answers."),
-        (f"Complete {max(0, 2 - weekly_gd_count)} more GD attempt(s). Practise opening clearly, building on a peer's point and summarising the discussion." if weekly_gd_count < 2 else "Review one GD performance and practise concise contributions, active listening and respectful turn-taking."),
-        (f"PI improvement focus: {pi_focus}" if pi_focus else "For PI, prepare two genuine STAR examples and revise technical or role-related concepts before your next mock."),
-        (f"GD improvement focus: {gd_focus}" if gd_focus else "For GD, support key points with relevant examples or facts and respond constructively to a different viewpoint."),
-        "After each attempt, write down one strength, one improvement and one specific behaviour to apply in the next session.",
-    ]
-    for step_number, step in enumerate(action_steps, 1):
-        st.markdown(f"**{step_number}.** {step}")
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.metric("PI Attempts", len(history))
+            with m2:
+                st.metric("PI Average Grade", grade_from_score(average_score))
+            with m3:
+                st.metric("PI Best Grade", grade_from_score(best_score))
 
-    # 3. Overall GD feedback: show the full feedback report for every saved GD attempt.
-    st.markdown("## Overall GD Feedback")
-    if gd_records:
-        for attempt_number, record in enumerate(reversed(gd_records), 1):
-            with st.expander(
-                f"GD Attempt {attempt_number} • {record['grade']} • {record['timestamp']}",
-                expanded=(attempt_number == 1),
-            ):
-                st.caption(f"Topic / activity: {record['details']}")
-                _render_live_gd_feedback_summary(
-                    record["item"],
-                    candidate_label,
-                    heading="Detailed GD Feedback",
-                )
-                if not record["feedback"]:
-                    st.info("Detailed feedback is not available for this saved GD attempt.")
-    else:
-        st.info("Your GD feedback will appear here after you complete a GD assessment.")
+            st.markdown("### Latest Interview Performance")
+            st.metric("Latest Grade", grade_from_score(latest_score))
+            render_grade_slabs()
 
-    # 4. Overall PI feedback: show the full saved feedback for every PI attempt.
-    st.markdown("## Overall PI Feedback")
-    if pi_records:
-        # These fields cover the full structured PI assessment and preserve any
-        # additional feedback fields that may be present in older/newer records.
-        pi_field_labels = {
-            "CommunicationAssessment": "Communication Assessment",
-            "TechnicalKnowledgeAssessment": "Technical Knowledge Assessment",
-            "TechnicalAssessment": "Technical Assessment",
-            "TechnicalCorrectness": "Technical Correctness",
-            "CorrectPoints": "Correct Points",
-            "TechnicalErrorsOrGaps": "Technical Errors or Gaps",
-            "GrammarIssues": "Grammar Issues",
-            "FillerWordsUsed": "Filler Words Used",
-            "RateOfSpeechAssessment": "Rate of Speech",
-            "ToneAssessment": "Tone",
-            "ClarityAssessment": "Clarity",
-            "CommunicationStrengths": "Communication Strengths",
-            "CommunicationImprovements": "Communication Improvements",
-            "TechnicalStrengths": "Technical Strengths",
-            "TechnicalImprovements": "Technical Improvements",
-            "KeyCorrections": "Key Corrections",
-            "BenchmarkAnswer": "Benchmark / Suggested Answer",
-            "NextPracticeFocus": "Next Practice Focus",
-            "ExecutiveSummary": "Overall Feedback",
-            "OverallFeedback": "Overall Feedback",
-            "Summary": "Summary",
-        }
+            latest = history[-1]
+            latest_feedback = latest.get("Feedback") or {}
+            if latest_feedback:
+                st.markdown("### Latest Subjective Feedback")
+                latest_cols = st.columns(2)
+                with latest_cols[0]:
+                    st.markdown("**Communication Feedback**")
+                    st.write(latest_feedback.get("CommunicationAssessment", "No communication assessment was stored for this attempt."))
+                    st.markdown("**Communication Strengths**")
+                    strengths = latest_feedback.get("CommunicationStrengths", [])
+                    if strengths:
+                        for item in strengths:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.write("No specific strengths recorded.")
+                    st.markdown("**Communication Improvements**")
+                    improvements = latest_feedback.get("CommunicationImprovements", [])
+                    if improvements:
+                        for item in improvements:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.write("No specific communication improvements recorded.")
+                with latest_cols[1]:
+                    st.markdown("**Technical Feedback**")
+                    st.write(latest_feedback.get("TechnicalKnowledgeAssessment", "No technical assessment was stored for this attempt."))
+                    st.markdown("**Technical Errors / Knowledge Gaps**")
+                    gaps = latest_feedback.get("TechnicalErrorsOrGaps", [])
+                    if gaps:
+                        for item in gaps:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.write("No specific technical gaps recorded.")
+                    st.markdown("**Suggestions & Recommendations**")
+                    st.info(latest_feedback.get("NextPracticeFocus", "No next-practice recommendation was stored."))
 
-        def _display_pi_feedback_value(value):
-            if value is None or value == "":
-                return
-            if isinstance(value, list):
-                for entry in value:
-                    st.write(f"• {entry}")
-            elif isinstance(value, dict):
-                for subkey, subvalue in value.items():
-                    st.markdown(f"**{str(subkey).replace('_', ' ')}**")
-                    _display_pi_feedback_value(subvalue)
-            else:
-                st.write(str(value))
+            st.markdown("### Performance History & Subjective Feedback")
+            st.caption("Open any attempt to review the actual feedback generated for that performance. Feedback is retained with the attempt so students can discuss it with mentors.")
 
-        for attempt_number, record in enumerate(reversed(pi_records), 1):
-            with st.expander(
-                f"PI Attempt {attempt_number} • {record['grade']} • {record['timestamp']}",
-                expanded=(attempt_number == 1),
-            ):
-                st.caption(f"Interview context: {record['details']}")
-                feedback = record.get("feedback") or {}
-                if not feedback:
-                    st.info("Detailed feedback is not available for this saved PI attempt.")
-                    continue
+            for index, item in reversed(list(enumerate(history, 1))):
+                fb = item.get("Feedback") or {}
+                attempt_grade = grade_from_score(item.get("Score", 0))
+                label = f"Attempt {index} • {item.get('Timestamp', '—')} • {item.get('Domain', 'Interview')} • {attempt_grade}"
+                with st.expander(label, expanded=(index == len(history))):
+                    top = st.columns(4)
+                    top[0].metric("Final Grade", attempt_grade)
+                    top[1].metric("Communication", grade_from_score(item.get("CommunicationScore", 0)))
+                    top[2].metric("Technical", grade_from_score(item.get("TechnicalScore", 0)))
+                    top[3].write(f"**Mode**\n{item.get('Mode', '—')}")
 
-                displayed_keys = set()
-                for key, label in pi_field_labels.items():
-                    value = feedback.get(key)
-                    if value is not None and value != "":
-                        st.markdown(f"**{label}**")
-                        _display_pi_feedback_value(value)
-                        displayed_keys.add(key)
+                    st.markdown(f"**Question / Assessment:** {item.get('Question', '—')}")
 
-                # Include additional assessment feedback fields instead of silently
-                # dropping details from historical versions of the PI evaluator.
-                ignored_metadata = {
-                    "CandidateName", "Timestamp", "timestamp", "Score", "score",
-                    "FinalScore", "CommunicationScore", "TechnicalKnowledgeScore",
-                    "FinalGrade", "Grade", "grade",
-                }
-                extra_keys = [
-                    key for key, value in feedback.items()
-                    if key not in displayed_keys
-                    and key not in ignored_metadata
-                    and value is not None and value != ""
-                ]
-                for key in extra_keys:
-                    st.markdown(f"**{str(key).replace('_', ' ')}**")
-                    _display_pi_feedback_value(feedback[key])
-    else:
-        st.info("Your PI feedback will appear here after you complete an Interview Practice attempt.")
+                    if not fb:
+                        st.warning("Subjective feedback was not stored for this older attempt. New attempts will retain the full AI feedback here.")
+                    else:
+                        st.markdown("#### Communication")
+                        st.write(fb.get("CommunicationAssessment", "No communication assessment recorded."))
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown("**Strengths**")
+                            vals = fb.get("CommunicationStrengths", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
+                        with c2:
+                            st.markdown("**Improvements**")
+                            vals = fb.get("CommunicationImprovements", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
 
-    # 5. Past attempts: timestamp and grade for every saved GD and PI attempt.
-    st.markdown("## GD and PI Attempt History")
-    timeline_rows = []
-    for record in pi_records:
-        timeline_rows.append({
-            "Timestamp": record["timestamp"],
-            "Practice": "PI",
-            "Grade": record["grade"],
-            "Details": record["details"],
-        })
-    for record in gd_records:
-        timeline_rows.append({
-            "Timestamp": record["timestamp"],
-            "Practice": "GD",
-            "Grade": record["grade"],
-            "Details": record["details"],
-        })
-    if timeline_rows:
-        timeline_df = pd.DataFrame(timeline_rows)
-        timeline_df["_sort"] = pd.to_datetime(timeline_df["Timestamp"], errors="coerce")
-        timeline_df = timeline_df.sort_values("_sort", ascending=False, na_position="last").drop(columns=["_sort"])
-        st.dataframe(timeline_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("Your saved GD and PI attempts will appear here after your first assessment.")
+                        st.markdown("#### Technical Knowledge")
+                        st.write(fb.get("TechnicalKnowledgeAssessment", "No technical assessment recorded."))
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown("**What You Got Right**")
+                            vals = fb.get("CorrectPoints", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
+                        with c2:
+                            st.markdown("**Technical Errors / Knowledge Gaps**")
+                            vals = fb.get("TechnicalErrorsOrGaps", [])
+                            if vals:
+                                for val in vals: st.markdown(f"- {val}")
+                            else: st.write("—")
 
-    # 6. Simple performance analysis: line graph and bar graph at the bottom.
-    st.markdown("## Performance Analysis")
-    chart_cols = st.columns(2)
-    if pi_scored or gd_scored:
-        # Plot PI and GD scores by attempt sequence so each series forms a readable line.
-        pi_chart_scores = [record["score"] for record in pi_records if record["score"] is not None]
-        gd_chart_scores = [record["score"] for record in gd_records if record["score"] is not None]
-        chart_attempt_count = max(len(pi_chart_scores), len(gd_chart_scores))
-        line_rows = []
-        for index in range(chart_attempt_count):
-            line_rows.append({
-                "Attempt": f"Attempt {index + 1}",
-                "PI score": pi_chart_scores[index] if index < len(pi_chart_scores) else np.nan,
-                "GD score": gd_chart_scores[index] if index < len(gd_chart_scores) else np.nan,
-            })
-        line_df = pd.DataFrame(line_rows)
-        if not line_df.empty:
-            with chart_cols[0]:
-                st.markdown("**Performance over attempts**")
-                st.line_chart(line_df.set_index("Attempt"), height=280)
-                st.caption("Each point represents a saved attempt. The line chart helps you track score movement over time.")
-        averages_rows = []
-        if pi_average is not None:
-            averages_rows.append({"Practice": "PI average", "Average score": round(pi_average, 1)})
-        if gd_average is not None:
-            averages_rows.append({"Practice": "GD average", "Average score": round(gd_average, 1)})
-        if averages_rows:
-            with chart_cols[1]:
-                st.markdown("**PI vs GD average performance**")
-                st.bar_chart(pd.DataFrame(averages_rows).set_index("Practice"), y="Average score", height=280)
-                st.caption("Compare the average recorded score across your PI and GD attempts.")
-    else:
-        st.info("Performance graphs will appear after at least one graded PI or GD attempt.")
+                        st.markdown("#### Key Corrections")
+                        vals = fb.get("KeyCorrections", [])
+                        if vals:
+                            for val in vals: st.markdown(f"- {val}")
+                        else:
+                            st.write("—")
+
+                        st.markdown("#### Suggestions & Recommendations")
+                        st.info(fb.get("NextPracticeFocus", "No recommendation recorded."))
+
+                        suggested = fb.get("BenchmarkAnswer", fb.get("SuggestedAnswer", ""))
+                        if suggested:
+                            st.markdown("#### Suggested Answer")
+                            st.write(suggested)
+
+                    # Every saved attempt can be exported from the dashboard. This is
+                    # intentionally here as well as on the assessment screen so the
+                    # student can return later and share an older performance with a mentor.
+                    report_feedback = attempt_to_feedback_report(item)
+                    report_history = history
+                    report_base = re.sub(
+                        r"[^A-Za-z0-9_-]+", "_",
+                        f"{st.session_state.get('first_name', 'Student')}_{st.session_state.get('scholar_id', '')}_Attempt_{index}_Feedback"
+                    ).strip("_") or f"IPER_Attempt_{index}_Feedback"
+                    st.markdown("#### Download & Share This Feedback")
+                    st.caption("The report contains this performance as Present Feedback, other saved attempts as Historical Feedback, plus blank Mentor Feedback and Mentor Sign sections.")
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        try:
+                            word_report = build_feedback_report_docx(
+                                st.session_state.get("first_name", item.get("Candidate", "Student")),
+                                st.session_state.get("scholar_id", ""),
+                                report_feedback,
+                                report_history,
+                            )
+                            st.download_button(
+                                " Download Word Feedback",
+                                data=word_report,
+                                file_name=f"{report_base}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                use_container_width=True,
+                                key=f"dashboard_word_feedback_{index}",
+                            )
+                        except Exception as report_error:
+                            st.error(f"Word report could not be prepared: {report_error}")
+                    with d2:
+                        if REPORTLAB_AVAILABLE:
+                            try:
+                                pdf_report = build_feedback_report_pdf(
+                                    st.session_state.get("first_name", item.get("Candidate", "Student")),
+                                    st.session_state.get("scholar_id", ""),
+                                    report_feedback,
+                                    report_history,
+                                )
+                                st.download_button(
+                                    " Download PDF Feedback",
+                                    data=pdf_report,
+                                    file_name=f"{report_base}.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                    key=f"dashboard_pdf_feedback_{index}",
+                                )
+                            except Exception as report_error:
+                                st.error(f"PDF report could not be prepared: {report_error}")
+                        else:
+                            st.warning("PDF export is unavailable in this deployment. Ensure reportlab>=4.2,<5 is present in requirements.txt and redeploy the app.")
+
+        # GD feedback is a first-class part of the Performance Dashboard.
+        if dashboard_gd_assessments:
+            gd_total_sessions = len(dashboard_gd_assessments)
+            gd_total_minutes = sum(float(item.get("duration_seconds", 0) or 0) for item in dashboard_gd_assessments) / 60.0
+            gd_latest_feedback = _live_gd_report_for_student(
+                dashboard_gd_assessments[0],
+                st.session_state.get("candidate_name", st.session_state.get("first_name", "Student")),
+            ) or {}
+            gd_latest_score = float(gd_latest_feedback.get("OverallScore", 0) or 0)
+
+            st.markdown("### Group Discussion Practice Summary")
+            gd_metric_cols = st.columns(3)
+            gd_metric_cols[0].metric("GD Sessions", gd_total_sessions)
+            gd_metric_cols[1].metric("Total GD Practice Minutes", f"{gd_total_minutes:.1f}")
+            gd_metric_cols[2].metric("Latest GD Grade", grade_from_score(gd_latest_score) if gd_latest_feedback else "—")
+
+            st.markdown("### Group Discussion Feedback")
+            latest_gd = dashboard_gd_assessments[0]
+            student_name = st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))
+            _render_live_gd_feedback_summary(latest_gd, student_name, heading="#### Latest GD Feedback")
+
+            st.markdown("#### GD Feedback History (AI Voice and Uploaded Video) ")
+            for gd_index, gd_item in enumerate(dashboard_gd_assessments[:10], 1):
+                gd_feedback = _live_gd_report_for_student(gd_item, student_name)
+                if gd_feedback:
+                    gd_score = float(gd_feedback.get("OverallScore", 0) or 0)
+                    with st.expander(f"GD {gd_index} • {gd_item.get('created_at', '—')} • {gd_item.get('topic', 'GD')} • {grade_from_score(gd_score)}", expanded=(gd_index == 1)):
+                        _render_live_gd_feedback_summary(gd_item, student_name, heading="")
+
+        st.markdown("### Grade Progression")
+        grade_progression = [
+            {"Attempt": i, "Date & Time": item.get("Timestamp", ""), "Grade": grade_from_score(item.get("Score", 0))}
+            for i, item in enumerate(history, 1)
+        ]
+        st.dataframe(grade_progression, use_container_width=True, hide_index=True)
