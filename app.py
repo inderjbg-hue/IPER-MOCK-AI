@@ -1356,275 +1356,225 @@ def add_keyword_to_resume_editor(keyword, checkbox_key=None):
     st.session_state.pop("generated_resume_docx_bytes", None)
 
 
-def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
-    """Render every downloadable resume using one consistent, ATS-friendly Word template."""
-    document = docx.Document()
-    section = document.sections[0]
-    section.top_margin = docx.shared.Inches(0.62)
-    section.bottom_margin = docx.shared.Inches(0.62)
-    section.left_margin = docx.shared.Inches(0.72)
-    section.right_margin = docx.shared.Inches(0.72)
+def _resume_value_to_lines(value):
+    """Convert JSON/Python-looking resume values into human-readable lines."""
+    import ast
+    import json as _json
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, dict)):
+        parsed = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return []
+        parsed = None
+        if (text.startswith('[') and text.endswith(']')) or (text.startswith('{') and text.endswith('}')):
+            for parser in (ast.literal_eval, _json.loads):
+                try:
+                    parsed = parser(text)
+                    break
+                except Exception:
+                    pass
+        if parsed is None:
+            return [text]
+    out = []
+    def walk(obj, context=''):
+        if isinstance(obj, dict):
+            # Resume experience/project objects should be rendered as compact role/project blocks.
+            preferred = [('Role', 'Role'), ('Title', 'Title'), ('Company', 'Organisation'), ('Institution', 'Institution'), ('Duration', 'Duration'), ('Date', 'Date'), ('Type', 'Type'), ('Description', 'Description')]
+            emitted = set()
+            for key, label in preferred:
+                if key in obj and str(obj[key]).strip():
+                    out.append(f"{label}: {str(obj[key]).strip()}")
+                    emitted.add(key)
+            for key, val in obj.items():
+                if key in emitted:
+                    continue
+                if isinstance(val, (list, tuple)):
+                    for item in val:
+                        if isinstance(item, dict): walk(item, str(key))
+                        elif str(item).strip(): out.append(str(item).strip())
+                elif isinstance(val, dict): walk(val, str(key))
+                elif str(val).strip(): out.append(f"{str(key).replace('_',' ')}: {str(val).strip()}")
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                if isinstance(item, dict):
+                    if out and out[-1] != '': out.append('')
+                    walk(item)
+                    out.append('')
+                elif isinstance(item, (list, tuple)):
+                    walk(item)
+                elif str(item).strip(): out.append(str(item).strip())
+        elif str(obj).strip():
+            out.append(str(obj).strip())
+    walk(parsed)
+    return [x for x in out if x is not None and str(x).strip()]
 
-    purple = docx.shared.RGBColor(83, 49, 131)
-    styles = document.styles
-    normal = styles["Normal"]
-    normal.font.name = "Times New Roman"
-    normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    normal.font.size = docx.shared.Pt(11)
-    normal.paragraph_format.space_after = docx.shared.Pt(3)
-    normal.paragraph_format.line_spacing = 1.0
 
-    for style_name in ("Heading 1", "Heading 2", "List Bullet"):
-        style = styles[style_name]
-        style.font.name = "Times New Roman"
-        style._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-        if style_name == "Heading 1":
-            style.font.size = docx.shared.Pt(11)
-            style.font.bold = True
-            style.font.color.rgb = purple
-            style.paragraph_format.space_before = docx.shared.Pt(7)
-            style.paragraph_format.space_after = docx.shared.Pt(2)
-            style.paragraph_format.keep_with_next = True
-        elif style_name == "Heading 2":
-            style.font.size = docx.shared.Pt(11)
-            style.font.bold = True
-        else:
-            style.font.size = docx.shared.Pt(11)
-
-    # One fixed template: consistent name/contact header and predictable section order.
-    name_p = document.add_paragraph()
-    name_p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-    name_p.paragraph_format.space_after = docx.shared.Pt(2)
-    name_run = name_p.add_run(str(candidate_name or "Candidate").strip())
-    name_run.bold = True
-    name_run.font.name = "Times New Roman"
-    name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    name_run.font.size = docx.shared.Pt(16)
-    name_run.font.color.rgb = purple
-
-    contacts = [x.strip() for x in (email, phone, linkedin) if x and x.strip()]
-    if contacts:
-        cp = document.add_paragraph(" | ".join(contacts))
-        cp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-        cp.paragraph_format.space_after = docx.shared.Pt(6)
-
-    # Parse the text into sections, retaining content while mapping common heading variants.
-    section_aliases = {
-        "PROFESSIONAL SUMMARY": "PROFESSIONAL SUMMARY", "SUMMARY": "PROFESSIONAL SUMMARY",
-        "PROFILE": "PROFESSIONAL SUMMARY", "CAREER OBJECTIVE": "PROFESSIONAL SUMMARY", "OBJECTIVE": "PROFESSIONAL SUMMARY",
-        "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS", "KEY COMPETENCIES": "SKILLS",
-        "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
-        "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
-        "INTERNSHIP": "INTERNSHIPS", "INTERNSHIPS": "INTERNSHIPS",
-        "PROJECTS": "PROJECTS", "KEY PROJECTS": "PROJECTS", "ACADEMIC PROJECTS": "PROJECTS", "PROJECTS & ACHIEVEMENTS": "PROJECTS",
-        "CERTIFICATIONS": "CERTIFICATIONS", "CERTIFICATES": "CERTIFICATIONS", "COURSES": "CERTIFICATIONS", "COURSEWORK": "CERTIFICATIONS",
-        "ACHIEVEMENTS": "ACHIEVEMENTS", "AWARDS": "ACHIEVEMENTS", "HONOURS": "ACHIEVEMENTS",
-        "POSITIONS OF RESPONSIBILITY": "LEADERSHIP & ACTIVITIES", "LEADERSHIP": "LEADERSHIP & ACTIVITIES", "ACTIVITIES": "LEADERSHIP & ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "LEADERSHIP & ACTIVITIES", "VOLUNTEERING": "LEADERSHIP & ACTIVITIES",
-        "PUBLICATIONS": "ADDITIONAL INFORMATION", "RESEARCH": "ADDITIONAL INFORMATION", "PROFESSIONAL INTERESTS": "ADDITIONAL INFORMATION", "INTERESTS": "ADDITIONAL INFORMATION", "LANGUAGES": "ADDITIONAL INFORMATION", "PROFESSIONAL AFFILIATIONS": "ADDITIONAL INFORMATION", "PERSONAL DETAILS": "ADDITIONAL INFORMATION", "REFERENCES": "ADDITIONAL INFORMATION"
+def _parse_resume_sections(resume_text):
+    """Parse standard resume headings and flatten list/dict values instead of printing reprs."""
+    aliases = {
+        'PROFESSIONAL SUMMARY':'PROFESSIONAL SUMMARY','SUMMARY':'PROFESSIONAL SUMMARY','PROFILE':'PROFESSIONAL SUMMARY',
+        'CAREER OBJECTIVE':'PROFESSIONAL SUMMARY','OBJECTIVE':'PROFESSIONAL SUMMARY',
+        'SKILLS':'SKILLS','KEY SKILLS':'SKILLS','TECHNICAL SKILLS':'SKILLS','CORE SKILLS':'SKILLS','CORE COMPETENCIES':'SKILLS','KEY COMPETENCIES':'SKILLS','SKILLS & PROFICIENCY':'SKILLS',
+        'EDUCATION':'EDUCATION','EDUCATION QUALIFICATION':'EDUCATION','EDUCATIONAL QUALIFICATIONS':'EDUCATION','ACADEMIC QUALIFICATIONS':'EDUCATION',
+        'EXPERIENCE':'PROFESSIONAL EXPERIENCE','WORK EXPERIENCE':'PROFESSIONAL EXPERIENCE','PROFESSIONAL EXPERIENCE':'PROFESSIONAL EXPERIENCE','EMPLOYMENT HISTORY':'PROFESSIONAL EXPERIENCE',
+        'INTERNSHIP':'INTERNSHIPS','INTERNSHIPS':'INTERNSHIPS',
+        'PROJECTS':'PROJECTS & ACHIEVEMENTS','KEY PROJECTS':'PROJECTS & ACHIEVEMENTS','ACADEMIC PROJECTS':'PROJECTS & ACHIEVEMENTS','PROJECTS & ACHIEVEMENTS':'PROJECTS & ACHIEVEMENTS',
+        'CERTIFICATIONS':'CERTIFICATIONS','CERTIFICATES':'CERTIFICATIONS','COURSES':'CERTIFICATIONS','ONLINE CERTIFICATIONS':'CERTIFICATIONS',
+        'ACHIEVEMENTS':'ACHIEVEMENTS','AWARDS':'ACHIEVEMENTS','HONOURS':'ACHIEVEMENTS',
+        'PUBLICATIONS':'PUBLICATIONS','RESEARCH':'PUBLICATIONS','RESEARCH & PUBLICATIONS':'PUBLICATIONS',
+        'ACTIVITIES':'LEADERSHIP & ACTIVITIES','EXTRACURRICULAR ACTIVITIES':'LEADERSHIP & ACTIVITIES','CO SCHOLASTIC ACTIVITY':'LEADERSHIP & ACTIVITIES','CO-SCHOLASTIC ACTIVITY':'LEADERSHIP & ACTIVITIES','LEADERSHIP':'LEADERSHIP & ACTIVITIES','POSITIONS OF RESPONSIBILITY':'LEADERSHIP & ACTIVITIES',
+        'INTERESTS':'ADDITIONAL INFORMATION','INTERESTS & HOBBIES':'ADDITIONAL INFORMATION','LANGUAGES':'ADDITIONAL INFORMATION','PERSONAL DETAILS':'ADDITIONAL INFORMATION','ADDITIONAL INFORMATION':'ADDITIONAL INFORMATION'
     }
-    order = ["PROFESSIONAL SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"]
-    sections = {key: [] for key in order}
-    current = "PROFESSIONAL SUMMARY"
-    for raw in str(resume_text or "").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
-        line = re.sub(r"\*{1,3}|__|`", "", line).strip()
-        line = re.sub(r"^\s*(?:[-•*]+|\d+[.)])\s*", "", line).strip()
-        normalized = re.sub(r"[^A-Z& ]", "", line.upper()).strip()
-        normalized = re.sub(r"\s+", " ", normalized)
-        if normalized in section_aliases:
-            current = section_aliases[normalized]
-            continue
-        if normalized in {"NAME", "CANDIDATE NAME", "CONTACT", "CONTACT DETAILS"}:
-            continue
-        # Convert model-generated bullets into clean plain-text content for the fixed template.
-        sections.setdefault(current, []).append(line)
-
-    for heading in order:
-        content = sections.get(heading, [])
-        if not content:
-            continue
-        hp = document.add_paragraph(style="Heading 1")
-        hp.add_run(heading)
-        for item in content:
-            item = re.sub(r"^[*•?)+\-\s]+", "", item).strip()
-            if not item or re.fullmatch(r"[*)?._\-\s]+", item):
-                continue
-            # A concise list-like line is formatted as a standard Word bullet; no decorative glyphs.
-            if len(item) < 350 and (";" in item or item.startswith(("- ", "• "))):
-                bp = document.add_paragraph(style="List Bullet")
-                bp.paragraph_format.left_indent = docx.shared.Inches(0.22)
-                bp.paragraph_format.first_line_indent = docx.shared.Inches(-0.12)
-                bp.add_run(item.lstrip("-• ").strip())
-            else:
-                bp = document.add_paragraph(item)
-                bp.paragraph_format.keep_together = True
-
-    # Consistent typography, left-aligned headings and readable body text throughout.
-    for para in document.paragraphs:
-        if para.style.name == "Heading 1":
-            para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
-            for run in para.runs:
-                run.bold = True
-                run.font.name = "Times New Roman"
-                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-                run.font.size = docx.shared.Pt(11)
-                run.font.color.rgb = purple
-        elif para is not name_p:
-            para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
-            for run in para.runs:
-                run.font.name = "Times New Roman"
-                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-                run.font.size = docx.shared.Pt(11)
-
-    footer = section.footer.paragraphs[0]
-    footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer.add_run("IPER PEPTECH | Professional Resume")
-    footer_run.font.name = "Times New Roman"
-    footer_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    footer_run.font.size = docx.shared.Pt(9)
-
-    out = BytesIO()
-    document.save(out)
-    return out.getvalue()
+    order=['PROFESSIONAL SUMMARY','SKILLS','EDUCATION','PROFESSIONAL EXPERIENCE','INTERNSHIPS','PROJECTS & ACHIEVEMENTS','PUBLICATIONS','CERTIFICATIONS','ACHIEVEMENTS','LEADERSHIP & ACTIVITIES','ADDITIONAL INFORMATION']
+    sections={k:[] for k in order}
+    current='PROFESSIONAL SUMMARY'
+    for raw in str(resume_text or '').splitlines():
+        line=raw.strip()
+        if not line: continue
+        line=re.sub(r'^\s{0,3}#{1,6}\s*','',line)
+        line=re.sub(r'\*{1,3}|__|`','',line).strip()
+        # Do not strip list brackets: they may contain structured list data that must be parsed.
+        normalized=re.sub(r'[^A-Z& -]','',line.upper()).strip()
+        normalized=re.sub(r'\s+',' ',normalized)
+        if normalized in aliases:
+            current=aliases[normalized]; continue
+        if normalized in {'NAME','CANDIDATE NAME','CONTACT','CONTACT DETAILS'}: continue
+        # Flatten a line that is actually a serialized list/dictionary.
+        lines=_resume_value_to_lines(line)
+        for item in lines:
+            item=str(item).strip()
+            if not item: continue
+            item=re.sub(r'^\s*(?:[-•*]+|\d+[.)])\s*','',item).strip()
+            if item: sections.setdefault(current,[]).append(item)
+    # Remove duplicate candidate name from summary if it is already in the document header.
+    candidate_names=[]
+    for k in ('PROFESSIONAL SUMMARY','SKILLS'):
+        sections[k]=[x for x in sections[k] if x.strip().casefold() not in {'inderpreet bhogal','name surname','candidate name'}]
+    return sections, order
 
 
-def build_iper_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
-    """Render the resume in an IPER-inspired format with grey section bars and no photo box."""
-    from io import BytesIO
-    from docx.shared import Inches, Pt, RGBColor
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
+def _set_cell_shading(cell, fill='D9D9D9'):
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
-    import zipfile
+    tcPr=cell._tc.get_or_add_tcPr()
+    shd=tcPr.find(qn('w:shd'))
+    if shd is None:
+        shd=OxmlElement('w:shd'); tcPr.append(shd)
+    shd.set(qn('w:fill'), fill)
 
-    document = docx.Document()
-    section = document.sections[0]
-    section.top_margin = Inches(0.48)
-    section.bottom_margin = Inches(0.48)
-    section.left_margin = Inches(0.62)
-    section.right_margin = Inches(0.62)
-    normal = document.styles["Normal"]
-    normal.font.name = "Arial"
-    normal.font.size = Pt(9.5)
-    normal.paragraph_format.space_after = Pt(2)
 
-    # Extract the IPER logo from the uploaded institutional template when bundled beside app.py.
-    logo_path = None
-    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Resume Format 2026(2).docx")
-    try:
-        if os.path.exists(template_path):
-            with zipfile.ZipFile(template_path) as zf:
-                candidates = [n for n in zf.namelist() if n.startswith("word/media/") and n.lower().endswith((".png", ".jpg", ".jpeg"))]
-                if candidates:
-                    ext = os.path.splitext(candidates[0])[1] or ".png"
-                    logo_path = os.path.join(tempfile.gettempdir(), "iper_resume_logo" + ext)
-                    with open(logo_path, "wb") as f:
-                        f.write(zf.read(candidates[0]))
-    except Exception:
-        logo_path = None
-
-    # Header: institutional logo at left and candidate contact details; intentionally no photo placeholder.
-    header_table = document.add_table(rows=1, cols=2)
-    header_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-    header_table.autofit = False
-    header_table.columns[0].width = Inches(1.15)
-    header_table.columns[1].width = Inches(5.9)
-    left, right = header_table.rows[0].cells
-    left.width = Inches(1.15); right.width = Inches(5.9)
-    if logo_path and os.path.exists(logo_path):
-        lp = left.paragraphs[0]
-        lp.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        try: lp.add_run().add_picture(logo_path, width=Inches(0.82))
-        except Exception: pass
-    rp = right.paragraphs[0]
-    rp.paragraph_format.space_after = Pt(2)
-    rr = rp.add_run(str(candidate_name or "Candidate").strip())
-    rr.bold = True; rr.font.name = "Arial"; rr.font.size = Pt(14); rr.font.color.rgb = RGBColor(55, 43, 91)
-    contacts = [x.strip() for x in (phone, email, linkedin) if x and x.strip()]
+def build_professional_resume_docx(resume_text, candidate_name, email='', phone='', linkedin='', format_type='modern'):
+    """Build a polished Word resume in either modern ATS or IPER institutional style."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    document=docx.Document()
+    section=document.sections[0]
+    is_iper=str(format_type).lower() in {'iper','option b','b'}
+    section.top_margin=Inches(0.55 if is_iper else 0.62)
+    section.bottom_margin=Inches(0.55 if is_iper else 0.62)
+    section.left_margin=Inches(0.62 if is_iper else 0.72)
+    section.right_margin=Inches(0.62 if is_iper else 0.72)
+    purple=RGBColor(83,49,131)
+    navy=RGBColor(31,49,75)
+    font='Arial' if is_iper else 'Aptos'
+    styles=document.styles
+    normal=styles['Normal']; normal.font.name=font; normal._element.rPr.rFonts.set(qn('w:eastAsia'),font)
+    normal.font.size=Pt(9.5 if is_iper else 10); normal.font.color.rgb=RGBColor(45,45,45)
+    normal.paragraph_format.space_after=Pt(2.5); normal.paragraph_format.line_spacing=1.0
+    sections, order=_parse_resume_sections(resume_text)
+    # A polished name/contact header, no photo placeholder.
+    p=document.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.LEFT if is_iper else WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_after=Pt(2)
+    r=p.add_run(str(candidate_name or 'Candidate').strip()); r.bold=True; r.font.name=font; r.font.size=Pt(21 if not is_iper else 18); r.font.color.rgb=purple if is_iper else navy
+    contacts=[x.strip() for x in (email,phone,linkedin) if x and str(x).strip()]
     if contacts:
-        cp = right.add_paragraph(" | ".join(contacts))
-        cp.paragraph_format.space_after = Pt(2)
-        for run in cp.runs: run.font.size = Pt(8.5)
-    document.add_paragraph().paragraph_format.space_after = Pt(1)
+        cp=document.add_paragraph('  |  '.join(contacts)); cp.alignment=WD_ALIGN_PARAGRAPH.LEFT if is_iper else WD_ALIGN_PARAGRAPH.CENTER
+        cp.paragraph_format.space_after=Pt(7)
+        for rr in cp.runs: rr.font.size=Pt(8.5); rr.font.color.rgb=RGBColor(85,85,85)
+    # Modern template uses a thin purple rule; IPER template uses grey section bars.
+    if not is_iper:
+        p=document.add_paragraph(); p.paragraph_format.space_after=Pt(4)
+        pPr=p._p.get_or_add_pPr(); borders=OxmlElement('w:pBdr'); bottom=OxmlElement('w:bottom'); bottom.set(qn('w:val'),'single'); bottom.set(qn('w:sz'),'12'); bottom.set(qn('w:space'),'1'); bottom.set(qn('w:color'),'533183'); borders.append(bottom); pPr.append(borders)
+    else:
+        p=document.add_paragraph('IPER  |  INSTITUTE OF PROFESSIONAL EDUCATION AND RESEARCH')
+        p.alignment=WD_ALIGN_PARAGRAPH.LEFT; p.paragraph_format.space_after=Pt(5)
+        for rr in p.runs: rr.bold=True; rr.font.size=Pt(8); rr.font.color.rgb=purple
 
-    aliases = {
-        "PROFESSIONAL SUMMARY":"CAREER OBJECTIVE", "SUMMARY":"CAREER OBJECTIVE", "PROFILE":"CAREER OBJECTIVE", "CAREER OBJECTIVE":"CAREER OBJECTIVE", "OBJECTIVE":"CAREER OBJECTIVE",
-        "EDUCATION":"EDUCATION QUALIFICATION", "EDUCATIONAL QUALIFICATIONS":"EDUCATION QUALIFICATION", "EDUCATION QUALIFICATION":"EDUCATION QUALIFICATION", "ACADEMIC QUALIFICATIONS":"EDUCATION QUALIFICATION",
-        "SKILLS":"SKILLS & PROFICIENCY", "KEY SKILLS":"SKILLS & PROFICIENCY", "TECHNICAL SKILLS":"SKILLS & PROFICIENCY", "CORE SKILLS":"SKILLS & PROFICIENCY", "CORE COMPETENCIES":"SKILLS & PROFICIENCY",
-        "EXPERIENCE":"PROFESSIONAL EXPERIENCE", "WORK EXPERIENCE":"PROFESSIONAL EXPERIENCE", "PROFESSIONAL EXPERIENCE":"PROFESSIONAL EXPERIENCE", "EMPLOYMENT HISTORY":"PROFESSIONAL EXPERIENCE",
-        "INTERNSHIP":"INTERNSHIP", "INTERNSHIPS":"INTERNSHIP", "PROJECTS":"PROJECTS & ACTIVITIES", "ACADEMIC PROJECTS":"PROJECTS & ACTIVITIES", "PROJECTS & ACTIVITIES":"PROJECTS & ACTIVITIES",
-        "CERTIFICATIONS":"ONLINE CERTIFICATIONS", "CERTIFICATES":"ONLINE CERTIFICATIONS", "COURSES":"ONLINE CERTIFICATIONS", "ONLINE CERTIFICATIONS":"ONLINE CERTIFICATIONS",
-        "ACHIEVEMENTS":"ACHIEVEMENTS", "AWARDS":"ACHIEVEMENTS", "PUBLICATIONS":"RESEARCH & PUBLICATIONS", "RESEARCH":"RESEARCH & PUBLICATIONS", "RESEARCH & PUBLICATIONS":"RESEARCH & PUBLICATIONS",
-        "ACTIVITIES":"EXTRA CURRICULAR ACTIVITIES", "EXTRACURRICULAR ACTIVITIES":"EXTRA CURRICULAR ACTIVITIES", "LEADERSHIP & ACTIVITIES":"EXTRA CURRICULAR ACTIVITIES", "VOLUNTEERING":"EXTRA CURRICULAR ACTIVITIES",
-        "INTERESTS":"INTERESTS & HOBBIES", "HOBBIES":"INTERESTS & HOBBIES", "ADDITIONAL INFORMATION":"ADDITIONAL INFORMATION", "LANGUAGES":"ADDITIONAL INFORMATION"
-    }
-    order = ["CAREER OBJECTIVE", "EDUCATION QUALIFICATION", "SKILLS & PROFICIENCY", "PROFESSIONAL EXPERIENCE", "INTERNSHIP", "PROJECTS & ACTIVITIES", "ONLINE CERTIFICATIONS", "RESEARCH & PUBLICATIONS", "ACHIEVEMENTS", "EXTRA CURRICULAR ACTIVITIES", "INTERESTS & HOBBIES", "ADDITIONAL INFORMATION"]
-    buckets = {h: [] for h in order}
-    current = "CAREER OBJECTIVE"
-    for raw in str(resume_text or "").splitlines():
-        line = clean_resume_draft(raw).strip()
-        if not line: continue
-        normalized = re.sub(r"[^A-Z& ]", "", line.upper()).strip()
-        normalized = re.sub(r"\s+", " ", normalized)
-        if normalized in aliases:
-            current = aliases[normalized]; continue
-        if normalized in {"NAME", "CANDIDATE NAME", "CONTACT", "CONTACT DETAILS"}: continue
-        line = re.sub(r"^[\s•*?)+\-\d.]+", "", line).strip()
-        if line: buckets.setdefault(current, []).append(line)
+    def add_section_heading(title):
+        hp=document.add_paragraph(); hp.paragraph_format.space_before=Pt(6 if is_iper else 7); hp.paragraph_format.space_after=Pt(3); hp.paragraph_format.keep_with_next=True
+        if is_iper:
+            pPr=hp._p.get_or_add_pPr(); shd=OxmlElement('w:shd'); shd.set(qn('w:fill'),'D9D9D9'); pPr.append(shd)
+            ind=OxmlElement('w:ind'); ind.set(qn('w:left'),'80'); ind.set(qn('w:right'),'80'); pPr.append(ind)
+        rr=hp.add_run(title.upper()); rr.bold=True; rr.font.name=font; rr.font.size=Pt(10 if is_iper else 10.5); rr.font.color.rgb=purple if not is_iper else RGBColor(30,30,30)
 
-    # Grey section bars matching the uploaded IPER format.
-    def add_section_bar(label):
-        table = document.add_table(rows=1, cols=1)
-        table.autofit = True
-        cell = table.cell(0, 0)
-        cell.text = label
-        tcPr = cell._tc.get_or_add_tcPr()
-        shd = OxmlElement("w:shd"); shd.set(qn("w:fill"), "D9D9D9"); tcPr.append(shd)
-        for para in cell.paragraphs:
-            para.paragraph_format.space_before = Pt(0); para.paragraph_format.space_after = Pt(0)
-            for run in para.runs:
-                run.bold = True; run.font.name = "Arial"; run.font.size = Pt(9.5)
-        spacer = document.add_paragraph(); spacer.paragraph_format.space_after = Pt(1); spacer.paragraph_format.space_before = Pt(0)
+    def clean_item(item):
+        item=str(item).strip().strip('"\'')
+        item=re.sub(r'^\s*(?:[-•*]+|\d+[.)])\s*','',item).strip()
+        return item
 
     for heading in order:
-        items = buckets.get(heading, [])
+        items=[clean_item(x) for x in sections.get(heading,[]) if clean_item(x)]
         if not items: continue
-        add_section_bar(heading)
-        if heading == "EDUCATION QUALIFICATION":
-            # Keep education readable and compact in a four-column table when entries are separated by pipes.
-            table = document.add_table(rows=1, cols=4)
-            table.style = "Table Grid"; table.alignment = WD_TABLE_ALIGNMENT.CENTER
-            heads = ["Degree / Certificate", "Institute / University", "Year", "Result"]
-            for c, val in zip(table.rows[0].cells, heads):
-                c.text = val
-                for r in c.paragraphs[0].runs: r.bold = True; r.font.size = Pt(8.5)
+        # Skip a generic summary that merely repeats the candidate name.
+        if heading=='PROFESSIONAL SUMMARY' and all(x.casefold()==str(candidate_name).casefold() for x in items): continue
+        add_section_heading(heading)
+        if heading=='EDUCATION' and is_iper:
+            table=document.add_table(rows=1, cols=3); table.alignment=WD_TABLE_ALIGNMENT.CENTER; table.style='Table Grid'
+            hdr=table.rows[0].cells
+            for c,txt in zip(hdr,['Degree / Certificate','Institute / University','Year / Result']):
+                c.text=txt; _set_cell_shading(c,'E7E3ED')
+                for rr in c.paragraphs[0].runs: rr.bold=True; rr.font.size=Pt(8.5)
             for item in items:
-                parts = [x.strip() for x in item.split("|")]
-                parts = (parts + [""] * 4)[:4]
-                cells = table.add_row().cells
-                for c, val in zip(cells, parts):
-                    c.text = val
-                    c.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-                    for para in c.paragraphs:
-                        para.paragraph_format.space_after = Pt(0)
-                        for r in para.runs: r.font.size = Pt(8.5)
-        else:
-            for item in items:
-                p = document.add_paragraph(style="List Bullet")
-                p.paragraph_format.left_indent = Inches(0.18)
-                p.paragraph_format.first_line_indent = Inches(-0.12)
-                p.paragraph_format.space_after = Pt(1)
-                p.add_run(item)
-
-    footer = section.footer.paragraphs[0]
-    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    fr = footer.add_run("IPER PEPTECH")
-    fr.font.name = "Arial"; fr.font.size = Pt(8); fr.font.color.rgb = RGBColor(100, 100, 100)
-    out = BytesIO(); document.save(out); return out.getvalue()
+                # Split conventional entries like 'MBA, IPER College, Bhopal – 70%' into
+                # qualification, institution and result without inventing missing details.
+                parts=[x.strip() for x in item.split(',') if x.strip()]
+                qualification=parts[0] if parts else item
+                institution='; '.join(parts[1:]) if len(parts)>1 else ''
+                result=''
+                match=re.search(r'\s+[–—-]\s+(.+)$', institution)
+                if match and re.search(r'(?:%|20\d{2}|pursuing|completed|ongoing)', match.group(1), re.I):
+                    result=match.group(1).strip()
+                    institution=institution[:match.start()].strip()
+                cells=table.add_row().cells
+                cells[0].text=qualification; cells[1].text=institution; cells[2].text=result
+            for row in table.rows:
+                for cell in row.cells:
+                    cell.vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    for para in cell.paragraphs:
+                        para.paragraph_format.space_after=Pt(1)
+                        for rr in para.runs: rr.font.name=font; rr.font.size=Pt(8.5)
+            continue
+        # Convert serialized-object labels to readable role/project headings and bullets.
+        for item in items:
+            if item.casefold() in {str(candidate_name).casefold(),'name surname'}: continue
+            if item.lower().startswith(('role:','title:','organisation:','institution:','duration:','date:','type:')):
+                para=document.add_paragraph(); para.paragraph_format.space_before=Pt(2); para.paragraph_format.space_after=Pt(1); para.paragraph_format.keep_with_next=True
+                rr=para.add_run(item); rr.bold=True; rr.font.size=Pt(9.5 if is_iper else 10)
+            elif item.lower().startswith(('responsibilities:','description:')):
+                val=item.split(':',1)[1].strip()
+                if val:
+                    para=document.add_paragraph(style='List Bullet'); para.paragraph_format.left_indent=Inches(.22); para.paragraph_format.first_line_indent=Inches(-.12); para.paragraph_format.space_after=Pt(1); para.add_run(val)
+            elif heading=='SKILLS':
+                # Split list-like comma-separated skill text into readable bullets.
+                skills=[x.strip() for x in re.split(r'\s*,\s*(?![^()]*\))',item) if x.strip()]
+                if len(skills)>1:
+                    for skill in skills:
+                        para=document.add_paragraph(style='List Bullet'); para.paragraph_format.left_indent=Inches(.22); para.paragraph_format.first_line_indent=Inches(-.12); para.paragraph_format.space_after=Pt(0); para.add_run(skill)
+                else:
+                    para=document.add_paragraph(style='List Bullet'); para.paragraph_format.left_indent=Inches(.22); para.paragraph_format.first_line_indent=Inches(-.12); para.paragraph_format.space_after=Pt(1); para.add_run(item)
+            elif heading in {'PROFESSIONAL EXPERIENCE','INTERNSHIPS','PROJECTS & ACHIEVEMENTS','PUBLICATIONS','CERTIFICATIONS','ACHIEVEMENTS','LEADERSHIP & ACTIVITIES'}:
+                para=document.add_paragraph(style='List Bullet'); para.paragraph_format.left_indent=Inches(.22); para.paragraph_format.first_line_indent=Inches(-.12); para.paragraph_format.space_after=Pt(1.5); para.add_run(item)
+            else:
+                para=document.add_paragraph(item); para.paragraph_format.keep_together=True
+    footer=section.footer.paragraphs[0]; footer.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    fr=footer.add_run('IPER PEPTECH  |  '+('IPER Resume Format' if is_iper else 'Professional Resume')); fr.font.name=font; fr.font.size=Pt(8); fr.font.color.rgb=RGBColor(105,105,105)
+    out=BytesIO(); document.save(out); return out.getvalue()
 
 def init_database():
     conn = get_db_connection()
@@ -6000,6 +5950,8 @@ if selected_nav == "Resume Checker & Job Matcher":
         st.session_state["resume_jd_input_option"] = "Upload File (PDF/DOCX/TXT)"
         st.session_state["resume_jd_paste_version"] = int(st.session_state.get("resume_jd_paste_version", 0)) + 1
         st.session_state.pop("generated_resume_docx_bytes", None)
+        st.session_state.pop("generated_resume_docx_modern", None)
+        st.session_state.pop("generated_resume_docx_iper", None)
         st.session_state.pop("last_resume_ats_result", None)
         st.session_state.pop("resume_upload_rejected", None)
         save_resume_workspace(student_id, {}, "", "", "")
@@ -6009,6 +5961,8 @@ if selected_nav == "Resume Checker & Job Matcher":
         st.session_state["resume_source_filename"] = ""
         st.session_state["resume_upload_version"] = int(st.session_state.get("resume_upload_version", 0)) + 1
         st.session_state.pop("generated_resume_docx_bytes", None)
+        st.session_state.pop("generated_resume_docx_modern", None)
+        st.session_state.pop("generated_resume_docx_iper", None)
         st.session_state.pop("last_resume_ats_result", None)
         save_resume_workspace(
             student_id, {}, "", st.session_state.get("resume_workspace_jd", ""), ""
@@ -6309,36 +6263,38 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
         if st.button("Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
             st.session_state["pending_reset_resume_workspace"] = True
             st.rerun()
-    st.markdown("### 4. Choose Your Resume Format")
-    st.caption("Both formats use the same verified resume content and JD-tailoring workflow. Option A is a modern single-column ATS-first format. Option B follows the IPER institutional style and omits the photo box.")
-    format_col_a, format_col_b = st.columns(2)
-    safe_candidate_filename = re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'
-    with format_col_a:
-        st.markdown("**Option A — Modern ATS Resume**")
-        st.caption("Clean single-column layout for job applications and ATS readability.")
-        if st.button("Generate Option A", key="create_resume_docx_a", use_container_width=True):
+    st.markdown("### 4. Download Your Resume")
+    st.caption("Choose a presentation format. Both use the same verified resume content and JD analysis.")
+    format_a, format_b = st.columns(2)
+    with format_a:
+        st.markdown("**Option A — Modern ATS**")
+        st.caption("Clean single-column layout for ATS readability.")
+        if st.button("Generate Modern ATS Resume", key="create_resume_docx_modern", use_container_width=True):
             if not resume_editor_text.strip():
                 st.warning("Please add or edit your resume content first.")
             else:
                 docx_email, docx_phone = extract_resume_contacts(resume_editor_text)
                 if not docx_email: docx_email = str(st.session_state.get("student_email", "") or "").strip()
-                st.session_state["generated_resume_docx_bytes_a"] = build_professional_resume_docx(clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone)
-                st.success("Option A is ready to download.")
-        if st.session_state.get("generated_resume_docx_bytes_a"):
-            st.download_button("Download Option A (.docx)", data=st.session_state["generated_resume_docx_bytes_a"], file_name=f"{safe_candidate_filename}_Resume_ATS.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="download_resume_docx_a", use_container_width=True)
-    with format_col_b:
-        st.markdown("**Option B — IPER Resume Format**")
-        st.caption("IPER-style grey section bars and institutional layout, without a photo placeholder.")
-        if st.button("Generate Option B", key="create_resume_docx_b", use_container_width=True):
+                st.session_state["generated_resume_docx_modern"] = build_professional_resume_docx(clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone, format_type="modern")
+                st.success("Modern ATS resume generated. Review the content before downloading.")
+    with format_b:
+        st.markdown("**Option B — IPER Format**")
+        st.caption("IPER-style grey section bars and structured education table; no photo box.")
+        if st.button("Generate IPER Resume", key="create_resume_docx_iper", use_container_width=True):
             if not resume_editor_text.strip():
                 st.warning("Please add or edit your resume content first.")
             else:
                 docx_email, docx_phone = extract_resume_contacts(resume_editor_text)
                 if not docx_email: docx_email = str(st.session_state.get("student_email", "") or "").strip()
-                st.session_state["generated_resume_docx_bytes_b"] = build_iper_resume_docx(clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone)
-                st.success("Option B is ready to download.")
-        if st.session_state.get("generated_resume_docx_bytes_b"):
-            st.download_button("Download Option B (.docx)", data=st.session_state["generated_resume_docx_bytes_b"], file_name=f"{safe_candidate_filename}_Resume_IPER.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="download_resume_docx_b", use_container_width=True)
+                st.session_state["generated_resume_docx_iper"] = build_professional_resume_docx(clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone, format_type="iper")
+                st.success("IPER-format resume generated. Review the content before downloading.")
+    dl_a, dl_b = st.columns(2)
+    with dl_a:
+        if st.session_state.get("generated_resume_docx_modern"):
+            st.download_button("Download Option A (.docx)", data=st.session_state["generated_resume_docx_modern"], file_name=f"{re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'}_Resume_ATS.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True, key="download_resume_modern")
+    with dl_b:
+        if st.session_state.get("generated_resume_docx_iper"):
+            st.download_button("Download Option B — IPER (.docx)", data=st.session_state["generated_resume_docx_iper"], file_name=f"{re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'}_Resume_IPER.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True, key="download_resume_iper")
 
 
 # SECTION 2: CAREER DEVELOPMENT
