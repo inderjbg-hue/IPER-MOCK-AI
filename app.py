@@ -4606,16 +4606,29 @@ elif selected_nav == "Industry & Company Insights":
         if sector_companies:
             for company in sector_companies:
                 with st.expander(company["Company"]):
-                    st.write(company.get("Note") or f"{company['Company']} operates in the {selected_sector} sector. Review its official website to understand its business, products/services and customers.")
+                    st.markdown("**Company at a glance**")
+                    st.write(company.get("Note") or f"{company['Company']} operates in the {selected_sector} sector. Use the official source below to verify its current business activities.")
+                    st.markdown("- **Vision and mission:** Read the company's exact current statements on its official website or latest annual report; do not rely on unverified quotes.")
+                    st.markdown("- **Products and services:** Identify its main product categories, services, brands and solutions.")
+                    st.markdown("- **Customers and markets:** Note whether it serves consumers, businesses, institutions, government, or a mix; identify its major markets.")
+                    st.markdown("- **Business model and revenue:** Explain how it earns revenue and how its products reach customers.")
+                    st.markdown("- **Competitors and positioning:** Name 2–3 relevant competitors and compare the company's value proposition.")
+                    st.markdown("- **Recent developments:** Check the latest official news, annual report, product launches and business priorities.")
+                    st.markdown("- **MBA career connection:** Identify relevant roles, required skills and how your specialisation could contribute.")
                     if company.get("Website"):
-                        st.link_button("Official company website", company["Website"])
-                    st.markdown("**Practice questions — answer in your own words**")
+                        st.link_button("Official company website — verify vision, mission and latest facts", company["Website"])
+                    st.markdown("**10 practice questions — no model answers**")
                     questions = [
-                        f"What do you know about {company['Company']}?",
-                        f"Which products or services does {company['Company']} offer, and who are its customers?",
-                        f"Who are the main competitors of {company['Company']}?",
-                        f"Why would you like to work with {company['Company']}?",
-                        f"How could your MBA specialisation add value to {company['Company']}?",
+                        f"What does {company['Company']} do, and what are its main businesses?",
+                        f"What are the vision and mission of {company['Company']}? Explain them in your own words.",
+                        f"What are the main products, services, brands or solutions offered by {company['Company']}?",
+                        f"Who are {company['Company']}'s key customers and target markets?",
+                        f"How does {company['Company']} earn revenue and deliver value to customers?",
+                        f"Who are its main competitors, and how is {company['Company']} different from them?",
+                        f"What recent development or business challenge could affect {company['Company']}?",
+                        f"What trends in the {selected_sector} sector could create opportunities or threats for {company['Company']}?",
+                        f"Which MBA roles or functions could you pursue at {company['Company']}, and what skills would they require?",
+                        f"Why do you want to work for {company['Company']}, and how could you contribute in your chosen role?",
                     ]
                     for i, question in enumerate(questions, 1):
                         st.markdown(f"{i}. {question}")
@@ -4631,16 +4644,29 @@ elif selected_nav == "Industry & Company Insights":
             st.caption(f"Showing {len(matches)} matching companies")
             for company in matches:
                 with st.expander(f"{company['Company']} · {company['Sector']}"):
-                    st.write(company.get("Note") or f"{company['Company']} operates in the {company['Sector']} sector. Explore its official website to learn about its business and offerings.")
+                    st.markdown("**Company at a glance**")
+                    st.write(company.get("Note") or f"{company['Company']} operates in the {company['Sector']} sector. Use the official source below to verify its current business activities.")
+                    st.markdown("- **Vision and mission:** Find the exact current statements in official company materials or its latest annual report.")
+                    st.markdown("- **Products and services:** Identify the company's major offerings, brands and solutions.")
+                    st.markdown("- **Customers and markets:** Identify its key customer groups and markets served.")
+                    st.markdown("- **Business model:** Explain how it creates value, reaches customers and earns revenue.")
+                    st.markdown("- **Competitors and positioning:** Compare it with 2–3 relevant competitors.")
+                    st.markdown("- **Recent developments:** Review official news, annual reports and current business priorities.")
+                    st.markdown("- **Career connection:** Note relevant MBA roles, skills and how you could contribute.")
                     if company.get("Website"):
-                        st.link_button("Official company website", company["Website"])
-                    st.markdown("**Practice questions — no model answers**")
+                        st.link_button("Official company website — verify vision, mission and latest facts", company["Website"])
+                    st.markdown("**10 practice questions — no model answers**")
                     for i, question in enumerate([
-                        f"What do you know about {company['Company']}?",
-                        f"What products/services does it offer, and who are its customers?",
-                        f"Who are its major competitors?",
-                        f"Why do you want to work with this company?",
-                        f"How could you contribute in the role you are applying for?",
+                        f"What does {company['Company']} do, and what are its main businesses?",
+                        f"What are the vision and mission of {company['Company']}?",
+                        f"What are its main products, services, brands or solutions?",
+                        f"Who are its key customers and target markets?",
+                        f"How does it earn revenue and deliver value to customers?",
+                        f"Who are its main competitors, and what differentiates this company?",
+                        f"What recent development or challenge could affect this company?",
+                        f"What opportunities and threats does the {company['Sector']} sector present?",
+                        f"Which MBA roles could you pursue here, and what skills would they require?",
+                        f"Why do you want to work here, and how could you contribute in your chosen role?",
                     ], 1):
                         st.markdown(f"{i}. {question}")
         else:
