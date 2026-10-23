@@ -6106,74 +6106,14 @@ Resume text:
             "learning a skill, do not claim proficiency in it.\n\n"
             "Remember: five genuine, explainable skills are better than fifteen skills you cannot confidently discuss in an interview."
         )
-    # Do not treat the About Myself answer as a resume. The editor starts empty until
-    # a structured master resume is generated or the student's own resume is verified.
-    # This prevents interview-style prose from becoming the entire downloaded resume.
-        pending_resume_text = st.session_state.pop("pending_resume_editor_text", None)
-        if pending_resume_text is not None:
-            st.session_state["resume_editor_text"] = pending_resume_text
-        gen_col, gen_note_col = st.columns([1, 2])
-        with gen_col:
-            if st.button(" Generate Master Professional Resume", key="generate_master_professional_resume", use_container_width=True):
-                profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
-                verified_resume = st.session_state.get("resume_details") or {}
-                if not profile_context and not verified_resume:
-                    st.warning("First complete About Myself or upload and verify your own resume so the builder has factual information to work with.")
-                else:
-                    master_prompt = f"""You are a senior executive resume writer and ATS resume specialist. Produce a complete, structured MASTER PROFESSIONAL RESUME, not an About Myself answer, biography, cover letter, or list of profile fields.
-    Candidate full name: {account_name}
-    Registered email: {st.session_state.get('student_email', '')}
-    Verified resume facts (the source of truth): {json.dumps(verified_resume, ensure_ascii=False)}
-    Student profile facts (use as supporting source material, not as a section to copy verbatim): {json.dumps(profile_context, ensure_ascii=False)}
-    Target Job Description, if provided: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:8000]}
-    Current draft, if any: {st.session_state.get('resume_editor_text', '')[:8000]}
-
-    Write the document using this professional structure, including each section that has factual support:
-    PROFESSIONAL SUMMARY
-    CORE COMPETENCIES
-    EDUCATION
-    INTERNSHIP EXPERIENCE / PROFESSIONAL EXPERIENCE
-    ACADEMIC PROJECTS
-    TECHNICAL & DIGITAL SKILLS
-    CERTIFICATIONS & TRAINING
-    ACHIEVEMENTS
-    LEADERSHIP & EXTRACURRICULAR ACTIVITIES
-    PROFESSIONAL INTERESTS
-
-    Requirements:
-    - The Professional Summary must be a concise resume summary of 2-4 lines, not an interview answer. Never use first-person wording such as I, me, or my.
-    - Education must list each degree/program, institution, and completion or expected completion year where supplied. Keep undergraduate and postgraduate entries separate.
-    - Experience and internships must be separate entries with role, organisation, date/year, and 2-4 achievement/responsibility bullets where the supplied facts support them. Do not turn a short profile paragraph into a fake job history.
-    - Core Competencies and Skills must be concise lists, not paragraphs. Only include skills evidenced by the supplied facts.
-    - Projects, certifications, achievements, activities, and interests must each be placed under the correct heading. Do not create sections filled with 'None'. Omit unsupported sections.
-    - Include only facts supported by the verified resume or profile. Never invent employers, responsibilities, dates, degrees, marks, tools, projects, metrics, achievements, or contact details.
-    - Where useful facts are missing, add a short [ADD DETAILS: ...] placeholder only in the relevant section. Do not invent details to fill space.
-    - Do not include explanations about how the resume was created, interview-ready text, markdown fences, horizontal rules, tables, columns, icons, emojis, decorative symbols, or a footer as resume content.
-    - Use uppercase section headings and concise, professional bullets beginning with '- '. The output should be ready to format as a 1-2 page ATS-friendly resume.
-    - If a JD is supplied, prioritise relevant truthful skills and experience but retain a master-resume structure.
-    Return only the resume itself."""
-                    with st.spinner("Building your master resume from your saved profile and verified information..."):
-                        master_text = get_groq_response(master_prompt)
-                    if master_text and not master_text.strip().lower().startswith("error"):
-                        cleaned_master = master_text.strip().replace("```text", "").replace("```", "").strip()
-                        required_resume_sections = ("PROFESSIONAL SUMMARY", "EDUCATION")
-                        if all(section_name in cleaned_master.upper() for section_name in required_resume_sections) and len(cleaned_master) >= 500:
-                            st.session_state["pending_resume_editor_text"] = cleaned_master
-                            st.success("Structured master resume generated. Review and edit every section before saving or downloading.")
-                            st.rerun()
-                        else:
-                            st.error("The AI response did not contain enough structured resume content. Please try Generate Master Professional Resume again; your current draft has not been replaced.")
-                    else:
-                        st.error("The master resume could not be generated right now. Your current draft remains unchanged.")
-        with gen_note_col:
-            st.caption("Creates a clean, ATS-friendly master resume using the signed-in student's saved profile and verified resume facts. AI must not invent qualifications or experience.")
+        # Students can edit their uploaded/verified resume, then tailor it to the target job.
         resume_editor_text = st.text_area(
             "Editable Professional Resume Draft", key="resume_editor_text", height=360,
-            placeholder="Generate a master resume from your profile or upload and verify your own resume, then edit the content here..."
+            placeholder="Review or edit your uploaded/verified resume here, then tailor it to the target job..."
         )
         ai_edit_col, ai_edit_help_col = st.columns([1, 2])
         with ai_edit_col:
-            if st.button(" Tailor Resume to This JD", key="ai_tailor_resume_to_jd", use_container_width=True):
+            if st.button("Tailor Resume to This Job", key="ai_tailor_resume_to_jd", use_container_width=True):
                 if not st.session_state.get("resume_details"):
                     st.warning("Upload and verify your own resume first.")
                 elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
@@ -6521,7 +6461,12 @@ Return ONLY valid JSON in this structure:
             if len(jd_override.strip()) < 80:
                 st.warning("Please attach or paste a fuller Job Description so the questions reflect the actual role.")
             else:
-                prompt = f"""You are a strict, practical MBA placement interviewer at IPER Bhopal. Generate exactly {jd_question_count} interview questions from the supplied Job Description. Difficulty: {jd_question_level}. Cover role responsibilities, required skills, tools/technical knowledge, business judgement, behavioural examples and resume evidence where relevant. Do not invent company facts. Avoid generic duplicates. Label each question with its category and difficulty. Include a brief note after each question explaining which JD requirement it tests. Return a numbered, readable list only.
+                prompt = f"""You are a strict, practical MBA placement interviewer and answer coach at IPER Bhopal. Generate exactly {jd_question_count} interview questions from the supplied Job Description. Difficulty: {jd_question_level}. Cover role responsibilities, required skills, tools/technical knowledge, business judgement, behavioural examples and resume evidence where relevant. Do not invent company facts. Avoid generic duplicates. For EVERY question, include all four parts in this exact order:
+1. **Question:** the interview question.
+2. **Illustrative Answer:** a clear, credible sample answer that directly answers the question, in simple professional language suitable for an MBA student. For behavioural questions, use a STAR-style example but clearly label any hypothetical details as an example to adapt; never imply invented experiences are the student's real experience. For technical or role-specific questions, give a factually sound answer with steps/examples where useful.
+3. **Logic Behind the Answer:** explain why this answer works, what the interviewer is assessing, and how it connects to the JD requirement.
+4. **Personalise Before Using:** briefly identify details the student must replace with their own genuine experience, figures, knowledge or examples. Do not encourage memorising answers or making false claims.
+Label each question with its category and difficulty. Ensure the answer is substantive, not just a hint or outline. Do not output only the logic. Return a numbered, readable list only.
 JOB DESCRIPTION:
 {jd_override[:12000]}"""
                 with st.spinner("Generating role-specific interview questions from the JD..."):
@@ -7066,10 +7011,10 @@ Return ONLY valid JSON matching this exact structure:
 # SECTION 4: GROUP DISCUSSION HUB
 elif selected_nav == "Group Discussion Hub":
     st.title("Group Discussion Hub")
-    st.caption("Prepare for the GD and practise directly with the IPER PEPTECH AI Voice GD. Your AI Voice GD feedback is saved automatically for Progress and Performance Dashboard.")
+    st.caption("Prepare for group discussions and assess recorded GD performances.")
 
-    gd_prep_tab, gd_practice_tab, gd_video_tab = st.tabs([
-        " GD Preparation", " AI Voice GD", " Video Assessment"
+    gd_prep_tab, gd_video_tab = st.tabs([
+        " GD Preparation", " Video Assessment"
     ])
 
     with gd_prep_tab:
@@ -7104,22 +7049,6 @@ elif selected_nav == "Group Discussion Hub":
         if st.button("Get AI Perspective Guidance", use_container_width=True, key="get_gd_guidance_searchable"):
             with st.spinner("Preparing balanced perspectives..."):
                 st.markdown(get_gd_ai_guidance(topic, st.session_state.get("first_name", "Student")))
-
-    with gd_practice_tab:
-        upload_topic = st.session_state.get("live_gd_topic", "")
-        st.markdown("###  IPER PEPTECH AI Voice GD Practice")
-        st.caption("No video upload is required. Choose a topic, start the microphone, speak naturally and practise against an AI participant.")
-        live_topic = st.text_input(
-            "GD Topic",
-            value=upload_topic,
-            placeholder="Example: Is artificial intelligence a threat to jobs?",
-            key="live_gd_topic"
-        ).strip()
-        if not live_topic:
-            live_topic = "Is artificial intelligence a threat to employment?"
-
-        st.markdown("**Practice design:** 5–10 minute GD • short AI interventions • live speech transcription • filler-word tracking • final practice transcript")
-        _render_live_gd_voice_room(live_topic, st.session_state.get("first_name", "Student"))
 
     with gd_video_tab:
         st.markdown("###  Upload and Assess a Recorded Group Discussion")
@@ -7393,8 +7322,6 @@ elif selected_nav == "Group Discussion Hub":
                         st.warning("No feedback was saved. Enter a Scholar ID for at least one participant and try again.")
                     for save_error in save_errors:
                         st.error(save_error)
-
-    # AI Voice GD remains available and its feedback continues to appear in Progress and Performance Dashboard.
 
 # SECTION 5: PERFORMANCE DASHBOARD
 
