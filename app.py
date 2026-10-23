@@ -1411,8 +1411,9 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
 
     # Parse the text into sections, retaining content while mapping common heading variants.
     section_aliases = {
+        "CAREER OBJECTIVE": "CAREER OBJECTIVE", "OBJECTIVE": "CAREER OBJECTIVE",
         "PROFESSIONAL SUMMARY": "PROFESSIONAL SUMMARY", "SUMMARY": "PROFESSIONAL SUMMARY",
-        "PROFILE": "PROFESSIONAL SUMMARY", "CAREER OBJECTIVE": "PROFESSIONAL SUMMARY", "OBJECTIVE": "PROFESSIONAL SUMMARY",
+        "PROFILE": "PROFESSIONAL SUMMARY",
         "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS", "KEY COMPETENCIES": "SKILLS",
         "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
         "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
@@ -1423,9 +1424,9 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         "POSITIONS OF RESPONSIBILITY": "LEADERSHIP & ACTIVITIES", "LEADERSHIP": "LEADERSHIP & ACTIVITIES", "ACTIVITIES": "LEADERSHIP & ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "LEADERSHIP & ACTIVITIES", "VOLUNTEERING": "LEADERSHIP & ACTIVITIES",
         "PUBLICATIONS": "ADDITIONAL INFORMATION", "RESEARCH": "ADDITIONAL INFORMATION", "PROFESSIONAL INTERESTS": "ADDITIONAL INFORMATION", "INTERESTS": "ADDITIONAL INFORMATION", "LANGUAGES": "ADDITIONAL INFORMATION", "PROFESSIONAL AFFILIATIONS": "ADDITIONAL INFORMATION", "PERSONAL DETAILS": "ADDITIONAL INFORMATION", "REFERENCES": "ADDITIONAL INFORMATION"
     }
-    order = ["PROFESSIONAL SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"]
+    order = ["CAREER OBJECTIVE", "PROFESSIONAL SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"]
     sections = {key: [] for key in order}
-    current = "PROFESSIONAL SUMMARY"
+    current = "CAREER OBJECTIVE"
     for raw in str(resume_text or "").splitlines():
         line = raw.strip()
         if not line:
@@ -1443,6 +1444,9 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         # Convert model-generated bullets into clean plain-text content for the fixed template.
         sections.setdefault(current, []).append(line)
 
+    # Career Objective is the intended opening profile statement. The tailoring workflow
+    # must not include a Professional Summary; ignore legacy summary headings in downloads.
+    sections["PROFESSIONAL SUMMARY"] = []
     for heading in order:
         content = sections.get(heading, [])
         if not content:
@@ -1453,8 +1457,9 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
             item = re.sub(r"^[*•?)+\-\s]+", "", item).strip()
             if not item or re.fullmatch(r"[*)?._\-\s]+", item):
                 continue
-            # A concise list-like line is formatted as a standard Word bullet; no decorative glyphs.
-            if len(item) < 350 and (";" in item or item.startswith(("- ", "• "))):
+            # Format resume entries as proper bullets; keep objective and longer prose as paragraphs.
+            list_sections = {"SKILLS", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"}
+            if heading in list_sections and len(item) < 500:
                 bp = document.add_paragraph(style="List Bullet")
                 bp.paragraph_format.left_indent = docx.shared.Inches(0.22)
                 bp.paragraph_format.first_line_indent = docx.shared.Inches(-0.12)
@@ -3162,35 +3167,11 @@ Do not invent facts. When evidence is limited, clearly say the feedback is based
     return get_groq_response(prompt)
 
 def generate_career_objective_and_power_words(resume_details, jd_text, student_name):
-    """Create evidence-based career objectives tailored to the supplied JD."""
-    prompt = f"""You are a careful ATS resume editor and MBA placement advisor at IPER Bhopal.
-Create three concise career-objective options tailored to the actual role and priorities in the supplied Job Description.
-Use powerful, specific verbs and relevant role keywords naturally, but do not exaggerate or claim expertise, experience, skills, achievements, or outcomes not supported by the candidate evidence. Do not merely copy the JD. Do not describe a fresher as experienced unless the evidence supports it. Prefer a clear contribution the candidate can realistically make and a credible development goal.
-Candidate: {student_name}
-Verified resume/profile evidence: {json.dumps(resume_details, ensure_ascii=False)}
-Target Job Description: {str(jd_text or '')[:9000]}
-Return ONLY valid JSON with keys: CareerObjectives (exactly 3 options), PowerWords (5 useful words/phrases grounded in the JD), WhereToUseThem (5 matching usage suggestions). Simple, professional language. If evidence is limited, keep objectives broad and truthful."""
-    return get_groq_response(prompt)
-
-
-def strengthen_resume_wording(resume_text, jd_text="", student_name="Candidate", profile_evidence=None):
-    """Refine terse resume notes into clear professional wording without adding facts."""
-    prompt = f"""You are an expert ATS resume editor for IPER PEPTECH. Rewrite the candidate's existing resume content to be clear, concise, professional, and achievement-oriented while preserving every fact.
-Rules:
-- Convert shorthand into polished, grammatically correct resume wording. Example: 'Winner Karate State Level' may become 'Winner, State-Level Karate Competition' only if that is exactly what the source means; do not invent a year, medal, rank, event name, or details.
-- Use strong action verbs where the source supports an action. Do not turn participation into leadership, a general achievement into a quantified result, or an activity into employment.
-- Never invent numbers, impact, awards, dates, employers, responsibilities, qualifications, skills, publications, or proficiency.
-- Tailor emphasis and wording to the JD only where the candidate's evidence supports it. Do not add JD keywords as skills unless supported.
-- Keep contact details, names, education, grades, employers, dates, and claims unchanged in meaning.
-- Use standard ATS headings and simple hyphen bullets. No tables, columns, Markdown, JSON, commentary, or placeholders.
-- Keep the candidate's existing sections and return the full revised resume only.
-Candidate: {student_name}
-Verified profile evidence: {json.dumps(profile_evidence or {}, ensure_ascii=False)}
-Current resume text:
-{str(resume_text or '')[:10000]}
-Target Job Description (may be empty):
-{str(jd_text or '')[:9000]}
-"""
+    prompt = f"""You are an MBA placement advisor at IPER Bhopal. Help {student_name} create a truthful, tailored career objective.
+Use only information supported by the resume and job description. Do not invent experience.
+Resume: {json.dumps(resume_details)}
+Job Description: {jd_text}
+Return ONLY valid JSON with keys: CareerObjectives (3 options), PowerWords (5 tailored words/phrases), WhereToUseThem (5 matching usage suggestions). Use simple, professional language for an MBA fresher."""
     return get_groq_response(prompt)
 
 def generate_certification_advice(resume_details, jd_text, student_name):
@@ -5958,64 +5939,38 @@ Resume text:
                 elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
                     st.warning("Add or upload the target Job Description first.")
                 else:
-                    active_jd = str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip()
-                    profile_context = {
-                        key: str(profile.get(key, "") or "").strip()
-                        for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"]
-                        if str(profile.get(key, "") or "").strip()
-                    }
-                    source_resume_text = str(resume_editor_text or "").strip()
-                    extracted_email, extracted_phone = extract_resume_contacts(
-                        source_resume_text + "\n" + json.dumps(st.session_state.get("resume_details") or {}, ensure_ascii=False)
-                    )
-                    combined_prompt = f"""You are the integrated ATS resume editor for IPER PEPTECH. Complete the ENTIRE resume-tailoring task in one pass: improve terse wording, tailor relevant content to the supplied job description, and write a role-aligned CAREER OBJECTIVE.
+                    profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
+                    source_resume_text = str(resume_editor_text or "") + "\n" + json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)
+                    extracted_email, extracted_phone = extract_resume_contacts(source_resume_text)
+                    edit_prompt = f"""You are the expert ATS resume editor for IPER PEPTECH. Produce a polished, one-column, ATS-friendly resume tailored to the target job description. Use plain-text headings and clean, concise bullets. Do not use Markdown decoration, tables, columns, icons, emojis, text boxes, or numbered-list clutter. Start with the candidate's full name, then contact details only if present in the student's own resume. Never invent contact details.
 
-OUTPUT AND FORMATTING:
-- Return only the complete resume as clean plain text, with standard ATS headings and simple hyphen bullets. No Markdown, JSON, tables, columns, icons, commentary, or placeholders.
-- Start with the candidate's full name, then email and phone only if found in the candidate's own materials.
-- Use clear headings where evidence supports them, such as CAREER OBJECTIVE, PROFESSIONAL SUMMARY, SKILLS, EDUCATION, EXPERIENCE, INTERNSHIP, PROJECTS, CERTIFICATIONS, ACHIEVEMENTS, and ACTIVITIES.
-- Keep the resume concise, readable, professional, and suitable for an ATS.
-
-CAREER OBJECTIVE:
-- Include one concise CAREER OBJECTIVE aligned to the actual role and priorities in the JD.
-- Use strong, relevant action words and keywords naturally, but only make claims supported by the candidate's evidence.
-- State the kind of contribution the candidate can credibly make; do not simply copy the JD or use inflated claims such as 'expert', 'exceptional', or 'proven track record' without evidence.
-
-REFINE SHORT OR ROUGH NOTES:
-- Turn fragments into grammatically correct, professional resume wording while preserving their exact meaning. For example, 'Winner Karate State Level' may become 'Winner, State-Level Karate Competition' if that accurately reflects the source.
-- Use action verbs only when the evidence supports the action. Do not convert participation into leadership, a winner into a medalist, or a general achievement into a quantified result.
-- Never invent dates, medals, rankings, event names, metrics, awards, impact, duties, employers, qualifications, skills, publications, or experience.
-
-TRUTH AND EVIDENCE RULES:
-- Treat the uploaded resume and verified profile as evidence. Use the About Myself profile to clarify facts, not to invent missing details.
-- Keep names, contact details, education, percentages/grades, employers, dates, and achievements unchanged in meaning.
-- Include JD keywords only where supported. Do not add a skill just because it appears in the JD.
-- Do not invent or exaggerate any qualification, skill, employer, metric, responsibility, outcome, or achievement.
-- Do not include unsupported claims from prior AI-generated drafts unless supported by the candidate's own resume or verified profile.
-- If a section has no supported content, omit it rather than adding filler or placeholder text.
-
-Candidate account name: {account_name}
-Candidate email from own materials (use only if present): {extracted_email}
-Candidate phone from own materials (use only if present): {extracted_phone}
-Verified resume data: {json.dumps(st.session_state.get("resume_details") or {}, ensure_ascii=False)}
-About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
-Current editable resume (primary source to refine): {source_resume_text[:10000]}
-Target Job Description: {active_jd[:9000]}
-"""
-                    with st.spinner("Refining your wording, aligning the career objective, and tailoring the full resume to the JD..."):
-                        tailored_text = get_groq_response(combined_prompt)
-                    if tailored_text and not tailored_text.strip().lower().startswith(("execution error", "groq api key is missing", "error")):
-                        cleaned_tailored = clean_resume_draft(tailored_text)
-                        if len(cleaned_tailored.split()) < 20:
-                            st.error("The generated resume appears incomplete. Your current draft remains unchanged. Please try again.")
-                        else:
-                            st.session_state["pending_resume_editor_text"] = cleaned_tailored
-                            st.session_state["resume_workspace_jd"] = active_jd
-                            st.rerun()
+MANDATORY STRUCTURE RULES:
+1. Include exactly one CAREER OBJECTIVE section tailored specifically to the target JD and supported by the candidate's real education and experience.
+2. Do NOT include a PROFESSIONAL SUMMARY, SUMMARY, PROFILE, or ABOUT ME section anywhere in the final resume. The Career Objective replaces the Professional Summary.
+3. Keep the Career Objective concise (usually 1–2 sentences), specific to the target role/company, and use confident, powerful professional wording without exaggeration, generic filler, or unsupported claims.
+4. Retain relevant sections only when supported: CAREER OBJECTIVE, SKILLS, EDUCATION, EXPERIENCE, INTERNSHIP, PROJECTS, CERTIFICATIONS, ACHIEVEMENTS, ACTIVITIES.
+5. Refine rough notes and fragments into complete, professional, action-led sentences. In particular, turn achievement fragments such as 'Winner, Inter-College Debate Competition' into a clear sentence such as 'Won the Inter-College Debate Competition, demonstrating persuasive communication and structured argumentation.' Use only the fact stated; do not add dates, rankings, awards, metrics, or other details that were not supplied.
+6. Apply the same refinement to short achievements and activity notes throughout the resume while preserving their factual meaning. Do not turn participation into a win, imply leadership where none is stated, or invent measurable outcomes.
+7. Include JD keywords naturally only when the student's evidence supports them. Never invent or exaggerate qualifications, skills, employers, metrics, responsibilities, achievements, or results. Do not insert placeholder text.
+8. Keep 10th and 12th percentages, undergraduate/postgraduate education, and other supplied profile details when present and relevant; do not silently delete them.
+Return only the final resume text, with no commentary.
+    Candidate account name: {account_name}
+    Email extracted from student's own resume (use if present): {extracted_email}
+    Phone extracted from student's own resume (use if present): {extracted_phone}
+    Verified resume data: {json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)}
+    About Myself profile: {json.dumps(profile_context, ensure_ascii=False)}
+    Current editable resume: {resume_editor_text[:9000]}
+    Target Job Description: {str(jd_text or st.session_state.get('resume_workspace_jd', ''))[:9000]}"""
+                    with st.spinner("Tailoring your resume to the JD without adding unsupported claims..."):
+                        tailored_text = get_groq_response(edit_prompt)
+                    if tailored_text and not tailored_text.strip().lower().startswith("error"):
+                        st.session_state["pending_resume_editor_text"] = clean_resume_draft(tailored_text)
+                        st.rerun()
+                        st.rerun()
                     else:
-                        st.error("The tailored resume could not be generated. Your current draft remains unchanged.")
+                        st.error("The resume draft could not be generated. Your current draft remains unchanged.")
         with ai_edit_help_col:
-            st.caption("One action does the full job: strengthens rough achievement notes, creates a JD-aligned career objective, and tailors supported resume content. All claims must remain truthful; review the result before saving or downloading.")
+            st.caption("AI can reorganise and tailor your real experience to the JD. Review every line before saving or downloading; never keep a claim that is not true.")
 
     if st.button("Reset JD for Next Job", key="reset_resume_jd", use_container_width=True):
         st.session_state["pending_reset_jd_only"] = True
@@ -6186,27 +6141,7 @@ elif selected_nav == "Career Development":
                 try:
                     data=json.loads(raw.replace("```json","").replace("```","").strip())
                     st.markdown("### Career Objective Options")
-                    objectives = [str(x).strip() for x in data.get("CareerObjectives", []) if str(x).strip()]
-                    for i, objective in enumerate(objectives, 1):
-                        st.info(f"**Option {i}:** {objective}")
-                        if st.button(f"Use Objective {i} in My Resume", key=f"apply_career_objective_{i}", use_container_width=True):
-                            current_text = str(st.session_state.get("resume_editor_text", "") or "").strip()
-                            lines = current_text.splitlines()
-                            aliases = {"CAREER OBJECTIVE", "OBJECTIVE", "PROFESSIONAL OBJECTIVE"}
-                            start = next((idx for idx, line in enumerate(lines) if line.strip().strip(":").upper() in aliases), None)
-                            if start is not None:
-                                end = next((idx for idx in range(start + 1, len(lines)) if lines[idx].strip().upper() in {"PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE", "SKILLS", "KEY SKILLS", "EDUCATION", "EXPERIENCE", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE", "INTERNSHIP", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "ACTIVITIES"}), len(lines))
-                                lines[start:end] = ["CAREER OBJECTIVE", objective, ""]
-                            else:
-                                insert_at = next((idx for idx, line in enumerate(lines) if line.strip().upper() in {"PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE"}), None)
-                                block = ["CAREER OBJECTIVE", objective, ""]
-                                if insert_at is None:
-                                    lines = block + lines
-                                else:
-                                    lines[insert_at:insert_at] = block
-                            st.session_state["pending_resume_editor_text"] = clean_resume_draft("\n".join(lines))
-                            st.session_state["resume_workspace_jd"] = career_jd.strip()
-                            st.success("Objective selected. Open Resume Checker & Job Matcher to review it in your editable resume.")
+                    for i,x in enumerate(data.get("CareerObjectives",[]),1): st.info(f"**Option {i}:** {x}")
                     st.markdown("### Powerful Words Tailored to the JD")
                     for word,use in zip(data.get("PowerWords",[]),data.get("WhereToUseThem",[])): st.markdown(f"- **{word}** — {use}")
                 except Exception: st.markdown(raw)
