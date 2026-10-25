@@ -7189,17 +7189,11 @@ elif selected_nav == "Group Discussion Hub":
             raw_speakers = list(dict.fromkeys(str(seg.get("speaker") or "speaker_0") for seg in uploaded_segments))
             speaker_labels = {sid: f"Speaker {chr(65 + idx)}" for idx, sid in enumerate(raw_speakers[:26])}
             speaker_map = {sid: speaker_labels.get(sid, f"Speaker {sid}") for sid in raw_speakers}
-            # Read the diarised turns and extract names only when a speaker explicitly
-            # introduces themselves or is unambiguously named in the conversation.
+            # Keep stable diarisation labels in the participant-ID form. Transcript
+            # fragments or guessed names must never become Scholar-ID field labels.
             identity_conflicts = detect_gd_speaker_identity_conflicts(uploaded_segments)
-            if ENABLE_GD_AUTO_NAME_IDENTIFICATION:
-                speaker_map, name_identification_note = identify_gd_speaker_names(uploaded_segments, speaker_map)
-            else:
-                name_identification_note = "Automatic people/name identification is temporarily disabled; speakers remain labelled by first appearance."
-            # Never silently grade a diarisation ID that appears to contain two people's self-introductions.
-            for conflict_sid in identity_conflicts:
-                if conflict_sid in speaker_map:
-                    speaker_map[conflict_sid] = speaker_labels.get(conflict_sid, f"Speaker {conflict_sid}")
+            name_identification_note = "Speakers are labelled by first appearance. Enter the exact Scholar ID for each participant below; identity is linked by Scholar ID, not by guessed names."
+            speaker_map = {sid: speaker_labels.get(sid, f"Speaker {sid}") for sid in raw_speakers}
             speaker_records = {sid: {"name": speaker_map[sid], "scholar_id": ""} for sid in raw_speakers}
             if len(raw_speakers) > 7:
                 st.warning(f"{len(raw_speakers)} distinct voices were detected. The first seven are labelled Speaker A to Speaker G; additional detected voices remain labelled separately.")
@@ -7396,7 +7390,7 @@ elif selected_nav == "Group Discussion Hub":
             saved_report = st.session_state.get("uploaded_gd_report")
             if saved_report:
                 st.markdown("#### Step 4 — Save feedback to all participating students")
-                st.caption("Enter the Scholar ID for each detected speaker. The portal validates each ID against student accounts or the active roster, then saves the complete GD assessment to every mapped participant's history.")
+                st.caption("Enter the exact Scholar ID for each detected speaker. Labels stay as Speaker A, Speaker B, etc.; transcript name fragments are not used as identities. The portal validates each ID against student accounts or the active roster, then saves the complete GD assessment to every participant's history.")
                 final_speaker_map = st.session_state.get("uploaded_gd_final_speaker_map", {}) or {}
                 final_speaker_ids = list(final_speaker_map.keys())
                 with st.form("uploaded_gd_participant_scholar_mapping_form"):
