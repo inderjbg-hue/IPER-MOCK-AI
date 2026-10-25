@@ -7724,42 +7724,141 @@ elif selected_nav == "My Progress Dashboard":
                 st.caption(f"Topic / activity: {record['details']}")
                 saved_gd_report = record["item"].get("report_json") or {}
                 if isinstance(saved_gd_report, dict) and saved_gd_report.get("GroupAssessment"):
-                    # Uploaded diarised-video GD: show the complete shared report
-                    # (group assessment, all participant feedback, vocal tone,
-                    # body-language observations, and evidence) to each mapped student.
+                    # Professional, readable rendering for saved uploaded-video GD reports.
                     group = saved_gd_report.get("GroupAssessment") or {}
-                    st.markdown("### Group Assessment")
-                    st.markdown(f"**Overall Readiness — {grade_from_score(group.get('OverallScore', 0))}**")
-                    for label, key in (("Strengths", "Strengths"), ("Improvements", "Improvements")):
-                        st.markdown(f"**{label}**")
-                        values = group.get(key) or []
-                        if values:
-                            for value in values:
-                                st.write(f"• {value}")
+
+                    def _gd_render_items(label, value, empty_text="Not provided"):
+                        if value is None or value == "" or value == [] or value == {}:
+                            st.caption(empty_text)
+                            return
+                        if isinstance(value, dict):
+                            for sublabel, subvalue in value.items():
+                                st.markdown(f"**{str(sublabel).replace('_', ' ')}**")
+                                _gd_render_items(sublabel, subvalue, empty_text)
+                        elif isinstance(value, (list, tuple)):
+                            for entry in value:
+                                if isinstance(entry, (dict, list, tuple)):
+                                    st.markdown("---")
+                                    _gd_render_items(label, entry, empty_text)
+                                else:
+                                    st.markdown(f"- {entry}")
                         else:
-                            st.write("No specific points returned.")
+                            st.write(str(value))
+
+                    st.markdown("### Group Assessment")
+                    score_value = group.get("OverallScore")
+                    metric_cols = st.columns(4)
+                    metric_cols[0].metric("Overall Grade", grade_from_score(score_value or 0))
+                    for col, label, key in [
+                        (metric_cols[1], "Topic Handling", "TopicHandling"),
+                        (metric_cols[2], "Discussion Quality", "DiscussionQuality"),
+                        (metric_cols[3], "Participation Balance", "ParticipationBalance"),
+                    ]:
+                        val = group.get(key)
+                        col.metric(label, f"{val}/100" if val is not None else "—")
+
+                    strengths, improvements = st.columns(2)
+                    with strengths:
+                        with st.container(border=True):
+                            st.markdown("#### What Went Well")
+                            _gd_render_items("Strengths", group.get("Strengths"), "No strengths were recorded.")
+                    with improvements:
+                        with st.container(border=True):
+                            st.markdown("#### Areas to Improve")
+                            _gd_render_items("Improvements", group.get("Improvements"), "No improvement points were recorded.")
+                    for label, key in (("Team Dynamics", "TeamDynamics"), ("Conclusion Quality", "ConclusionQuality")):
+                        if group.get(key) is not None:
+                            st.caption(f"{label}: {group.get(key)}/100")
+
                     st.markdown("### Individual Participant Feedback")
-                    for person in saved_gd_report.get("Participants", []) or []:
-                        person_name = person.get("Name") or person.get("SpeakerID") or "Participant"
-                        person_grade = grade_from_score(person.get("OverallScore", 0))
-                        with st.expander(f"{person_name} — {person_grade}", expanded=False):
-                            for label, key in (("Communication", "CommunicationAssessment"), ("Knowledge", "KnowledgeAssessment"), ("Participation", "ParticipationAssessment"), ("Listening & Teamwork", "ListeningTeamworkAssessment"), ("Strengths", "Strengths"), ("Areas to Improve", "AreasToImprove"), ("Evidence", "Evidence"), ("Next Action Plan", "NextGDActionPlan")):
-                                value = person.get(key)
-                                if value:
-                                    st.markdown(f"**{label}**")
-                                    if isinstance(value, list):
-                                        for entry in value:
-                                            st.write(f"• {entry}")
-                                    elif isinstance(value, dict):
-                                        st.json(value)
-                                    else:
-                                        st.write(str(value))
-                    for section_title, section_key in (("Vocal Tone Assessment", "VocalToneAssessment"), ("Body Language Assessment", "NonVerbalAssessment")):
-                        section = saved_gd_report.get(section_key)
-                        if section:
-                            with st.expander(section_title, expanded=False):
-                                st.json(section)
-                    with st.expander("Full GD Assessment Report (complete details)", expanded=False):
+                    participant_list = saved_gd_report.get("Participants", []) or []
+                    if participant_list:
+                        for person in participant_list:
+                            person_name = person.get("Name") or person.get("SpeakerID") or "Participant"
+                            person_grade = grade_from_score(person.get("OverallScore", 0))
+                            scholar_display = person.get("ScholarID") or saved_gd_report.get("ParticipantScholarIDs", {}).get(person.get("SpeakerID", ""), "")
+                            title_text = f"{person_name} — {person_grade}" + (f" • {scholar_display}" if scholar_display else "")
+                            with st.expander(title_text, expanded=False):
+                                score_cols = st.columns(4)
+                                for col, label, key in [
+                                    (score_cols[0], "Overall", "OverallScore"),
+                                    (score_cols[1], "Communication", "CommunicationScore"),
+                                    (score_cols[2], "Knowledge", "KnowledgeScore"),
+                                    (score_cols[3], "Participation", "ParticipationScore"),
+                                ]:
+                                    val = person.get(key)
+                                    col.metric(label, grade_from_score(val or 0) if val is not None else "—")
+                                details_left, details_right = st.columns(2)
+                                with details_left:
+                                    st.markdown("**Strengths**")
+                                    _gd_render_items("Strengths", person.get("Strengths"), "No specific strengths recorded.")
+                                    st.markdown("**Evidence from the discussion**")
+                                    _gd_render_items("Evidence", person.get("Evidence"), "No evidence notes recorded.")
+                                with details_right:
+                                    st.markdown("**Areas to improve**")
+                                    _gd_render_items("Areas to Improve", person.get("AreasToImprove"), "No specific improvement points recorded.")
+                                    st.markdown("**Next action plan**")
+                                    _gd_render_items("Next Action Plan", person.get("NextGDActionPlan"), "No action plan recorded.")
+                                for label, key in [
+                                    ("Communication Assessment", "CommunicationAssessment"),
+                                    ("Knowledge Assessment", "KnowledgeAssessment"),
+                                    ("Participation Assessment", "ParticipationAssessment"),
+                                    ("Listening & Teamwork", "ListeningTeamworkAssessment"),
+                                    ("Analytical Thinking", "AnalyticalThinkingScore"),
+                                    ("Leadership", "LeadershipScore"),
+                                ]:
+                                    if person.get(key) not in (None, "", [], {}):
+                                        st.markdown(f"**{label}**")
+                                        _gd_render_items(label, person.get(key))
+                    else:
+                        st.info("Individual participant details were not included in this saved report.")
+
+                    st.markdown("### Delivery & Non-verbal Feedback")
+                    tone = saved_gd_report.get("VocalToneAssessment") or {}
+                    with st.expander("Vocal Tone & Delivery", expanded=False):
+                        if tone.get("AvailabilityNote"):
+                            st.info(tone.get("AvailabilityNote"))
+                        tone_items = [(k, v) for k, v in tone.items() if isinstance(v, dict)]
+                        if tone_items:
+                            for speaker_id, item in tone_items:
+                                st.markdown(f"**{saved_gd_report.get('ParticipantScholarIDs', {}).get(speaker_id, '')} {speaker_id}**".strip())
+                                if item.get("ToneSummary"):
+                                    st.write(item.get("ToneSummary"))
+                                tone_left, tone_right = st.columns(2)
+                                with tone_left:
+                                    st.markdown("*What went well*")
+                                    _gd_render_items("What Went Well", item.get("WhatWentWell"), "Not recorded.")
+                                with tone_right:
+                                    st.markdown("*To improve*")
+                                    _gd_render_items("To Improve", item.get("ToImprove"), "Not recorded.")
+                                if item.get("EvidenceLimitations"):
+                                    st.caption("Evidence limitations")
+                                    _gd_render_items("Evidence Limitations", item.get("EvidenceLimitations"))
+                        else:
+                            st.caption("No speaker-specific vocal-tone details were saved.")
+
+                    body = saved_gd_report.get("NonVerbalAssessment") or {}
+                    with st.expander("Body Language Assessment", expanded=False):
+                        if body.get("AvailabilityNote"):
+                            st.info(body.get("AvailabilityNote"))
+                        group_body = body.get("GroupBodyLanguage") or {}
+                        body_left, body_right = st.columns(2)
+                        with body_left:
+                            st.markdown("**Group observations**")
+                            _gd_render_items("Observations", group_body.get("Observations"), "No observations recorded.")
+                        with body_right:
+                            st.markdown("**Suggestions**")
+                            _gd_render_items("Suggestions", group_body.get("Suggestions"), "No suggestions recorded.")
+                        body_participants = body.get("Participants") or []
+                        if body_participants:
+                            st.markdown("**Participant observations**")
+                            for item in body_participants:
+                                with st.container(border=True):
+                                    st.markdown(f"**{item.get('Name') or item.get('SpeakerID') or 'Participant'}**")
+                                    _gd_render_items("Observations", item.get("Observations") or item.get("BodyLanguageObservations"), "No individual observations recorded.")
+                                    _gd_render_items("Suggestions", item.get("Suggestions") or item.get("BodyLanguageSuggestions"), "No individual suggestions recorded.")
+
+                    with st.expander("View raw assessment data (technical)", expanded=False):
                         st.json(saved_gd_report)
                 else:
                     _render_live_gd_feedback_summary(
