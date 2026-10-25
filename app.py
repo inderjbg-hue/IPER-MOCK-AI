@@ -43,7 +43,7 @@ st.set_page_config(page_title="IPER PEPTECH", layout="wide")
 
 # Temporarily disabled options (set to True to re-enable without removing their implementation).
 ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY = True
-ENABLE_VIDEO_INTERVIEW_MODE = True
+ENABLE_VIDEO_INTERVIEW_MODE = False
 ENABLE_GD_AUTO_NAME_IDENTIFICATION = False
 
 # Official IPER logo reused across login and authenticated portal branding.
@@ -4232,82 +4232,6 @@ else:
 # ------------------------------------------------------------------------------
 
 # ACCOUNT: PERSONAL DETAILS
-def assess_pi_nonverbal_delivery(video_path=None, audio_path=None):
-    """Assess observable interview body language and audible vocal delivery from actual media evidence."""
-    result = {
-        "BodyLanguageAssessment": {
-            "Status": "Not assessed",
-            "Observations": [],
-            "Strengths": [],
-            "Improvements": [],
-            "EvidenceLimitations": [],
-        },
-        "VocalDeliveryAssessment": {
-            "Status": "Not assessed",
-            "ToneAndPitch": [],
-            "PaceAndPauses": [],
-            "VolumeAndClarity": [],
-            "Strengths": [],
-            "Improvements": [],
-            "EvidenceLimitations": [],
-        },
-    }
-    if video_path and os.path.exists(video_path):
-        frames, frame_error = _extract_gd_visual_samples(video_path, max_frames=8)
-        if frames and openai_client:
-            try:
-                prompt = """You are assessing observable non-verbal communication in a recorded one-to-one job interview. Review every supplied frame as sparse samples, not continuous video. Return valid JSON only with keys: Observations (array of strings), Strengths (array), Improvements (array), EvidenceLimitations (array). Focus on visible posture, camera/interviewer orientation, facial expression, gestures and distracting movement only where clearly evidenced. Do not infer personality, honesty, intelligence or inner emotions. Do not penalize disability, culture, appearance or accent. Do not claim eye contact if camera angle makes it unobservable. Mention that findings are limited to sampled frames."""
-                content = [{"type":"text", "text":prompt}]
-                content.extend([{"type":"image_url", "image_url":{"url":"data:image/jpeg;base64,"+x, "detail":"low"}} for x in frames])
-                response = openai_client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"user","content":content}], temperature=0.2)
-                raw=(response.choices[0].message.content or "").replace("```json", "").replace("```", "").strip()
-                body=json.loads(raw)
-                result["BodyLanguageAssessment"] = {
-                    "Status":"Assessed from sampled video frames",
-                    "Observations": body.get("Observations", []),
-                    "Strengths": body.get("Strengths", []),
-                    "Improvements": body.get("Improvements", []),
-                    "EvidenceLimitations": body.get("EvidenceLimitations", ["Only sampled frames were reviewed; this is not continuous observation."]),
-                }
-            except Exception as exc:
-                result["BodyLanguageAssessment"].update({"Status":"Unavailable", "EvidenceLimitations":[f"Visual assessment failed: {exc}"]})
-        else:
-            result["BodyLanguageAssessment"].update({"Status":"Unavailable", "EvidenceLimitations":[frame_error or "OpenAI service is not configured; video body-language analysis is unavailable."]})
-    else:
-        result["BodyLanguageAssessment"].update({"Status":"Not available", "EvidenceLimitations":["No video file was available for visual assessment. Body language cannot be assessed from transcript alone."]})
-
-    if audio_path and os.path.exists(audio_path) and openai_client:
-        clip_path = None
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix="_pi_audio.wav") as tmp:
-                clip_path = tmp.name
-            cmd=["ffmpeg","-y","-i",audio_path,"-t","20","-vn","-ac","1","-ar","16000","-c:a","pcm_s16le",clip_path]
-            proc=subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
-            if proc.returncode != 0 or not os.path.exists(clip_path) or os.path.getsize(clip_path)<1000:
-                raise RuntimeError("Could not extract a usable speech-audio sample.")
-            with open(clip_path,"rb") as f: audio_b64=base64.b64encode(f.read()).decode("ascii")
-            response=openai_client.chat.completions.create(
-                model="gpt-audio-1.5", modalities=["text"],
-                messages=[{"role":"user","content":[
-                    {"type":"text","text":"Assess only audible delivery in this interview speech sample. Return valid JSON with keys ToneAndPitch (array), PaceAndPauses (array), VolumeAndClarity (array), Strengths (array), Improvements (array), EvidenceLimitations (array). Comment on audible pitch variation, steadiness, pace, pauses, volume and clarity only when supported by the recording. Do not infer personality, emotional state, intelligence or competence. Do not treat accent itself as a flaw. If music/noise or sample length limits assessment, state this."},
-                    {"type":"input_audio","input_audio":{"data":audio_b64,"format":"wav"}}
-                ]}]
-            )
-            raw=(response.choices[0].message.content or "").replace("```json", "").replace("```", "").strip()
-            voice=json.loads(raw)
-            result["VocalDeliveryAssessment"]={"Status":"Assessed from recorded speech audio", **{k:voice.get(k,[]) for k in ("ToneAndPitch","PaceAndPauses","VolumeAndClarity","Strengths","Improvements","EvidenceLimitations")}}
-        except Exception as exc:
-            result["VocalDeliveryAssessment"].update({"Status":"Unavailable", "EvidenceLimitations":[f"Audio delivery assessment failed: {exc}"]})
-        finally:
-            if clip_path:
-                try: os.remove(clip_path)
-                except OSError: pass
-    else:
-        result["VocalDeliveryAssessment"].update({"Status":"Not available", "EvidenceLimitations":["A saved speech-audio file and configured OpenAI service are required to assess tone and pitch. Transcript text alone cannot establish vocal delivery."]})
-    return result
-
-
-
 if selected_nav == "My Personal Details":
     st.title("My Personal Details")
     st.caption("Update the personal details linked to your own student account. Your Scholar ID cannot be changed here.")
@@ -6609,7 +6533,10 @@ elif selected_nav == "Interview Practice Room":
     st.markdown("---")
     col_mode, col_diff, col_cat = st.columns(3)
     with col_mode:
-        mode = st.radio("Practice Format:", ["Audio Response Mode", "Video Response Mode"])
+        mode = st.radio("Practice Format:", ["Audio Response Mode", "Video Response Mode (Temporarily Disabled)"])
+    if mode == "Video Response Mode (Temporarily Disabled)":
+        st.info("Video Interview is temporarily disabled. The option is retained and can be re-enabled later.")
+        mode = "Video Response Mode (Disabled)"
     with col_diff:
         difficulty = st.selectbox("Question Level:", ["Basic", "Intermediate", "Advanced"])
     with col_cat:
@@ -6622,34 +6549,78 @@ elif selected_nav == "Interview Practice Room":
     elif category == "Company Specific":
         selected_comp = st.selectbox("Select Target Recruiter:", IPER_RECRUITERS)
 
-    if st.button("Get Practice Question", use_container_width=True):
-        if category == "Resume-Based (Custom)":
-            if not st.session_state.get("resume_details"):
-                st.warning("Please upload your resume in the Resume Checker section first to generate custom questions.")
-            else:
-                prompt = f"""
-                Act as a supportive MBA interviewer at IPER Bhopal. 
-                Generate ONE interview question tailored to {st.session_state.get('first_name', 'Student')}'s resume profile:
-                {json.dumps(st.session_state['resume_details'])}
-                Difficulty level: {difficulty}
-                Return ONLY the question text clearly.
-                """
-                with st.spinner("Generating question..."):
-                    st.session_state["current_question"] = get_groq_response(prompt)
+    if st.button("Generate 5 Practice Questions", use_container_width=True):
+        if category == "Resume-Based (Custom)" and not st.session_state.get("resume_details"):
+            st.warning("Please upload your resume in the Resume Checker section first to generate custom questions.")
         else:
-            ctx = f"Domain: {category}, Level: {difficulty}"
-            if selected_spec: ctx += f", Track: {selected_spec}"
-            if selected_comp: ctx += f", Target Company: {selected_comp}"
-            if st.session_state["resume_details"]: ctx += f", Candidate Context: {json.dumps(st.session_state['resume_details'])}"
-            
-            prompt = f"Act as an MBA interviewer at IPER Bhopal. Generate ONE interview question for '{st.session_state.get('first_name', 'Student')}' based on: {ctx}. Return ONLY question text."
-            with st.spinner("Retrieving question..."):
-                st.session_state["current_question"] = get_groq_response(prompt)
+            # Use questions already covered in Interview Preparation Hub as the source pool,
+            # and exclude every question this student has previously attempted.
+            try:
+                prior_attempts = load_student_attempts(st.session_state.get("student_id")) if st.session_state.get("student_id") else []
+            except Exception:
+                prior_attempts = []
+            previously_used = [str(a.get("Question", "")).strip() for a in prior_attempts if str(a.get("Question", "")).strip()]
+            hub_question_pool = list(CORE_INTERVIEW_QUESTIONS)
+            for pool_name in ("SUBJECT_INTERVIEW_QUESTIONS", "COMPANY_INTERVIEW_QUESTIONS", "JD_INTERVIEW_QUESTIONS"):
+                pool = globals().get(pool_name, [])
+                if isinstance(pool, (list, tuple, set)):
+                    hub_question_pool.extend([str(q) for q in pool if str(q).strip()])
+            context = f"Question focus: {category}; difficulty: {difficulty}; specialization: {selected_spec or 'N/A'}; target company: {selected_comp or 'N/A'}; candidate: {st.session_state.get('first_name', 'Student')}; resume: {json.dumps(st.session_state.get('resume_details', {}), ensure_ascii=False)}"
+            prompt = f"""You are an MBA placement interviewer at IPER Bhopal. Create exactly FIVE distinct interview questions for a practice session. Draw from the Interview Preparation Hub question pool below, adapting to the focus and candidate context. The student's first name is {st.session_state.get('first_name', 'Student')}; prefix EVERY question exactly with '{st.session_state.get('first_name', 'Student')}, '. Questions must be suitable for {difficulty} level and focus on {category}. Avoid all previously attempted questions listed below and avoid paraphrases of them. Return ONLY valid JSON as an array of exactly 5 strings, no markdown.
 
-    if "current_question" in st.session_state:
-        st.markdown(f"### Question for {st.session_state.get('first_name', 'Student')}")
-        st.write(f"*{st.session_state['current_question']}*")
-        st.markdown("---")
+HUB QUESTION POOL:
+{json.dumps(hub_question_pool[:250], ensure_ascii=False)}
+
+PREVIOUSLY ATTEMPTED — DO NOT REPEAT:
+{json.dumps(previously_used[-300:], ensure_ascii=False)}
+
+CANDIDATE CONTEXT:
+{context}"""
+            with st.spinner("Preparing five fresh questions from the Interview Preparation Hub..."):
+                raw_questions = get_groq_response(prompt)
+            try:
+                parsed = json.loads(raw_questions)
+                if isinstance(parsed, dict):
+                    parsed = parsed.get("questions", [])
+                questions = [str(q).strip() for q in parsed if str(q).strip()] if isinstance(parsed, list) else []
+            except Exception:
+                questions = [line.strip(" -*0123456789.\t") for line in str(raw_questions).splitlines() if line.strip()]
+            # Remove accidental repeats against history and within this set.
+            used_norm = {re.sub(r"[^a-z0-9]+", " ", q.lower()).strip() for q in previously_used}
+            clean_questions = []
+            for q in questions:
+                norm = re.sub(r"[^a-z0-9]+", " ", q.lower()).strip()
+                if norm and norm not in used_norm and norm not in {re.sub(r"[^a-z0-9]+", " ", x.lower()).strip() for x in clean_questions}:
+                    clean_questions.append(q)
+            if len(clean_questions) < 5:
+                st.warning("The question generator returned fewer than five fresh questions. Please generate again; previously attempted questions will remain excluded.")
+            else:
+                st.session_state["practice_question_set"] = clean_questions[:5]
+                st.session_state["practice_question_index"] = 0
+                st.session_state.pop("current_question", None)
+                st.session_state.pop("practice_answer_submitted_for_question", None)
+                st.rerun()
+
+    question_set = st.session_state.get("practice_question_set", [])
+    if question_set:
+        q_index = int(st.session_state.get("practice_question_index", 0) or 0)
+        q_index = max(0, min(q_index, len(question_set) - 1))
+        st.session_state["current_question"] = question_set[q_index]
+        st.markdown(f"### Practice Session — Question {q_index + 1} of {len(question_set)}")
+        st.progress((q_index + 1) / len(question_set))
+        st.caption("Answer each question and submit it for feedback. Your attempted questions are stored so future sessions can avoid repeats.")
+        for qi, question in enumerate(question_set):
+            with st.expander(f"Question {qi + 1}: {question}", expanded=(qi == q_index)):
+                st.write(question)
+        if q_index > 0 and st.button("← Previous Question", key="practice_previous_question"):
+            st.session_state["practice_question_index"] = q_index - 1
+            st.rerun()
+        if q_index < len(question_set) - 1 and st.button("Next Question →", key="practice_next_question"):
+            st.session_state["practice_question_index"] = q_index + 1
+            st.session_state.pop("practice_answer_submitted_for_question", None)
+            st.rerun()
+        if q_index == len(question_set) - 1:
+            st.success("You have reached Question 5. Complete and submit this answer to finish the set.")
 
         extracted_transcript = ""
         saved_video_filename = "N/A"
@@ -6657,7 +6628,7 @@ elif selected_nav == "Interview Practice Room":
 
         if mode == "Audio Response Mode":
             st.subheader("Record Your Audio Answer")
-            audio_data = st.audio_input("Click to record your voice:")
+            audio_data = st.audio_input("Click to record your voice:", key=f"pi_audio_input_q_{st.session_state.get('practice_question_index', 0)}")
             if audio_data is not None:
                 st.audio(audio_data)
                 with st.spinner("Converting audio to text via Whisper..."):
@@ -6665,10 +6636,6 @@ elif selected_nav == "Interview Practice Room":
                         tmp_file.write(audio_data.getvalue())
                         tmp_path = tmp_file.name
                     try:
-                        persistent_audio_path = os.path.join(tempfile.gettempdir(), f"iper_pi_audio_{st.session_state.get('student_id','student')}_{uuid.uuid4().hex}.wav")
-                        with open(persistent_audio_path, "wb") as saved_audio:
-                            saved_audio.write(audio_data.getvalue())
-                        st.session_state["pi_current_media_path"] = persistent_audio_path
                         st.session_state["communication_duration"] = get_media_duration_seconds(tmp_path)
                         extracted_transcript, detected_speech_duration = transcribe_indian_english_audio(tmp_path)
                         if detected_speech_duration > 0:
@@ -6719,7 +6686,6 @@ elif selected_nav == "Interview Practice Room":
                     if os.path.exists(incoming_path) and os.path.abspath(incoming_path) != os.path.abspath(saved_video_path):
                         os.remove(incoming_path)
                     st.session_state["current_video_path"] = saved_video_path
-                    st.session_state["pi_current_media_path"] = saved_video_path
                     st.session_state["communication_duration"] = get_media_duration_seconds(saved_video_path)
                     st.video(saved_video_path)
                     st.success(f"Interview video saved as MP4: `{os.path.basename(saved_video_path)}`")
@@ -6740,8 +6706,9 @@ elif selected_nav == "Interview Practice Room":
 
         final_response_text = st.text_area(
             "Answer Transcript (Review or Edit Text Before Submitting):", 
-            value=extracted_transcript, 
-            height=140
+            value=extracted_transcript,
+            height=140,
+            key=f"pi_answer_transcript_q_{st.session_state.get('practice_question_index', 0)}"
         )
 
         if st.button("Submit Response for Feedback"):
@@ -6929,15 +6896,6 @@ Return ONLY valid JSON matching this exact structure:
                         )
                         eval_result = json.loads(response.choices[0].message.content or "{}")
 
-                        # Additional evidence-based non-verbal assessment. It does not change the
-                        # existing Communication/Technical grading formula.
-                        media_path = st.session_state.get("pi_current_media_path")
-                        video_path_for_assessment = media_path if (mode == "Video Response Mode" and media_path and str(media_path).lower().endswith((".mp4", ".mov", ".webm", ".m4v"))) else None
-                        audio_path_for_assessment = media_path if media_path and os.path.exists(media_path) else None
-                        with st.spinner("Assessing body language and vocal delivery from the available recording..."):
-                            nonverbal_feedback = assess_pi_nonverbal_delivery(video_path_for_assessment, audio_path_for_assessment)
-                        eval_result.update(nonverbal_feedback)
-
                         comm_score = max(0, min(100, int(eval_result.get("CommunicationScore", 0))))
                         tech_score = max(0, min(100, int(eval_result.get("TechnicalKnowledgeScore", 0))))
 
@@ -7021,22 +6979,6 @@ Return ONLY valid JSON matching this exact structure:
                         st.write(eval_result.get("RateOfSpeechAssessment", ""))
                         st.markdown("**Tone**")
                         st.write(eval_result.get("ToneAssessment", ""))
-                        st.markdown("### 1A. Vocal Delivery — Tone, Pitch & Pauses")
-                        vocal = eval_result.get("VocalDeliveryAssessment") or {}
-                        st.caption(vocal.get("Status", "Not assessed"))
-                        for field, label in (("ToneAndPitch", "Tone & Pitch"), ("PaceAndPauses", "Pace & Pauses"), ("VolumeAndClarity", "Volume & Clarity"), ("Strengths", "What Went Well"), ("Improvements", "What to Improve"), ("EvidenceLimitations", "Evidence Limitations")):
-                            values = vocal.get(field) or []
-                            if values:
-                                st.markdown(f"**{label}**")
-                                for item in values: st.markdown(f"- {item}")
-                        st.markdown("### 1B. Body Language & Visible Non-Verbal Cues")
-                        body = eval_result.get("BodyLanguageAssessment") or {}
-                        st.caption(body.get("Status", "Not assessed"))
-                        for field, label in (("Observations", "Observed Cues"), ("Strengths", "What Went Well"), ("Improvements", "What to Improve"), ("EvidenceLimitations", "Evidence Limitations")):
-                            values = body.get(field) or []
-                            if values:
-                                st.markdown(f"**{label}**")
-                                for item in values: st.markdown(f"- {item}")
                         st.markdown("**Clarity**")
                         st.write(eval_result.get("ClarityAssessment", ""))
                         st.markdown("**Communication Strengths**")
@@ -7998,8 +7940,6 @@ elif selected_nav == "My Progress Dashboard":
             "KeyCorrections": "Key Corrections",
             "BenchmarkAnswer": "Benchmark / Suggested Answer",
             "NextPracticeFocus": "Next Practice Focus",
-            "VocalDeliveryAssessment": "Vocal Delivery — Tone, Pitch & Pauses",
-            "BodyLanguageAssessment": "Body Language & Visible Non-Verbal Cues",
             "ExecutiveSummary": "Overall Feedback",
             "OverallFeedback": "Overall Feedback",
             "Summary": "Summary",
