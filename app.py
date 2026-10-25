@@ -43,7 +43,7 @@ st.set_page_config(page_title="IPER PEPTECH", layout="wide")
 
 # Temporarily disabled options (set to True to re-enable without removing their implementation).
 ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY = True
-ENABLE_VIDEO_INTERVIEW_MODE = False
+ENABLE_VIDEO_INTERVIEW_MODE = True
 ENABLE_GD_AUTO_NAME_IDENTIFICATION = False
 
 # Official IPER logo reused across login and authenticated portal branding.
@@ -6533,10 +6533,10 @@ elif selected_nav == "Interview Practice Room":
     st.markdown("---")
     col_mode, col_diff, col_cat = st.columns(3)
     with col_mode:
-        mode = st.radio("Practice Format:", ["Audio Response Mode", "Video Response Mode (Temporarily Disabled)"])
-    if mode == "Video Response Mode (Temporarily Disabled)":
-        st.info("Video Interview is temporarily disabled. The option is retained and can be re-enabled later.")
-        mode = "Video Response Mode (Disabled)"
+        mode_options = ["Audio Response Mode"]
+        if ENABLE_VIDEO_INTERVIEW_MODE:
+            mode_options.append("Video Response Mode")
+        mode = st.radio("Practice Format:", mode_options)
     with col_diff:
         difficulty = st.selectbox("Question Level:", ["Basic", "Intermediate", "Advanced"])
     with col_cat:
