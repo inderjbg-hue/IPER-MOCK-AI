@@ -6565,11 +6565,14 @@ elif selected_nav == "Interview Practice Room":
                     prior_questions = [str(a.get("Question", "")).strip() for a in load_student_attempts(sid) if a.get("Question")]
                 except Exception:
                     prior_questions = []
-            prompt = f"""Act as a professional MBA placement interviewer at IPER Bhopal. Generate exactly FIVE distinct interview questions for this candidate. Context: {ctx}. Avoid these previously used questions wherever possible: {json.dumps(prior_questions[-100:], ensure_ascii=False)}. Return ONLY a numbered list, one question per line, no introduction or answers. Questions must be distinct from one another."""
+            prompt = f"""Act as a professional MBA placement interviewer at IPER Bhopal. Generate exactly FIVE distinct interview questions for this candidate. Context: {ctx}. Avoid these previously used questions wherever possible: {json.dumps(prior_questions[-100:], ensure_ascii=False)}. Return ONLY a numbered list, one question per line, no introduction or answers. Questions must be distinct from one another. IMPORTANT: Do not address the candidate by any name inside the question. Do not begin a question with a person's name (for example, never write 'Rohan, can you...'). The app displays the logged-in candidate's name as a heading before each question, so write each question directly, e.g. 'Can you tell me about a time when you worked with a team?'"""
             with st.spinner("Preparing five questions and avoiding previously used questions..."):
                 raw_questions = get_groq_response(prompt)
             questions = [re.sub(r"^\s*(?:Q\s*)?\d+[.)\-:]\s*", "", line).strip() for line in raw_questions.splitlines()]
             questions = [q for q in questions if q and not q.lower().startswith(("execution error", "groq api key is missing"))]
+            # Some model outputs contain an invented name as a conversational prefix (e.g. "Rohan, can you...").
+            # Remove that prefix: the authenticated candidate's name is shown in the UI heading instead.
+            questions = [re.sub(r"^\s*[A-Z][A-Za-z'’-]*(?:\s+[A-Z][A-Za-z'’-]*){0,2}\s*,\s*(?=(?:can|could|would|will|do|did|have|has|tell|describe|explain|what|why|how|which|where|when|give|walk|share|discuss|imagine|suppose)\b)", "", q, flags=re.IGNORECASE).strip() for q in questions]
             # Keep at most five clean question lines; if the model returns fewer, retain what it returned.
             questions = questions[:5]
             if questions:
