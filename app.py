@@ -43,7 +43,7 @@ st.set_page_config(page_title="IPER PEPTECH", layout="wide")
 
 # Temporarily disabled options (set to True to re-enable without removing their implementation).
 ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY = False
-ENABLE_VIDEO_INTERVIEW_MODE = False
+ENABLE_VIDEO_INTERVIEW_MODE = True
 ENABLE_GD_AUTO_NAME_IDENTIFICATION = False
 
 # Official IPER logo reused across login and authenticated portal branding.
@@ -511,7 +511,7 @@ def render_video_recorder_component():
             try {
                 chunks = [];
                 document.getElementById('downloadAnchor').style.display = 'none';
-                streamRef = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                streamRef = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: 20, max: 24 } }, audio: { echoCancellation: true, noiseSuppression: true } });
                 document.getElementById('preview').srcObject = streamRef;
 
                 const mimeCandidates = [
@@ -524,7 +524,7 @@ def render_video_recorder_component():
                 selectedMime = mimeCandidates.find(m => MediaRecorder.isTypeSupported(m)) || '';
                 if (!selectedMime) throw new Error('This browser does not support video recording.');
 
-                recorder = new MediaRecorder(streamRef, { mimeType: selectedMime });
+                recorder = new MediaRecorder(streamRef, { mimeType: selectedMime, videoBitsPerSecond: 650000, audioBitsPerSecond: 64000 });
                 recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
                 recorder.onstop = () => {
                     const isMp4 = selectedMime.toLowerCase().includes('mp4');
@@ -568,8 +568,8 @@ def convert_video_to_mp4(input_path):
         return output_path
     cmd = [
         ffmpeg, '-y', '-i', input_path,
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-        '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k',
+        '-vf', 'scale=-2:480,fps=20', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28',
+        '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '64k',
         '-movflags', '+faststart', output_path
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -6533,10 +6533,8 @@ elif selected_nav == "Interview Practice Room":
     st.markdown("---")
     col_mode, col_diff, col_cat = st.columns(3)
     with col_mode:
-        mode = st.radio("Practice Format:", ["Audio Response Mode", "Video Response Mode (Temporarily Disabled)"])
-    if mode == "Video Response Mode (Temporarily Disabled)":
-        st.info("Video Interview is temporarily disabled. The option is retained and can be re-enabled later.")
-        mode = "Video Response Mode (Disabled)"
+        available_modes = ["Audio Response Mode"] + (["Video Response Mode"] if ENABLE_VIDEO_INTERVIEW_MODE else [])
+        mode = st.radio("Practice Format:", available_modes, key="interview_practice_format")
     with col_diff:
         difficulty = st.selectbox("Question Level:", ["Basic", "Intermediate", "Advanced"])
     with col_cat:
@@ -6549,29 +6547,49 @@ elif selected_nav == "Interview Practice Room":
     elif category == "Company Specific":
         selected_comp = st.selectbox("Select Target Recruiter:", IPER_RECRUITERS)
 
-    if st.button("Get Practice Question", use_container_width=True):
-        if category == "Resume-Based (Custom)":
-            if not st.session_state.get("resume_details"):
-                st.warning("Please upload your resume in the Resume Checker section first to generate custom questions.")
-            else:
-                prompt = f"""
-                Act as a supportive MBA interviewer at IPER Bhopal. 
-                Generate ONE interview question tailored to {st.session_state.get('first_name', 'Student')}'s resume profile:
-                {json.dumps(st.session_state['resume_details'])}
-                Difficulty level: {difficulty}
-                Return ONLY the question text clearly.
-                """
-                with st.spinner("Generating question..."):
-                    st.session_state["current_question"] = get_groq_response(prompt)
+    if st.button("Generate 5 Practice Questions", use_container_width=True):
+        if category == "Resume-Based (Custom)" and not st.session_state.get("resume_details"):
+            st.warning("Please upload your resume in the Resume Checker section first to generate custom questions.")
         else:
             ctx = f"Domain: {category}, Level: {difficulty}"
             if selected_spec: ctx += f", Track: {selected_spec}"
             if selected_comp: ctx += f", Target Company: {selected_comp}"
-            if st.session_state["resume_details"]: ctx += f", Candidate Context: {json.dumps(st.session_state['resume_details'])}"
-            
-            prompt = f"Act as an MBA interviewer at IPER Bhopal. Generate ONE interview question for '{st.session_state.get('first_name', 'Student')}' based on: {ctx}. Return ONLY question text."
-            with st.spinner("Retrieving question..."):
-                st.session_state["current_question"] = get_groq_response(prompt)
+            if st.session_state.get("resume_details"): ctx += f", Candidate Context: {json.dumps(st.session_state['resume_details'])}"
+            prior_questions = []
+            sid = st.session_state.get("student_id")
+            if sid:
+                try:
+                    prior_questions = [str(a.get("Question", "")).strip() for a in load_student_attempts(sid) if a.get("Question")]
+                except Exception:
+                    prior_questions = []
+            prompt = f"""Act as a professional MBA placement interviewer at IPER Bhopal. Generate exactly FIVE distinct interview questions for this candidate. Context: {ctx}. Avoid these previously used questions wherever possible: {json.dumps(prior_questions[-100:], ensure_ascii=False)}. Return ONLY a numbered list, one question per line, no introduction or answers. Questions must be distinct from one another."""
+            with st.spinner("Preparing five questions and avoiding previously used questions..."):
+                raw_questions = get_groq_response(prompt)
+            questions = [re.sub(r"^\s*(?:Q\s*)?\d+[.)\-:]\s*", "", line).strip() for line in raw_questions.splitlines()]
+            questions = [q for q in questions if q and not q.lower().startswith(("execution error", "groq api key is missing"))]
+            # Keep at most five clean question lines; if the model returns fewer, retain what it returned.
+            questions = questions[:5]
+            if questions:
+                st.session_state["pi_question_batch"] = questions
+                st.session_state["pi_question_batch_category"] = category
+                st.session_state["pi_question_batch_difficulty"] = difficulty
+                st.session_state["pi_question_batch_used"] = []
+                st.session_state["pi_question_batch_index"] = 0
+                st.session_state["current_question"] = questions[0]
+            else:
+                st.error("Could not prepare a valid question set. Please try again.")
+
+    if st.session_state.get("pi_question_batch"):
+        batch = st.session_state["pi_question_batch"]
+        st.markdown("#### Your 5-question PI set")
+        st.caption("Answer each question in turn. Previously used questions are excluded from future sets where possible.")
+        st.write("\n".join([f"{i+1}. {q}" for i, q in enumerate(batch)]))
+        used_now = st.session_state.get("pi_question_batch_used", [])
+        available_indices = [i for i in range(len(batch)) if i not in used_now]
+        if available_indices:
+            chosen_index = st.selectbox("Choose question to answer", available_indices, format_func=lambda i: f"Question {i+1}: {batch[i]}", key="pi_question_choice")
+            st.session_state["pi_question_batch_index"] = chosen_index
+            st.session_state["current_question"] = batch[chosen_index]
 
     if "current_question" in st.session_state:
         st.markdown(f"### Question for {st.session_state.get('first_name', 'Student')}")
@@ -7334,6 +7352,13 @@ elif selected_nav == "Group Discussion Hub":
                     st.session_state["uploaded_gd_final_speaker_map"] = speaker_map
                     st.session_state["uploaded_gd_final_speaker_records"] = speaker_records
                     st.session_state["uploaded_gd_final_stats"] = speaker_stats
+                    if st.session_state.get("pi_question_batch") and st.session_state.get("current_question") in st.session_state.get("pi_question_batch", []):
+                        answered_idx = st.session_state["pi_question_batch"].index(st.session_state["current_question"])
+                        used = st.session_state.get("pi_question_batch_used", [])
+                        if answered_idx not in used:
+                            used.append(answered_idx)
+                        st.session_state["pi_question_batch_used"] = used
+
                     st.success("GD assessment generated. Download the feedback report below.")
                     group_report = report.get("GroupAssessment", {}) or {}
                     st.markdown("### Group Assessment")
