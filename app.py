@@ -471,6 +471,20 @@ Address the candidate respectfully by name in all responses.
 Provide clear, structured, professional guidance using user-friendly words.
 """
 
+def clean_pi_question(question):
+    """Remove an invented candidate name used as a conversational prefix."""
+    q = re.sub(r"^\s*(?:\d+[.)\-:]\s*)?", "", str(question or "")).strip()
+    # Examples removed: "Rohan, explain...", "Rohan Sharma, can you..."
+    # This runs regardless of which verb the model uses after the comma.
+    q = re.sub(
+        r"^\s*[A-Z][A-Za-z'’.-]*(?:\s+[A-Z][A-Za-z'’.-]*){0,2}\s*,\s*",
+        "",
+        q,
+        count=1,
+    )
+    return q.strip()
+
+
 def get_groq_response(prompt):
     if not client:
         return "GROQ API Key is missing. Please add 'GROQ_API_KEY' in Streamlit App Settings -> Secrets."
@@ -6570,9 +6584,8 @@ elif selected_nav == "Interview Practice Room":
                 raw_questions = get_groq_response(prompt)
             questions = [re.sub(r"^\s*(?:Q\s*)?\d+[.)\-:]\s*", "", line).strip() for line in raw_questions.splitlines()]
             questions = [q for q in questions if q and not q.lower().startswith(("execution error", "groq api key is missing"))]
-            # Some model outputs contain an invented name as a conversational prefix (e.g. "Rohan, can you...").
-            # Remove that prefix: the authenticated candidate's name is shown in the UI heading instead.
-            questions = [re.sub(r"^\s*[A-Z][A-Za-z'’-]*(?:\s+[A-Z][A-Za-z'’-]*){0,2}\s*,\s*(?=(?:can|could|would|will|do|did|have|has|tell|describe|explain|what|why|how|which|where|when|give|walk|share|discuss|imagine|suppose)\b)", "", q, flags=re.IGNORECASE).strip() for q in questions]
+            # Strip any invented name used as a direct address, regardless of the next verb.
+            questions = [clean_pi_question(q) for q in questions]
             # Keep at most five clean question lines; if the model returns fewer, retain what it returned.
             questions = questions[:5]
             if questions:
@@ -6586,7 +6599,8 @@ elif selected_nav == "Interview Practice Room":
                 st.error("Could not prepare a valid question set. Please try again.")
 
     if st.session_state.get("pi_question_batch"):
-        batch = st.session_state["pi_question_batch"]
+        batch = [clean_pi_question(q) for q in st.session_state["pi_question_batch"]]
+        st.session_state["pi_question_batch"] = batch
         st.markdown("#### Your 5-question PI set")
         st.caption("Answer each question in turn. Previously used questions are excluded from future sets where possible.")
         st.markdown("\n\n".join([f"**{candidate_name} — Question {i+1}:** {q}" for i, q in enumerate(batch)]))
@@ -6598,6 +6612,7 @@ elif selected_nav == "Interview Practice Room":
             st.session_state["current_question"] = batch[chosen_index]
 
     if "current_question" in st.session_state:
+        st.session_state["current_question"] = clean_pi_question(st.session_state["current_question"])
         st.markdown(f"### {candidate_name} — Your Interview Question")
         st.write(f"*{st.session_state['current_question']}*")
         st.markdown("---")
