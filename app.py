@@ -7608,8 +7608,25 @@ elif selected_nav == "My Progress Dashboard":
     gd_records = []
     candidate_label = st.session_state.get("candidate_name", st.session_state.get("first_name", "Student"))
     for item in gd_history:
+        raw_report = item.get("report_json") or {}
         report = _live_gd_report_for_student(item, candidate_label) or {}
-        score = _dashboard_score(report.get("OverallScore"))
+        # Uploaded diarised-video GD reports use GroupAssessment + Participants,
+        # not the LiveFeedback shape. Recover the score for this exact Scholar ID
+        # while retaining the full report for the shared feedback display below.
+        if isinstance(raw_report, dict) and raw_report.get("GroupAssessment"):
+            own_participant = next((
+                person for person in (raw_report.get("Participants") or [])
+                if str(person.get("ScholarID") or "").strip().upper() == str(dashboard_scholar or "").strip().upper()
+            ), None)
+            score = _dashboard_score((own_participant or {}).get("OverallScore"))
+            if score is None:
+                score = _dashboard_score((raw_report.get("GroupAssessment") or {}).get("OverallScore"))
+            # A non-empty marker prevents the dashboard from treating a valid
+            # saved uploaded-video report as missing detailed feedback.
+            if not report:
+                report = {"SharedVideoGDReportAvailable": True}
+        else:
+            score = _dashboard_score(report.get("OverallScore"))
         timestamp = item.get("created_at") or item.get("timestamp") or "Timestamp unavailable"
         gd_records.append({
             "timestamp": str(timestamp),
@@ -7705,13 +7722,53 @@ elif selected_nav == "My Progress Dashboard":
                 expanded=(attempt_number == 1),
             ):
                 st.caption(f"Topic / activity: {record['details']}")
-                _render_live_gd_feedback_summary(
-                    record["item"],
-                    candidate_label,
-                    heading="Detailed GD Feedback",
-                )
-                if not record["feedback"]:
-                    st.info("Detailed feedback is not available for this saved GD attempt.")
+                saved_gd_report = record["item"].get("report_json") or {}
+                if isinstance(saved_gd_report, dict) and saved_gd_report.get("GroupAssessment"):
+                    # Uploaded diarised-video GD: show the complete shared report
+                    # (group assessment, all participant feedback, vocal tone,
+                    # body-language observations, and evidence) to each mapped student.
+                    group = saved_gd_report.get("GroupAssessment") or {}
+                    st.markdown("### Group Assessment")
+                    st.markdown(f"**Overall Readiness — {grade_from_score(group.get('OverallScore', 0))}**")
+                    for label, key in (("Strengths", "Strengths"), ("Improvements", "Improvements")):
+                        st.markdown(f"**{label}**")
+                        values = group.get(key) or []
+                        if values:
+                            for value in values:
+                                st.write(f"• {value}")
+                        else:
+                            st.write("No specific points returned.")
+                    st.markdown("### Individual Participant Feedback")
+                    for person in saved_gd_report.get("Participants", []) or []:
+                        person_name = person.get("Name") or person.get("SpeakerID") or "Participant"
+                        person_grade = grade_from_score(person.get("OverallScore", 0))
+                        with st.expander(f"{person_name} — {person_grade}", expanded=False):
+                            for label, key in (("Communication", "CommunicationAssessment"), ("Knowledge", "KnowledgeAssessment"), ("Participation", "ParticipationAssessment"), ("Listening & Teamwork", "ListeningTeamworkAssessment"), ("Strengths", "Strengths"), ("Areas to Improve", "AreasToImprove"), ("Evidence", "Evidence"), ("Next Action Plan", "NextGDActionPlan")):
+                                value = person.get(key)
+                                if value:
+                                    st.markdown(f"**{label}**")
+                                    if isinstance(value, list):
+                                        for entry in value:
+                                            st.write(f"• {entry}")
+                                    elif isinstance(value, dict):
+                                        st.json(value)
+                                    else:
+                                        st.write(str(value))
+                    for section_title, section_key in (("Vocal Tone Assessment", "VocalToneAssessment"), ("Body Language Assessment", "NonVerbalAssessment")):
+                        section = saved_gd_report.get(section_key)
+                        if section:
+                            with st.expander(section_title, expanded=False):
+                                st.json(section)
+                    with st.expander("Full GD Assessment Report (complete details)", expanded=False):
+                        st.json(saved_gd_report)
+                else:
+                    _render_live_gd_feedback_summary(
+                        record["item"],
+                        candidate_label,
+                        heading="Detailed GD Feedback",
+                    )
+                    if not record["feedback"]:
+                        st.info("Detailed feedback is not available for this saved GD attempt.")
     else:
         st.info("Your GD feedback will appear here after you complete a GD assessment.")
 
