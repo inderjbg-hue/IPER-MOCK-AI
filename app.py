@@ -1375,25 +1375,26 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
     section.left_margin = docx.shared.Inches(0.72)
     section.right_margin = docx.shared.Inches(0.72)
 
-    purple = docx.shared.RGBColor(31, 78, 121)  # IPER-inspired corporate blue
+    purple = docx.shared.RGBColor(25, 55, 95)  # deep corporate navy
     styles = document.styles
     normal = styles["Normal"]
     normal.font.name = "Aptos"
     normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
-    normal.font.size = docx.shared.Pt(10.5)
-    normal.paragraph_format.space_after = docx.shared.Pt(4)
-    normal.paragraph_format.line_spacing = 1.0
+    normal.font.size = docx.shared.Pt(9.5)
+    normal.font.color.rgb = docx.shared.RGBColor(42, 52, 65)
+    normal.paragraph_format.space_after = docx.shared.Pt(3)
+    normal.paragraph_format.line_spacing = 1.03
 
     for style_name in ("Heading 1", "Heading 2", "List Bullet"):
         style = styles[style_name]
         style.font.name = "Aptos"
         style._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
         if style_name == "Heading 1":
-            style.font.size = docx.shared.Pt(10.5)
+            style.font.size = docx.shared.Pt(10)
             style.font.bold = True
             style.font.color.rgb = purple
-            style.paragraph_format.space_before = docx.shared.Pt(9)
-            style.paragraph_format.space_after = docx.shared.Pt(3)
+            style.paragraph_format.space_before = docx.shared.Pt(8)
+            style.paragraph_format.space_after = docx.shared.Pt(4)
             style.paragraph_format.keep_with_next = True
         elif style_name == "Heading 2":
             style.font.size = docx.shared.Pt(10.5)
@@ -1401,22 +1402,45 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         else:
             style.font.size = docx.shared.Pt(10.5)
 
-    # One fixed template: consistent name/contact header and predictable section order.
+    # Executive-style header: left aligned, clear hierarchy, restrained corporate accent.
+    kicker = document.add_paragraph()
+    kicker.paragraph_format.space_after = docx.shared.Pt(2)
+    kr = kicker.add_run("CURRICULUM VITAE")
+    kr.bold = True
+    kr.font.name = "Aptos"
+    kr.font.size = docx.shared.Pt(8)
+    kr.font.color.rgb = docx.shared.RGBColor(91, 108, 128)
+
     name_p = document.add_paragraph()
-    name_p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-    name_p.paragraph_format.space_after = docx.shared.Pt(2)
-    name_run = name_p.add_run(str(candidate_name or "Candidate").strip())
+    name_p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+    name_p.paragraph_format.space_after = docx.shared.Pt(3)
+    name_p.paragraph_format.keep_with_next = True
+    name_run = name_p.add_run(str(candidate_name or "Candidate").strip().upper())
     name_run.bold = True
-    name_run.font.name = "Aptos"
-    name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
-    name_run.font.size = docx.shared.Pt(20)
+    name_run.font.name = "Aptos Display"
+    name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos Display")
+    name_run.font.size = docx.shared.Pt(24)
     name_run.font.color.rgb = purple
 
     contacts = [x.strip() for x in (email, phone, linkedin) if x and x.strip()]
     if contacts:
-        cp = document.add_paragraph(" | ".join(contacts))
-        cp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-        cp.paragraph_format.space_after = docx.shared.Pt(6)
+        cp = document.add_paragraph("  •  ".join(contacts))
+        cp.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
+        cp.paragraph_format.space_after = docx.shared.Pt(7)
+        for rr in cp.runs:
+            rr.font.size = docx.shared.Pt(8.5)
+            rr.font.color.rgb = docx.shared.RGBColor(91, 101, 115)
+
+    # Thin navy divider under the contact block.
+    ppr = name_p._p.get_or_add_pPr()
+    borders = docx.oxml.OxmlElement('w:pBdr')
+    bottom = docx.oxml.OxmlElement('w:bottom')
+    bottom.set(docx.oxml.ns.qn('w:val'), 'single')
+    bottom.set(docx.oxml.ns.qn('w:sz'), '16')
+    bottom.set(docx.oxml.ns.qn('w:space'), '5')
+    bottom.set(docx.oxml.ns.qn('w:color'), '19375F')
+    borders.append(bottom)
+    ppr.append(borders)
 
     # Parse the text into sections, retaining content while mapping common heading variants.
     section_aliases = {
@@ -1461,7 +1485,23 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         if not content:
             continue
         hp = document.add_paragraph(style="Heading 1")
+        hp.paragraph_format.keep_with_next = True
+        hp.paragraph_format.left_indent = docx.shared.Inches(0.04)
+        hp.paragraph_format.right_indent = docx.shared.Inches(0.02)
         hp.add_run(heading)
+        # Light blue section band with a navy rule for clear visual scanning.
+        ppr = hp._p.get_or_add_pPr()
+        shd = docx.oxml.OxmlElement('w:shd')
+        shd.set(docx.oxml.ns.qn('w:fill'), 'EEF3F8')
+        ppr.append(shd)
+        borders = docx.oxml.OxmlElement('w:pBdr')
+        bottom = docx.oxml.OxmlElement('w:bottom')
+        bottom.set(docx.oxml.ns.qn('w:val'), 'single')
+        bottom.set(docx.oxml.ns.qn('w:sz'), '5')
+        bottom.set(docx.oxml.ns.qn('w:space'), '2')
+        bottom.set(docx.oxml.ns.qn('w:color'), 'B8C8D9')
+        borders.append(bottom)
+        ppr.append(borders)
         for item in content:
             item = re.sub(r"^[*•?)+\-\s]+", "", item).strip()
             if not item or re.fullmatch(r"[*)?._\-\s]+", item):
@@ -1496,7 +1536,7 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
 
     footer = section.footer.paragraphs[0]
     footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer.add_run("IPER PEPTECH | Professional Resume")
+    footer_run = footer.add_run("IPER PEPTECH  •  PROFESSIONAL RESUME")
     footer_run.font.name = "Aptos"
     footer_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
     footer_run.font.size = docx.shared.Pt(9)
@@ -1517,9 +1557,10 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
     from reportlab.lib.units import mm
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, KeepTogether, HRFlowable
 
-    blue = colors.HexColor("#1F4E79")
-    dark = colors.HexColor("#243447")
-    muted = colors.HexColor("#5B6573")
+    blue = colors.HexColor("#19375F")
+    dark = colors.HexColor("#263445")
+    muted = colors.HexColor("#5B6B7C")
+    pale_blue = colors.HexColor("#EEF3F8")
     out = BytesIO()
     doc = SimpleDocTemplate(
         out, pagesize=A4, rightMargin=18*mm, leftMargin=18*mm,
@@ -1528,17 +1569,21 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
         author="IPER PEPTECH",
     )
     styles = {
-        "name": ParagraphStyle("ResumeName", fontName="Helvetica-Bold", fontSize=20, leading=23,
-                                textColor=blue, alignment=TA_CENTER, spaceAfter=3),
-        "contact": ParagraphStyle("ResumeContact", fontName="Helvetica", fontSize=8.5, leading=11,
-                                   textColor=muted, alignment=TA_CENTER, spaceAfter=7),
-        "heading": ParagraphStyle("ResumeHeading", fontName="Helvetica-Bold", fontSize=10.5, leading=13,
-                                   textColor=blue, alignment=TA_LEFT, spaceBefore=8, spaceAfter=3,
+        "kicker": ParagraphStyle("ResumeKicker", fontName="Helvetica-Bold", fontSize=7.5, leading=9,
+                                  textColor=muted, alignment=TA_LEFT, spaceAfter=2),
+        "name": ParagraphStyle("ResumeName", fontName="Helvetica-Bold", fontSize=23, leading=26,
+                                textColor=blue, alignment=TA_LEFT, spaceAfter=4),
+        "contact": ParagraphStyle("ResumeContact", fontName="Helvetica", fontSize=8.2, leading=10.5,
+                                   textColor=muted, alignment=TA_LEFT, spaceAfter=7),
+        "heading": ParagraphStyle("ResumeHeading", fontName="Helvetica-Bold", fontSize=9.8, leading=12,
+                                   textColor=blue, alignment=TA_LEFT, spaceBefore=8, spaceAfter=4,
+                                   leftIndent=4, rightIndent=2, borderColor=colors.HexColor("#B8C8D9"),
+                                   borderWidth=0, borderPadding=(4, 4, 4, 4), backColor=pale_blue,
                                    keepWithNext=True),
-        "body": ParagraphStyle("ResumeBody", fontName="Helvetica", fontSize=9.3, leading=12.3,
+        "body": ParagraphStyle("ResumeBody", fontName="Helvetica", fontSize=9.1, leading=12,
                                textColor=dark, spaceAfter=3, splitLongWords=True),
-        "bullet": ParagraphStyle("ResumeBullet", fontName="Helvetica", fontSize=9.3, leading=12.3,
-                                 textColor=dark, leftIndent=11, firstLineIndent=-7, spaceAfter=2.5,
+        "bullet": ParagraphStyle("ResumeBullet", fontName="Helvetica", fontSize=9.1, leading=12,
+                                 textColor=dark, leftIndent=12, firstLineIndent=-7, spaceAfter=2.5,
                                  bulletIndent=0, splitLongWords=True),
     }
     section_aliases = {
@@ -1575,11 +1620,12 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
     # The current tailoring workflow intentionally uses Career Objective rather than Summary.
     sections["PROFESSIONAL SUMMARY"] = []
 
-    story = [Paragraph(escape(str(candidate_name or "Candidate").strip()), styles["name"])]
+    story = [Paragraph("CURRICULUM VITAE", styles["kicker"]),
+             Paragraph(escape(str(candidate_name or "Candidate").strip().upper()), styles["name"])]
     contacts = [str(x).strip() for x in (email, phone, linkedin) if x and str(x).strip()]
     if contacts:
-        story.append(Paragraph(escape("  |  ".join(contacts)), styles["contact"]))
-    story.append(HRFlowable(width="100%", thickness=1, color=blue, spaceBefore=1, spaceAfter=5))
+        story.append(Paragraph(escape("  •  ".join(contacts)), styles["contact"]))
+    story.append(HRFlowable(width="100%", thickness=1.8, color=blue, spaceBefore=0, spaceAfter=6))
     bullet_sections = {"SKILLS", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"}
     for heading in order:
         content = sections.get(heading, [])
@@ -1603,7 +1649,7 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
         canvas.line(18*mm, 13*mm, A4[0]-18*mm, 13*mm)
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(muted)
-        canvas.drawString(18*mm, 8.5*mm, "IPER PEPTECH | Professional Resume")
+        canvas.drawString(18*mm, 8.5*mm, "IPER PEPTECH  •  PROFESSIONAL RESUME")
         canvas.drawRightString(A4[0]-18*mm, 8.5*mm, f"Page {document.page}")
         canvas.restoreState()
 
