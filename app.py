@@ -1371,7 +1371,7 @@ def add_keyword_to_resume_editor(keyword, checkbox_key=None):
 
 
 def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
-    """Render every downloadable resume using one consistent, ATS-friendly Word template."""
+    """Render a simple, monochrome, single-column resume in an ATS-friendly Word template."""
     document = docx.Document()
     section = document.sections[0]
     section.top_margin = docx.shared.Inches(0.62)
@@ -1379,13 +1379,13 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
     section.left_margin = docx.shared.Inches(0.72)
     section.right_margin = docx.shared.Inches(0.72)
 
-    purple = docx.shared.RGBColor(25, 55, 95)  # deep corporate navy
+    purple = docx.shared.RGBColor(0, 0, 0)  # monochrome, ATS-friendly black
     styles = document.styles
     normal = styles["Normal"]
     normal.font.name = "Aptos"
     normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
     normal.font.size = docx.shared.Pt(9.5)
-    normal.font.color.rgb = docx.shared.RGBColor(42, 52, 65)
+    normal.font.color.rgb = docx.shared.RGBColor(0, 0, 0)
     normal.paragraph_format.space_after = docx.shared.Pt(3)
     normal.paragraph_format.line_spacing = 1.03
 
@@ -1406,15 +1406,7 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         else:
             style.font.size = docx.shared.Pt(10.5)
 
-    # Executive-style header: left aligned, clear hierarchy, restrained corporate accent.
-    kicker = document.add_paragraph()
-    kicker.paragraph_format.space_after = docx.shared.Pt(2)
-    kr = kicker.add_run("CURRICULUM VITAE")
-    kr.bold = True
-    kr.font.name = "Aptos"
-    kr.font.size = docx.shared.Pt(8)
-    kr.font.color.rgb = docx.shared.RGBColor(91, 108, 128)
-
+    # Simple one-column header: candidate name first, no decorative CV label.
     name_p = document.add_paragraph()
     name_p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
     name_p.paragraph_format.space_after = docx.shared.Pt(3)
@@ -1424,7 +1416,7 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
     name_run.font.name = "Aptos Display"
     name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos Display")
     name_run.font.size = docx.shared.Pt(24)
-    name_run.font.color.rgb = purple
+    name_run.font.color.rgb = docx.shared.RGBColor(0, 0, 0)
 
     contacts = [x.strip() for x in (email, phone, linkedin) if x and x.strip()]
     if contacts:
@@ -1433,7 +1425,7 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         cp.paragraph_format.space_after = docx.shared.Pt(7)
         for rr in cp.runs:
             rr.font.size = docx.shared.Pt(8.5)
-            rr.font.color.rgb = docx.shared.RGBColor(91, 101, 115)
+            rr.font.color.rgb = docx.shared.RGBColor(0, 0, 0)
 
     # Thin navy divider under the contact block.
     ppr = name_p._p.get_or_add_pPr()
@@ -1442,7 +1434,7 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
     bottom.set(docx.oxml.ns.qn('w:val'), 'single')
     bottom.set(docx.oxml.ns.qn('w:sz'), '16')
     bottom.set(docx.oxml.ns.qn('w:space'), '5')
-    bottom.set(docx.oxml.ns.qn('w:color'), '19375F')
+    bottom.set(docx.oxml.ns.qn('w:color'), '000000')
     borders.append(bottom)
     ppr.append(borders)
 
@@ -1504,19 +1496,7 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         hp.paragraph_format.left_indent = docx.shared.Inches(0.04)
         hp.paragraph_format.right_indent = docx.shared.Inches(0.02)
         hp.add_run(heading)
-        # Light blue section band with a navy rule for clear visual scanning.
-        ppr = hp._p.get_or_add_pPr()
-        shd = docx.oxml.OxmlElement('w:shd')
-        shd.set(docx.oxml.ns.qn('w:fill'), 'EEF3F8')
-        ppr.append(shd)
-        borders = docx.oxml.OxmlElement('w:pBdr')
-        bottom = docx.oxml.OxmlElement('w:bottom')
-        bottom.set(docx.oxml.ns.qn('w:val'), 'single')
-        bottom.set(docx.oxml.ns.qn('w:sz'), '5')
-        bottom.set(docx.oxml.ns.qn('w:space'), '2')
-        bottom.set(docx.oxml.ns.qn('w:color'), 'B8C8D9')
-        borders.append(bottom)
-        ppr.append(borders)
+        # Plain black heading; no shading or decorative section band.
         for item in content:
             item = re.sub(r"^[*•?)+\-\s]+", "", item).strip()
             if not item or re.fullmatch(r"[*)?._\-\s]+", item):
@@ -1570,20 +1550,13 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
                 run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
                 run.font.size = docx.shared.Pt(11)
 
-    footer = section.footer.paragraphs[0]
-    footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
-    footer_run = footer.add_run("IPER PEPTECH  •  PROFESSIONAL RESUME")
-    footer_run.font.name = "Aptos"
-    footer_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
-    footer_run.font.size = docx.shared.Pt(9)
-
     out = BytesIO()
     document.save(out)
     return out.getvalue()
 
 
 def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="", linkedin=""):
-    """Render a polished, ATS-friendly PDF using the same section order as the Word resume."""
+    """Render a monochrome, single-column ATS-friendly PDF matching the Word resume structure."""
     if not REPORTLAB_AVAILABLE:
         raise RuntimeError("PDF generation is unavailable because ReportLab is not installed.")
     from xml.sax.saxutils import escape
@@ -1593,10 +1566,9 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
     from reportlab.lib.units import mm
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, KeepTogether, HRFlowable
 
-    blue = colors.HexColor("#19375F")
-    dark = colors.HexColor("#263445")
-    muted = colors.HexColor("#5B6B7C")
-    pale_blue = colors.HexColor("#EEF3F8")
+    black = colors.HexColor("#000000")
+    dark = colors.HexColor("#000000")
+    muted = colors.HexColor("#000000")
     out = BytesIO()
     doc = SimpleDocTemplate(
         out, pagesize=A4, rightMargin=18*mm, leftMargin=18*mm,
@@ -1608,14 +1580,12 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
         "kicker": ParagraphStyle("ResumeKicker", fontName="Helvetica-Bold", fontSize=7.5, leading=9,
                                   textColor=muted, alignment=TA_LEFT, spaceAfter=2),
         "name": ParagraphStyle("ResumeName", fontName="Helvetica-Bold", fontSize=23, leading=26,
-                                textColor=blue, alignment=TA_LEFT, spaceAfter=4),
+                                textColor=black, alignment=TA_LEFT, spaceAfter=4),
         "contact": ParagraphStyle("ResumeContact", fontName="Helvetica", fontSize=8.2, leading=10.5,
                                    textColor=muted, alignment=TA_LEFT, spaceAfter=7),
         "heading": ParagraphStyle("ResumeHeading", fontName="Helvetica-Bold", fontSize=9.8, leading=12,
-                                   textColor=blue, alignment=TA_LEFT, spaceBefore=8, spaceAfter=4,
-                                   leftIndent=4, rightIndent=2, borderColor=colors.HexColor("#B8C8D9"),
-                                   borderWidth=0, borderPadding=(4, 4, 4, 4), backColor=pale_blue,
-                                   keepWithNext=True),
+                                   textColor=black, alignment=TA_LEFT, spaceBefore=7, spaceAfter=3,
+                                   leftIndent=0, rightIndent=0, keepWithNext=True),
         "body": ParagraphStyle("ResumeBody", fontName="Helvetica", fontSize=9.1, leading=12,
                                textColor=dark, spaceAfter=3, splitLongWords=True),
         "bullet": ParagraphStyle("ResumeBullet", fontName="Helvetica", fontSize=9.1, leading=12,
@@ -1667,12 +1637,11 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
     # The current tailoring workflow intentionally uses Career Objective rather than Summary.
     sections["PROFESSIONAL SUMMARY"] = []
 
-    story = [Paragraph("CURRICULUM VITAE", styles["kicker"]),
-             Paragraph(escape(str(candidate_name or "Candidate").strip().upper()), styles["name"])]
+    story = [Paragraph(escape(str(candidate_name or "Candidate").strip().upper()), styles["name"])]
     contacts = [str(x).strip() for x in (email, phone, linkedin) if x and str(x).strip()]
     if contacts:
         story.append(Paragraph(escape("  •  ".join(contacts)), styles["contact"]))
-    story.append(HRFlowable(width="100%", thickness=1.8, color=blue, spaceBefore=0, spaceAfter=6))
+    story.append(HRFlowable(width="100%", thickness=0.8, color=black, spaceBefore=0, spaceAfter=5))
     bullet_sections = {"SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST"}
     for heading in order:
         content = sections.get(heading, [])
@@ -1704,13 +1673,10 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
 
     def page_footer(canvas, document):
         canvas.saveState()
-        canvas.setStrokeColor(colors.HexColor("#D7DEE8"))
-        canvas.setLineWidth(0.5)
-        canvas.line(18*mm, 13*mm, A4[0]-18*mm, 13*mm)
+        # Minimal monochrome page number only; avoid decorative branded footer text.
         canvas.setFont("Helvetica", 8)
-        canvas.setFillColor(muted)
-        canvas.drawString(18*mm, 8.5*mm, "IPER PEPTECH  •  PROFESSIONAL RESUME")
-        canvas.drawRightString(A4[0]-18*mm, 8.5*mm, f"Page {document.page}")
+        canvas.setFillColor(black)
+        canvas.drawRightString(A4[0]-18*mm, 8.5*mm, f"{document.page}")
         canvas.restoreState()
 
     doc.build(story, onFirstPage=page_footer, onLaterPages=page_footer)
