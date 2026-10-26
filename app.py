@@ -1295,7 +1295,11 @@ def resume_text_from_data(data):
 
 def clean_resume_draft(text):
     """Normalize AI resume output into clean, ATS-readable plain text."""
-    value = str(text or "").replace("```text", "").replace("```", "")
+    value = unicodedata.normalize("NFKC", str(text or "")).replace("```text", "").replace("```", "")
+    value = value.translate(str.maketrans({
+        "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-",
+        "\u2014": "-", "\u2212": "-", "\u00ad": "", "\ufeff": "",
+    }))
     cleaned = []
     for raw in value.splitlines():
         line = raw.strip()
@@ -1450,19 +1454,30 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS", "KEY COMPETENCIES": "SKILLS",
         "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
         "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
-        "INTERNSHIP": "INTERNSHIPS", "INTERNSHIPS": "INTERNSHIPS",
-        "PROJECTS": "PROJECTS", "KEY PROJECTS": "PROJECTS", "ACADEMIC PROJECTS": "PROJECTS", "PROJECTS & ACHIEVEMENTS": "PROJECTS",
-        "CERTIFICATIONS": "CERTIFICATIONS", "CERTIFICATES": "CERTIFICATIONS", "COURSES": "CERTIFICATIONS", "COURSEWORK": "CERTIFICATIONS",
-        "ACHIEVEMENTS": "ACHIEVEMENTS", "AWARDS": "ACHIEVEMENTS", "HONOURS": "ACHIEVEMENTS",
-        "POSITIONS OF RESPONSIBILITY": "LEADERSHIP & ACTIVITIES", "LEADERSHIP": "LEADERSHIP & ACTIVITIES", "ACTIVITIES": "LEADERSHIP & ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "LEADERSHIP & ACTIVITIES", "VOLUNTEERING": "LEADERSHIP & ACTIVITIES",
-        "PUBLICATIONS": "ADDITIONAL INFORMATION", "RESEARCH": "ADDITIONAL INFORMATION", "PROFESSIONAL INTERESTS": "ADDITIONAL INFORMATION", "INTERESTS": "ADDITIONAL INFORMATION", "LANGUAGES": "ADDITIONAL INFORMATION", "PROFESSIONAL AFFILIATIONS": "ADDITIONAL INFORMATION", "PERSONAL DETAILS": "ADDITIONAL INFORMATION", "REFERENCES": "ADDITIONAL INFORMATION"
+        "INTERNSHIP": "INTERNSHIP", "INTERNSHIPS": "INTERNSHIP",
+        "PROJECTS": "SCHOLASTIC ACTIVITIES", "KEY PROJECTS": "SCHOLASTIC ACTIVITIES", "ACADEMIC PROJECTS": "SCHOLASTIC ACTIVITIES", "PROJECTS & ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES",
+        "CERTIFICATIONS": "SCHOLASTIC ACTIVITIES", "CERTIFICATES": "SCHOLASTIC ACTIVITIES", "COURSES": "SCHOLASTIC ACTIVITIES", "COURSEWORK": "SCHOLASTIC ACTIVITIES",
+        "ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES", "AWARDS": "SCHOLASTIC ACTIVITIES", "HONOURS": "SCHOLASTIC ACTIVITIES", "SCHOLASTIC ACTIVITIES": "SCHOLASTIC ACTIVITIES",
+        "POSITIONS OF RESPONSIBILITY": "EXTRACURRICULAR ACTIVITIES", "LEADERSHIP": "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "VOLUNTEERING": "EXTRACURRICULAR ACTIVITIES",
+        "INTEREST": "INTEREST", "INTERESTS": "INTEREST", "PROFESSIONAL INTERESTS": "INTEREST", "ADDITIONAL INFORMATION": "INTEREST", "PUBLICATIONS": "SCHOLASTIC ACTIVITIES", "RESEARCH": "SCHOLASTIC ACTIVITIES", "LANGUAGES": "INTEREST", "PROFESSIONAL AFFILIATIONS": "EXTRACURRICULAR ACTIVITIES", "PERSONAL DETAILS": "INTEREST", "REFERENCES": "INTEREST"
     }
-    order = ["CAREER OBJECTIVE", "PROFESSIONAL SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"]
+    order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY", "EXPERIENCE"]
     sections = {key: [] for key in order}
     current = "CAREER OBJECTIVE"
+    candidate_name_norm = re.sub(r"\s+", " ", str(candidate_name or "").strip()).casefold()
     for raw in str(resume_text or "").splitlines():
-        line = raw.strip()
+        # Normalize Unicode punctuation before PDF/Word rendering. Some fonts cannot
+        # render non-breaking hyphens and en/em dashes, which otherwise appear as squares.
+        line = unicodedata.normalize("NFKC", raw).strip()
+        line = line.translate(str.maketrans({
+            "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-",
+            "\u2014": "-", "\u2212": "-", "\u00ad": "", "\ufeff": "",
+        }))
         if not line:
+            continue
+        # The candidate name is already displayed prominently in the header; don't
+        # repeat it as an accidental first line under Career Objective.
+        if re.sub(r"\s+", " ", line).casefold() == candidate_name_norm:
             continue
         line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
         line = re.sub(r"\*{1,3}|__|`", "", line).strip()
@@ -1506,16 +1521,37 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
             item = re.sub(r"^[*•?)+\-\s]+", "", item).strip()
             if not item or re.fullmatch(r"[*)?._\-\s]+", item):
                 continue
-            # Format resume entries as proper bullets; keep objective and longer prose as paragraphs.
-            list_sections = {"SKILLS", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"}
-            if heading in list_sections and len(item) < 500:
+            # Internship entries use a clean role -> organisation -> responsibilities hierarchy.
+            label_match = re.match(r"^(Post|Position|Role|Organisation|Organization|Company|Responsibilities|Duration)\s*:\s*(.*)$", item, re.I)
+            if heading == "INTERNSHIP" and label_match:
+                label, value = label_match.group(1).lower(), label_match.group(2).strip()
+                bp = document.add_paragraph()
+                bp.paragraph_format.space_after = docx.shared.Pt(2)
+                if label in {"post", "position", "role"}:
+                    rr = bp.add_run(value); rr.bold = True; rr.font.size = docx.shared.Pt(10.5)
+                elif label in {"organisation", "organization", "company"}:
+                    rr = bp.add_run(value); rr.italic = True; rr.font.color.rgb = docx.shared.RGBColor(75, 89, 105)
+                elif label == "responsibilities":
+                    rr = bp.add_run("Responsibilities"); rr.bold = True
+                    if value: bp.add_run(": " + value)
+                else:
+                    rr = bp.add_run("Duration: " + value); rr.font.size = docx.shared.Pt(9)
+            elif heading == "INTERNSHIP" and re.match(r"^(responsibilities|key responsibilities)\b", item, re.I):
                 bp = document.add_paragraph(style="List Bullet")
                 bp.paragraph_format.left_indent = docx.shared.Inches(0.22)
                 bp.paragraph_format.first_line_indent = docx.shared.Inches(-0.12)
-                bp.add_run(item.lstrip("-• ").strip())
+                bp.add_run(re.sub(r"^(responsibilities|key responsibilities)\s*:?\s*", "", item, flags=re.I))
             else:
-                bp = document.add_paragraph(item)
-                bp.paragraph_format.keep_together = True
+                # Keep role and organisation lines unbulleted; use bullets only for list-like sections.
+                list_sections = {"SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST"}
+                if heading in list_sections and len(item) < 500:
+                    bp = document.add_paragraph(style="List Bullet")
+                    bp.paragraph_format.left_indent = docx.shared.Inches(0.22)
+                    bp.paragraph_format.first_line_indent = docx.shared.Inches(-0.12)
+                    bp.add_run(item.lstrip("-• ").strip())
+                else:
+                    bp = document.add_paragraph(item)
+                    bp.paragraph_format.keep_together = True
 
     # Consistent typography, left-aligned headings and readable body text throughout.
     for para in document.paragraphs:
@@ -1592,19 +1628,30 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
         "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS", "KEY COMPETENCIES": "SKILLS",
         "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
         "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
-        "INTERNSHIP": "INTERNSHIPS", "INTERNSHIPS": "INTERNSHIPS",
-        "PROJECTS": "PROJECTS", "KEY PROJECTS": "PROJECTS", "ACADEMIC PROJECTS": "PROJECTS", "PROJECTS & ACHIEVEMENTS": "PROJECTS",
-        "CERTIFICATIONS": "CERTIFICATIONS", "CERTIFICATES": "CERTIFICATIONS", "COURSES": "CERTIFICATIONS", "COURSEWORK": "CERTIFICATIONS",
-        "ACHIEVEMENTS": "ACHIEVEMENTS", "AWARDS": "ACHIEVEMENTS", "HONOURS": "ACHIEVEMENTS",
-        "POSITIONS OF RESPONSIBILITY": "LEADERSHIP & ACTIVITIES", "LEADERSHIP": "LEADERSHIP & ACTIVITIES", "ACTIVITIES": "LEADERSHIP & ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "LEADERSHIP & ACTIVITIES", "VOLUNTEERING": "LEADERSHIP & ACTIVITIES",
-        "PUBLICATIONS": "ADDITIONAL INFORMATION", "RESEARCH": "ADDITIONAL INFORMATION", "PROFESSIONAL INTERESTS": "ADDITIONAL INFORMATION", "INTERESTS": "ADDITIONAL INFORMATION", "LANGUAGES": "ADDITIONAL INFORMATION", "PROFESSIONAL AFFILIATIONS": "ADDITIONAL INFORMATION", "PERSONAL DETAILS": "ADDITIONAL INFORMATION", "REFERENCES": "ADDITIONAL INFORMATION"
+        "INTERNSHIP": "INTERNSHIP", "INTERNSHIPS": "INTERNSHIP",
+        "PROJECTS": "SCHOLASTIC ACTIVITIES", "KEY PROJECTS": "SCHOLASTIC ACTIVITIES", "ACADEMIC PROJECTS": "SCHOLASTIC ACTIVITIES", "PROJECTS & ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES",
+        "CERTIFICATIONS": "SCHOLASTIC ACTIVITIES", "CERTIFICATES": "SCHOLASTIC ACTIVITIES", "COURSES": "SCHOLASTIC ACTIVITIES", "COURSEWORK": "SCHOLASTIC ACTIVITIES",
+        "ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES", "AWARDS": "SCHOLASTIC ACTIVITIES", "HONOURS": "SCHOLASTIC ACTIVITIES", "SCHOLASTIC ACTIVITIES": "SCHOLASTIC ACTIVITIES",
+        "POSITIONS OF RESPONSIBILITY": "EXTRACURRICULAR ACTIVITIES", "LEADERSHIP": "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "VOLUNTEERING": "EXTRACURRICULAR ACTIVITIES",
+        "INTEREST": "INTEREST", "INTERESTS": "INTEREST", "PROFESSIONAL INTERESTS": "INTEREST", "ADDITIONAL INFORMATION": "INTEREST", "PUBLICATIONS": "SCHOLASTIC ACTIVITIES", "RESEARCH": "SCHOLASTIC ACTIVITIES", "LANGUAGES": "INTEREST", "PROFESSIONAL AFFILIATIONS": "EXTRACURRICULAR ACTIVITIES", "PERSONAL DETAILS": "INTEREST", "REFERENCES": "INTEREST"
     }
-    order = ["CAREER OBJECTIVE", "PROFESSIONAL SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"]
+    order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY", "EXPERIENCE"]
     sections = {key: [] for key in order}
     current = "CAREER OBJECTIVE"
+    candidate_name_norm = re.sub(r"\s+", " ", str(candidate_name or "").strip()).casefold()
     for raw in str(resume_text or "").splitlines():
-        line = raw.strip()
+        # Normalize Unicode punctuation before PDF/Word rendering. Some fonts cannot
+        # render non-breaking hyphens and en/em dashes, which otherwise appear as squares.
+        line = unicodedata.normalize("NFKC", raw).strip()
+        line = line.translate(str.maketrans({
+            "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-",
+            "\u2014": "-", "\u2212": "-", "\u00ad": "", "\ufeff": "",
+        }))
         if not line:
+            continue
+        # The candidate name is already displayed prominently in the header; don't
+        # repeat it as an accidental first line under Career Objective.
+        if re.sub(r"\s+", " ", line).casefold() == candidate_name_norm:
             continue
         line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
         line = re.sub(r"\*{1,3}|__|`", "", line).strip()
@@ -1626,7 +1673,7 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
     if contacts:
         story.append(Paragraph(escape("  •  ".join(contacts)), styles["contact"]))
     story.append(HRFlowable(width="100%", thickness=1.8, color=blue, spaceBefore=0, spaceAfter=6))
-    bullet_sections = {"SKILLS", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"}
+    bullet_sections = {"SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST"}
     for heading in order:
         content = sections.get(heading, [])
         if not content:
@@ -1637,7 +1684,20 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
             if not item or re.fullmatch(r"[*)?._\-\s]+", item):
                 continue
             safe = escape(item)
-            if heading in bullet_sections:
+            label_match = re.match(r"^(Post|Position|Role|Organisation|Organization|Company|Responsibilities|Duration)\s*:\s*(.*)$", item, re.I)
+            if heading == "INTERNSHIP" and label_match:
+                label, value = label_match.group(1).lower(), label_match.group(2).strip()
+                if label in {"post", "position", "role"}:
+                    story.append(Paragraph("<b>" + escape(value) + "</b>", styles["body"]))
+                elif label in {"organisation", "organization", "company"}:
+                    story.append(Paragraph("<font color='#4B5969'><i>" + escape(value) + "</i></font>", styles["body"]))
+                elif label == "responsibilities":
+                    story.append(Paragraph("<b>Responsibilities</b>" + (": " + escape(value) if value else ""), styles["body"]))
+                else:
+                    story.append(Paragraph("<font size='8.5'>Duration: " + escape(value) + "</font>", styles["body"]))
+            elif heading == "INTERNSHIP" and re.match(r"^(responsibilities|key responsibilities)\b", item, re.I):
+                story.append(Paragraph("&#8226; " + escape(re.sub(r"^(responsibilities|key responsibilities)\s*:?\s*", "", item, flags=re.I)), styles["bullet"]))
+            elif heading in bullet_sections:
                 story.append(Paragraph("&#8226; " + safe, styles["bullet"]))
             else:
                 story.append(Paragraph(safe, styles["body"]))
@@ -6264,15 +6324,18 @@ Resume text:
                     extracted_email, extracted_phone = extract_resume_contacts(source_resume_text)
                     edit_prompt = f"""You are the expert ATS resume editor for IPER PEPTECH. Produce a polished, one-column, ATS-friendly resume tailored to the target job description. Use plain-text headings and clean, concise bullets. Do not use Markdown decoration, tables, columns, icons, emojis, text boxes, or numbered-list clutter. Start with the candidate's full name, then contact details only if present in the student's own resume. Never invent contact details.
 
-MANDATORY STRUCTURE RULES:
-1. Include exactly one CAREER OBJECTIVE section tailored specifically to the target JD and supported by the candidate's real education and experience.
-2. Do NOT include a PROFESSIONAL SUMMARY, SUMMARY, PROFILE, or ABOUT ME section anywhere in the final resume. The Career Objective replaces the Professional Summary.
-3. Keep the Career Objective concise (usually 1–2 sentences), specific to the target role/company, and use confident, powerful professional wording without exaggeration, generic filler, or unsupported claims.
-4. Retain relevant sections only when supported: CAREER OBJECTIVE, SKILLS, EDUCATION, EXPERIENCE, INTERNSHIP, PROJECTS, CERTIFICATIONS, ACHIEVEMENTS, ACTIVITIES.
-5. Refine rough notes and fragments into complete, professional, action-led sentences. In particular, turn achievement fragments such as 'Winner, Inter-College Debate Competition' into a clear sentence such as 'Won the Inter-College Debate Competition, demonstrating persuasive communication and structured argumentation.' Use only the fact stated; do not add dates, rankings, awards, metrics, or other details that were not supplied.
-6. Apply the same refinement to short achievements and activity notes throughout the resume while preserving their factual meaning. Do not turn participation into a win, imply leadership where none is stated, or invent measurable outcomes.
-7. Include JD keywords naturally only when the student's evidence supports them. Never invent or exaggerate qualifications, skills, employers, metrics, responsibilities, achievements, or results. Do not insert placeholder text.
-8. Keep 10th and 12th percentages, undergraduate/postgraduate education, and other supplied profile details when present and relevant; do not silently delete them.
+MANDATORY MBA RESUME STRUCTURE AND JOB-TAILORING RULES:
+1. Use these sections in exactly this order, omitting a section only if the student has no genuine information for it: CAREER OBJECTIVE, EDUCATION, INTERNSHIP, SKILLS, SCHOLASTIC ACTIVITIES, EXTRACURRICULAR ACTIVITIES, INTEREST.
+2. Do NOT include PROFESSIONAL SUMMARY, SUMMARY, PROFILE, ABOUT ME, WORK EXPERIENCE, or extra sections in the final MBA-student resume. The Career Objective replaces the Professional Summary. If a student has substantial full-time employment rather than an internship, represent the role under INTERNSHIP only if it is genuinely an internship; otherwise preserve the factual experience within the closest suitable existing section without changing its nature.
+3. Keep the CAREER OBJECTIVE concise (usually 1–2 sentences), specific to the target role/company, and supported by the student's actual education, experience and strengths. Do not make generic claims or imply experience the student does not have.
+4. EDUCATION must appear before SKILLS. Include MBA/postgraduate study first, then undergraduate study, then Class XII and Class X where provided. Preserve institution names, years, and percentages/CGPA accurately.
+5. Under INTERNSHIP, format each entry in this exact hierarchy: Post/Role on its own unbulleted line; Organisation on the next unbulleted line; then a clear 'Responsibilities' label followed by concise responsibility bullets. Do not put bullets before the post or organisation. Keep dates/duration only when supplied. If internship details are missing, do not fabricate an internship.
+6. Tailor the resume to the target job description by identifying its core responsibilities, required/preferred skills, qualifications and relevant keywords. Prioritise the student's real, relevant evidence; reorder and clarify existing information to improve relevance. Do not keyword-stuff or claim a match unsupported by evidence.
+7. Use SKILLS for only skills the student has actually learned or demonstrated. Separate functional, technical and communication skills where useful, but keep the section concise. Never add a skill merely because it appears in the JD.
+8. Use SCHOLASTIC ACTIVITIES for academic projects, research, presentations, certifications, academic awards and competition achievements; use EXTRACURRICULAR ACTIVITIES for clubs, volunteering, sports, event participation and positions of responsibility; use INTEREST for genuine interests. Do not duplicate the same item across sections.
+9. Refine rough notes into professional, action-led language while preserving facts. For example, 'Winner, Inter-College Debate Competition' may become 'Won the Inter-College Debate Competition'; do not add dates, rankings, metrics or details not supplied. Do not turn participation into a win or imply leadership where none is stated.
+10. Never invent or exaggerate qualifications, skills, employers, responsibilities, achievements, outcomes, dates, metrics or contact details. Do not insert placeholders. Keep supplied 10th/12th marks and education details when present. If a JD requirement is missing from the student's evidence, do not pretend the student has it.
+11. Return a clean, ATS-friendly plain-text resume for the app's PDF/Word templates to format. Use clear section headings and simple responsibility bullets; no Markdown decoration, tables, columns, icons, emojis, text boxes or commentary.
 Return only the final resume text, with no commentary.
     Candidate account name: {account_name}
     Email extracted from student's own resume (use if present): {extracted_email}
