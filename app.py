@@ -831,6 +831,7 @@ import subprocess
 import wave
 from pathlib import Path
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 try:
     from reportlab.lib import colors
@@ -1366,8 +1367,8 @@ def add_keyword_to_resume_editor(keyword, checkbox_key=None):
     st.session_state.pop("generated_resume_docx_bytes", None)
 
 
-def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
-    """Render every downloadable resume using one consistent, ATS-friendly Word template."""
+def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin="", template="Classic Professional"):
+    """Render an ATS-friendly resume in one of two clean professional layouts."""
     document = docx.Document()
     section = document.sections[0]
     section.top_margin = docx.shared.Inches(0.62)
@@ -1375,23 +1376,26 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
     section.left_margin = docx.shared.Inches(0.72)
     section.right_margin = docx.shared.Inches(0.72)
 
-    purple = docx.shared.RGBColor(83, 49, 131)
+    # Two restrained, ATS-friendly layouts inspired by standard resume guidance; not copied from Indeed.
+    modern = str(template or "Classic Professional") == "Modern Minimal"
+    accent = docx.shared.RGBColor(35, 79, 105) if modern else docx.shared.RGBColor(83, 49, 131)
+    font_name = "Arial" if modern else "Calibri"
     styles = document.styles
     normal = styles["Normal"]
-    normal.font.name = "Times New Roman"
-    normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+    normal.font.name = font_name
+    normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), font_name)
     normal.font.size = docx.shared.Pt(11)
     normal.paragraph_format.space_after = docx.shared.Pt(3)
     normal.paragraph_format.line_spacing = 1.0
 
     for style_name in ("Heading 1", "Heading 2", "List Bullet"):
         style = styles[style_name]
-        style.font.name = "Times New Roman"
-        style._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+        style.font.name = font_name
+        style._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), font_name)
         if style_name == "Heading 1":
             style.font.size = docx.shared.Pt(11)
             style.font.bold = True
-            style.font.color.rgb = purple
+            style.font.color.rgb = accent
             style.paragraph_format.space_before = docx.shared.Pt(7)
             style.paragraph_format.space_after = docx.shared.Pt(2)
             style.paragraph_format.keep_with_next = True
@@ -1403,14 +1407,14 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
 
     # One fixed template: consistent name/contact header and predictable section order.
     name_p = document.add_paragraph()
-    name_p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
+    name_p.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT if modern else docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
     name_p.paragraph_format.space_after = docx.shared.Pt(2)
     name_run = name_p.add_run(str(candidate_name or "Candidate").strip())
     name_run.bold = True
-    name_run.font.name = "Times New Roman"
-    name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+    name_run.font.name = font_name
+    name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), font_name)
     name_run.font.size = docx.shared.Pt(16)
-    name_run.font.color.rgb = purple
+    name_run.font.color.rgb = accent
 
     contacts = [x.strip() for x in (email, phone, linkedin) if x and x.strip()]
     if contacts:
@@ -1483,27 +1487,69 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
             para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
             for run in para.runs:
                 run.bold = True
-                run.font.name = "Times New Roman"
-                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+                run.font.name = font_name
+                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), font_name)
                 run.font.size = docx.shared.Pt(11)
-                run.font.color.rgb = purple
+                run.font.color.rgb = accent
         elif para is not name_p:
             para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
             for run in para.runs:
-                run.font.name = "Times New Roman"
-                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+                run.font.name = font_name
+                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), font_name)
                 run.font.size = docx.shared.Pt(11)
 
     footer = section.footer.paragraphs[0]
     footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
     footer_run = footer.add_run("IPER PEPTECH | Professional Resume")
-    footer_run.font.name = "Times New Roman"
-    footer_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+    footer_run.font.name = font_name
+    footer_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), font_name)
     footer_run.font.size = docx.shared.Pt(9)
 
     out = BytesIO()
     document.save(out)
     return out.getvalue()
+
+def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="", template="Classic Professional"):
+    """Create a clean, selectable-text PDF resume in one of two simple layouts."""
+    if not REPORTLAB_AVAILABLE:
+        return None
+    out = BytesIO()
+    doc = SimpleDocTemplate(out, pagesize=A4, rightMargin=18*mm, leftMargin=18*mm, topMargin=15*mm, bottomMargin=15*mm)
+    modern = str(template or "Classic Professional") == "Modern Minimal"
+    accent = colors.HexColor("#235F78") if modern else colors.HexColor("#533183")
+    base = getSampleStyleSheet()
+    name_style = ParagraphStyle("ResumeName", parent=base["Title"], fontName="Helvetica-Bold", fontSize=17, leading=21, textColor=accent, alignment=0 if modern else TA_CENTER, spaceAfter=4)
+    contact_style = ParagraphStyle("ResumeContact", parent=base["Normal"], fontName="Helvetica", fontSize=9, leading=12, textColor=colors.HexColor("#444444"), alignment=0 if modern else TA_CENTER, spaceAfter=10)
+    heading_style = ParagraphStyle("ResumeHeading", parent=base["Heading2"], fontName="Helvetica-Bold", fontSize=10.5, leading=13, textColor=accent, spaceBefore=8, spaceAfter=3, keepWithNext=True)
+    body_style = ParagraphStyle("ResumeBody", parent=base["BodyText"], fontName="Helvetica", fontSize=9.5, leading=12.2, textColor=colors.HexColor("#222222"), spaceAfter=3)
+    story = [Paragraph(escape(str(candidate_name or "Candidate")), name_style)]
+    contacts = [str(x).strip() for x in (email, phone) if str(x or "").strip()]
+    if contacts:
+        story.append(Paragraph(escape(" | ".join(contacts)), contact_style))
+    aliases = {"CAREER OBJECTIVE":"CAREER OBJECTIVE", "OBJECTIVE":"CAREER OBJECTIVE", "PROFESSIONAL SUMMARY":"PROFESSIONAL SUMMARY", "SUMMARY":"PROFESSIONAL SUMMARY", "PROFILE":"PROFESSIONAL SUMMARY", "SKILLS":"SKILLS", "KEY SKILLS":"SKILLS", "TECHNICAL SKILLS":"SKILLS", "CORE SKILLS":"SKILLS", "CORE COMPETENCIES":"SKILLS", "EDUCATION":"EDUCATION", "EDUCATIONAL QUALIFICATIONS":"EDUCATION", "ACADEMIC QUALIFICATIONS":"EDUCATION", "EXPERIENCE":"EXPERIENCE", "WORK EXPERIENCE":"EXPERIENCE", "PROFESSIONAL EXPERIENCE":"EXPERIENCE", "EMPLOYMENT HISTORY":"EXPERIENCE", "INTERNSHIP":"INTERNSHIPS", "INTERNSHIPS":"INTERNSHIPS", "PROJECTS":"PROJECTS", "KEY PROJECTS":"PROJECTS", "ACADEMIC PROJECTS":"PROJECTS", "PROJECTS & ACHIEVEMENTS":"PROJECTS", "CERTIFICATIONS":"CERTIFICATIONS", "CERTIFICATES":"CERTIFICATIONS", "COURSES":"CERTIFICATIONS", "ACHIEVEMENTS":"ACHIEVEMENTS", "AWARDS":"ACHIEVEMENTS", "ACTIVITIES":"LEADERSHIP & ACTIVITIES", "LEADERSHIP":"LEADERSHIP & ACTIVITIES", "EXTRACURRICULAR ACTIVITIES":"LEADERSHIP & ACTIVITIES", "INTERESTS":"ADDITIONAL INFORMATION", "LANGUAGES":"ADDITIONAL INFORMATION", "PROFESSIONAL INTERESTS":"ADDITIONAL INFORMATION"}
+    order = ["CAREER OBJECTIVE", "PROFESSIONAL SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"]
+    sections = {h: [] for h in order}; current = "CAREER OBJECTIVE"
+    for raw in str(resume_text or "").splitlines():
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", raw.strip()).replace("**", "").replace("`", "")
+        if not line: continue
+        normalized = re.sub(r"[^A-Z& ]", "", line.upper()).strip(); normalized = re.sub(r"\s+", " ", normalized)
+        if normalized in aliases: current = aliases[normalized]; continue
+        if normalized in {"NAME", "CANDIDATE NAME", "CONTACT", "CONTACT DETAILS"}: continue
+        sections.setdefault(current, []).append(re.sub(r"^\s*(?:[-•*]+|\d+[.)])\s*", "", line).strip())
+    for heading in order:
+        items = sections.get(heading, [])
+        if not items: continue
+        story.append(Paragraph(escape(heading), heading_style))
+        for item in items:
+            item = item.strip()
+            if item:
+                bullet = heading in {"SKILLS", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"}
+                story.append(Paragraph(("&#8226;&nbsp;&nbsp;" if bullet else "") + escape(item), body_style))
+    def footer(canvas, document):
+        canvas.saveState(); canvas.setFont("Helvetica", 8); canvas.setFillColor(colors.HexColor("#666666")); canvas.drawCentredString(A4[0]/2, 8*mm, "IPER PEPTECH | Professional Resume"); canvas.restoreState()
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    return out.getvalue()
+
 
 def init_database():
     conn = get_db_connection()
@@ -6246,26 +6292,55 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
         if st.button("Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
             st.session_state["pending_reset_resume_workspace"] = True
             st.rerun()
+    st.markdown("### 4. Download a Professional Resume")
+    st.caption("Choose one of two clean, recruiter-friendly layouts. Both use your existing resume content and avoid graphics, columns and decorative clutter.")
+    resume_template = st.radio(
+        "Resume layout",
+        ["Classic Professional", "Modern Minimal"],
+        horizontal=True,
+        key="resume_download_template",
+        help="Classic Professional: centered purple header. Modern Minimal: left-aligned blue header. Both are simple and ATS-friendly.",
+    )
     with download_col:
-        if st.button(" Create Professional Editable DOCX", key="create_resume_docx", use_container_width=True):
+        if st.button("Create Selected Resume Formats", key="create_resume_docx", use_container_width=True):
             if not resume_editor_text.strip():
                 st.warning("Please add or edit your resume content first.")
             else:
                 docx_email, docx_phone = extract_resume_contacts(resume_editor_text)
                 if not docx_email:
                     docx_email = str(st.session_state.get("student_email", "") or "").strip()
+                clean_text = clean_resume_draft(resume_editor_text)
                 st.session_state["generated_resume_docx_bytes"] = build_professional_resume_docx(
-                    clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone
+                    clean_text, account_name, email=docx_email, phone=docx_phone, template=resume_template
                 )
-                st.success("Professional, editable Word resume created. Download it below and continue editing in Microsoft Word.")
+                st.session_state["generated_resume_pdf_bytes"] = build_professional_resume_pdf(
+                    clean_text, account_name, email=docx_email, phone=docx_phone, template=resume_template
+                )
+                st.session_state["generated_resume_template_name"] = resume_template
+                st.success(f"{resume_template} resume created in available download formats.")
     if st.session_state.get("generated_resume_docx_bytes"):
-        st.download_button(
-            "Download My Editable Resume (.docx)",
-            data=st.session_state["generated_resume_docx_bytes"],
-            file_name=f"{re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'}_Resume.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
-        )
+        chosen_template = st.session_state.get("generated_resume_template_name", "Professional")
+        safe_name = re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'
+        d1, d2 = st.columns(2)
+        with d1:
+            st.download_button(
+                f"Download Editable Word Resume (.docx) — {chosen_template}",
+                data=st.session_state["generated_resume_docx_bytes"],
+                file_name=f"{safe_name}_Resume_{re.sub(r'[^A-Za-z0-9]+', '_', chosen_template)}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+            )
+        with d2:
+            if st.session_state.get("generated_resume_pdf_bytes"):
+                st.download_button(
+                    f"Download PDF Resume — {chosen_template}",
+                    data=st.session_state["generated_resume_pdf_bytes"],
+                    file_name=f"{safe_name}_Resume_{re.sub(r'[^A-Za-z0-9]+', '_', chosen_template)}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            else:
+                st.info("PDF generation is unavailable in this deployment; download the editable Word version.")
 
 
 # SECTION 2: CAREER DEVELOPMENT
@@ -6533,10 +6608,9 @@ elif selected_nav == "Interview Practice Room":
     st.markdown("---")
     col_mode, col_diff, col_cat = st.columns(3)
     with col_mode:
-        mode_options = ["Audio Response Mode"]
-        if ENABLE_VIDEO_INTERVIEW_MODE:
-            mode_options.append("Video Response Mode")
-        mode = st.radio("Practice Format:", mode_options)
+        mode = st.radio("Practice Format:", ["Audio Response Mode", "Video Response Mode"], key="pi_practice_format")
+    if mode == "Video Response Mode" and not ENABLE_VIDEO_INTERVIEW_MODE:
+        st.info("Video Interview is temporarily unavailable.")
     with col_diff:
         difficulty = st.selectbox("Question Level:", ["Basic", "Intermediate", "Advanced"])
     with col_cat:
@@ -6602,486 +6676,620 @@ CANDIDATE CONTEXT:
                 st.rerun()
 
     question_set = st.session_state.get("practice_question_set", [])
-    if question_set:
-        q_index = int(st.session_state.get("practice_question_index", 0) or 0)
-        q_index = max(0, min(q_index, len(question_set) - 1))
-        st.session_state["current_question"] = question_set[q_index]
-        st.markdown(f"### Practice Session — Question {q_index + 1} of {len(question_set)}")
-        st.progress((q_index + 1) / len(question_set))
-        st.caption("Answer each question and submit it for feedback. Your attempted questions are stored so future sessions can avoid repeats.")
-        for qi, question in enumerate(question_set):
-            with st.expander(f"Question {qi + 1}: {question}", expanded=(qi == q_index)):
-                st.write(question)
-        if q_index > 0 and st.button("← Previous Question", key="practice_previous_question"):
-            st.session_state["practice_question_index"] = q_index - 1
-            st.rerun()
-        if q_index < len(question_set) - 1 and st.button("Next Question →", key="practice_next_question"):
-            st.session_state["practice_question_index"] = q_index + 1
-            st.session_state.pop("practice_answer_submitted_for_question", None)
-            st.rerun()
-        if q_index == len(question_set) - 1:
-            st.success("You have reached Question 5. Complete and submit this answer to finish the set.")
-
-        extracted_transcript = ""
-        saved_video_filename = "N/A"
-        st.session_state["speech_detected"] = False
-
-        if mode == "Audio Response Mode":
-            st.subheader("Record Your Audio Answer")
-            audio_data = st.audio_input("Click to record your voice:", key=f"pi_audio_input_q_{st.session_state.get('practice_question_index', 0)}")
-            if audio_data is not None:
-                st.audio(audio_data)
-                with st.spinner("Converting audio to text via Whisper..."):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-                        tmp_file.write(audio_data.getvalue())
-                        tmp_path = tmp_file.name
-                    try:
-                        st.session_state["communication_duration"] = get_media_duration_seconds(tmp_path)
-                        extracted_transcript, detected_speech_duration = transcribe_indian_english_audio(tmp_path)
-                        if detected_speech_duration > 0:
-                            st.session_state["communication_duration"] = detected_speech_duration
-                    except Exception as err:
-                        st.error(f"Speech transcription error: {err}")
-                        if not FFMPEG_PATH:
-                            st.info("FFmpeg is missing. Add `ffmpeg` to packages.txt (Streamlit Cloud) or install it in your Dockerfile (Cloud Run).")
-                    finally:
-                        if os.path.exists(tmp_path): os.remove(tmp_path)
-                
-                if extracted_transcript:
-                    st.session_state["speech_detected"] = bool(extracted_transcript.strip())
-                    if extracted_transcript:
-                        st.success("Human speech detected and transcribed successfully.")
-                    else:
-                        st.warning("No clear human speech was detected. Background music/noise was ignored, so no AI communication feedback was generated.")
-
-        elif mode == "Video Response Mode" and ENABLE_VIDEO_INTERVIEW_MODE:
-            st.subheader("1. Record & Save Video")
-            render_video_recorder_component()
-            
-            st.subheader("2. Upload Saved Video File")
-            uploaded_video = st.file_uploader("Upload recorded video file (.webm or .mp4):", type=["webm", "mp4"])
-            
-            if uploaded_video is not None:
-                ts = time.strftime("%Y%m%d_%H%M%S")
-                incoming_ext = "mp4" if uploaded_video.name.lower().endswith(".mp4") else "webm"
-                incoming_path = os.path.join(VIDEO_STORAGE_DIR, f"incoming_{ts}.{incoming_ext}")
-                saved_video_path = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}.mp4")
-                
-                with open(incoming_path, "wb") as f:
-                    f.write(uploaded_video.getvalue())
-                
+    if question_set and mode == "Video Response Mode" and ENABLE_VIDEO_INTERVIEW_MODE:
+        st.markdown("### Five-Question Video PI")
+        st.caption("Answer all five questions in order in one video. Maximum duration: 15 minutes. Say the question number before each answer to help the AI map responses correctly.")
+        for qi, question in enumerate(question_set[:5], start=1):
+            st.markdown(f"**Q{qi}.** {question}")
+        uploaded_video = st.file_uploader("Upload your complete PI video (.mp4 or .webm)", type=["mp4", "webm"], key="pi_single_video_upload")
+        if uploaded_video is not None:
+            st.video(uploaded_video)
+            st.caption(f"Selected file: {uploaded_video.name}")
+        if st.button("Submit Complete Video for Feedback", use_container_width=True, key="pi_submit_five_question_video"):
+            if uploaded_video is None:
+                st.error("Please upload your video first.")
+            elif client is None:
+                st.error("AI feedback is unavailable because GROQ_API_KEY is not configured.")
+            else:
+                incoming_path = None
+                processed_path = None
                 try:
-                    with st.spinner("Preparing MP4 interview video..."):
-                        if incoming_ext == "webm":
-                            saved_video_path = convert_video_to_mp4(incoming_path)
-                            if os.path.abspath(saved_video_path) != os.path.abspath(incoming_path):
-                                # convert_video_to_mp4 uses the input stem, so rename it to the final naming convention.
-                                target = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}.mp4")
-                                if os.path.abspath(saved_video_path) != os.path.abspath(target):
-                                    os.replace(saved_video_path, target)
-                                saved_video_path = target
+                    ext = ".mp4" if uploaded_video.name.lower().endswith(".mp4") else ".webm"
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                        tmp.write(uploaded_video.getvalue())
+                        incoming_path = tmp.name
+                    duration = get_media_duration_seconds(incoming_path)
+                    if duration > 900:
+                        st.error("Your video exceeds the 15-minute limit. Please trim it and upload again.")
+                    elif duration <= 0:
+                        st.error("The video duration could not be verified. Please upload a valid MP4 or WebM file.")
+                    else:
+                        if ext == ".webm":
+                            processed_path = convert_video_to_mp4(incoming_path)
                         else:
-                            with open(saved_video_path, "wb") as out:
-                                out.write(uploaded_video.getvalue())
-                    if os.path.exists(incoming_path) and os.path.abspath(incoming_path) != os.path.abspath(saved_video_path):
-                        os.remove(incoming_path)
-                    st.session_state["current_video_path"] = saved_video_path
-                    st.session_state["communication_duration"] = get_media_duration_seconds(saved_video_path)
-                    st.video(saved_video_path)
-                    st.success(f"Interview video saved as MP4: `{os.path.basename(saved_video_path)}`")
-                    with st.spinner("Transcribing video audio track via Whisper..."):
-                        extracted_transcript, detected_speech_duration = transcribe_indian_english_audio(saved_video_path)
-                        if detected_speech_duration > 0:
-                            st.session_state["communication_duration"] = detected_speech_duration
+                            processed_path = incoming_path
+                        with st.spinner("Transcribing your video and mapping the five answers to their questions..."):
+                            transcript, speech_duration = transcribe_indian_english_audio(processed_path)
+                        if not transcript or not transcript.strip():
+                            st.error("No clear speech was detected. Please upload a video with audible spoken answers.")
+                        else:
+                            mapping_prompt = f'''Map this complete interview transcript to the five questions below. The candidate may say question numbers, repeat a question, or transition naturally. Use semantic context and spoken question labels. Do not invent missing answers. Return exactly five entries in question order. If an answer cannot confidently be identified, set confident=false and explain why. An answer should contain only the candidate's answer, not the question prompt.
+QUESTIONS: {json.dumps(question_set[:5], ensure_ascii=False)}
+TRANSCRIPT: {transcript}
+Return JSON: {{"answers":[{{"question_number":1,"answer":"...","confident":true,"mapping_note":"..."}}, ...]}}'''
+                            mapping_resp = client.chat.completions.create(
+                                model=GROQ_MODEL,
+                                messages=[{"role":"system","content":"You accurately segment interview transcripts. Never fabricate missing candidate speech. Return valid JSON only."},{"role":"user","content":mapping_prompt}],
+                                temperature=0.0,
+                                response_format={"type":"json_object"},
+                            )
+                            mapped = json.loads(mapping_resp.choices[0].message.content or "{}")
+                            answers = mapped.get("answers", [])
+                            by_number = {int(a.get("question_number", 0)): a for a in answers if isinstance(a, dict)}
+                            if len(by_number) != 5 or any(not by_number.get(i, {}).get("confident", False) or not str(by_number.get(i, {}).get("answer", "")).strip() for i in range(1,6)):
+                                st.error("The AI could not confidently identify all five answers. To protect assessment accuracy, no grades were saved. Please re-record and say ‘Question 1’, ‘Question 2’, and so on before each answer, then upload again.")
+                                st.write("Mapping review:")
+                                for i in range(1,6):
+                                    a=by_number.get(i,{})
+                                    st.markdown(f"**Q{i}:** {a.get('mapping_note','Answer not confidently mapped.')}")
+                            else:
+                                st.success("All five answers were mapped. Assessing each question separately...")
+                                results=[]
+                                candidate=st.session_state.get("first_name", "Student")
+                                student_id=st.session_state.get("student_id")
+                                for i, question in enumerate(question_set[:5], start=1):
+                                    answer=str(by_number[i]["answer"]).strip()
+                                    metrics=communication_metrics(answer, (speech_duration or duration)/5)
+                                    eval_prompt=f'''Assess this MBA placement interview answer strictly. Award only evidence-based scores. Communication and technical knowledge must be separate. Penalize Hindi/Hinglish in this English-medium interview, not accent. Short or vague answers must score low. Provide a useful improved benchmark answer. Do not claim vocal tone can be assessed from transcript alone.
+QUESTION: {question}
+ANSWER: {answer}
+CATEGORY: {category}; company: {selected_comp or 'N/A'}; specialization: {selected_spec or 'N/A'}
+METRICS: {json.dumps(metrics)}
+LANGUAGE CHECK: {json.dumps(detect_hindi_usage(answer))}
+Return JSON with fields CandidateName, CommunicationScore (integer 0-100), TechnicalKnowledgeScore (integer 0-100), FinalScore (integer 0-100), CommunicationAssessment, TechnicalKnowledgeAssessment, TechnicalCorrectness, CorrectPoints (array), TechnicalErrorsOrGaps (array), GrammarIssues (array), FillerWordsUsed (array), RateOfSpeechAssessment, ToneAssessment, ClarityAssessment, CommunicationStrengths (array), CommunicationImprovements (array), TechnicalStrengths (array), TechnicalImprovements (array), KeyCorrections (array), BenchmarkAnswer, NextPracticeFocus.'''
+                                    resp=client.chat.completions.create(model=GROQ_MODEL,messages=[{"role":"system","content":"You are a strict, evidence-based MBA interview assessor. Be conservative, return JSON only."},{"role":"user","content":eval_prompt}],temperature=0.15,response_format={"type":"json_object"})
+                                    result=json.loads(resp.choices[0].message.content or "{}")
+                                    comm=max(0,min(100,int(result.get("CommunicationScore",0))))
+                                    tech=max(0,min(100,int(result.get("TechnicalKnowledgeScore",0))))
+                                    language=detect_hindi_usage(answer)
+                                    if language.get("penalty"):
+                                        comm=max(0,comm-int(language["penalty"]))
+                                        result["CommunicationImprovements"]=["Maintain English consistently throughout the placement interview."]+list(result.get("CommunicationImprovements",[]))
+                                    final=min(int(round((comm+tech)/2)),comm,tech)
+                                    result.update({"CommunicationScore":comm,"TechnicalKnowledgeScore":tech,"FinalScore":final})
+                                    result["CommunicationGrade"]=grade_from_score(comm)
+                                    result["TechnicalGrade"]=grade_from_score(tech)
+                                    result["FinalGrade"]=grade_from_score(final)
+                                    results.append({"question":question,"answer":answer,"result":result,"duration":duration/5})
+                                st.session_state["pi_five_video_results"]=results
+                                st.session_state["pi_five_video_transcript"]=transcript
+                                st.session_state["pi_five_video_duration"]=duration
+                                for item in results:
+                                    r=item["result"]
+                                    save_student_attempt(student_id,category,r["FinalScore"],"Video Response Mode",item["question"],item["duration"],r["CommunicationScore"],r["TechnicalKnowledgeScore"],r)
+                                    st.session_state.setdefault("history",[]).append({"Timestamp":time.strftime("%Y-%m-%d %H:%M:%S"),"Candidate":candidate,"Domain":category,"Score":r["FinalScore"],"CommunicationScore":r["CommunicationScore"],"TechnicalScore":r["TechnicalKnowledgeScore"],"Mode":"Video Response Mode","Question":item["question"],"DurationSeconds":item["duration"]})
+                                st.success("All five individual assessments have been saved to your PI history.")
+                except Exception as err:
+                    st.error(f"Video PI processing error: {err}")
+                    st.info("No complete five-question assessment was confirmed. Check the video format and try again.")
+                finally:
+                    for path in (incoming_path, processed_path):
+                        if path and os.path.exists(path) and path != incoming_path:
+                            try: os.remove(path)
+                            except OSError: pass
+        saved_results=st.session_state.get("pi_five_video_results", [])
+        if saved_results:
+            st.markdown("### Your Five-Question PI Feedback")
+            for i,item in enumerate(saved_results, start=1):
+                r=item["result"]
+                with st.expander(f"Q{i}: {item['question']} — Grade {r.get('FinalGrade','E')}", expanded=(i==1)):
+                    st.markdown("**Your answer**")
+                    st.write(item["answer"])
+                    c1,c2,c3=st.columns(3)
+                    c1.metric("Communication Grade",r.get("CommunicationGrade","E"))
+                    c2.metric("Technical Grade",r.get("TechnicalGrade","E"))
+                    c3.metric("Final Grade",r.get("FinalGrade","E"))
+                    st.markdown("**Communication Feedback**")
+                    st.write(r.get("CommunicationAssessment",""))
+                    st.markdown("**Technical Feedback**")
+                    st.write(r.get("TechnicalKnowledgeAssessment",""))
+                    st.markdown("**Strengths**")
+                    for x in r.get("CorrectPoints",[]): st.markdown(f"- {x}")
+                    st.markdown("**Areas to improve**")
+                    for x in r.get("TechnicalErrorsOrGaps",[]): st.markdown(f"- {x}")
+                    for x in r.get("CommunicationImprovements",[]): st.markdown(f"- {x}")
+                    st.markdown("**Suggested Answer**")
+                    st.write(r.get("BenchmarkAnswer",""))
+                    st.markdown("**Next Practice Focus**")
+                    st.write(r.get("NextPracticeFocus",""))
+            scores=[x["result"]["FinalScore"] for x in saved_results]
+            avg=round(sum(scores)/len(scores)) if scores else 0
+            st.markdown("### Overall Video PI Summary")
+            st.metric("Overall PI Grade",grade_from_score(avg))
+            st.caption("Overall grade is based on the average of five question-level final scores. Individual question grades remain available in PI history.")
+            render_grade_slabs()
+    else:
+        question_set = st.session_state.get("practice_question_set", [])
+        if question_set:
+            q_index = int(st.session_state.get("practice_question_index", 0) or 0)
+            q_index = max(0, min(q_index, len(question_set) - 1))
+            st.session_state["current_question"] = question_set[q_index]
+            st.markdown(f"### Practice Session — Question {q_index + 1} of {len(question_set)}")
+            st.progress((q_index + 1) / len(question_set))
+            st.caption("Answer each question and submit it for feedback. Your attempted questions are stored so future sessions can avoid repeats.")
+            for qi, question in enumerate(question_set):
+                with st.expander(f"Question {qi + 1}: {question}", expanded=(qi == q_index)):
+                    st.write(question)
+            if q_index > 0 and st.button("← Previous Question", key="practice_previous_question"):
+                st.session_state["practice_question_index"] = q_index - 1
+                st.rerun()
+            if q_index < len(question_set) - 1 and st.button("Next Question →", key="practice_next_question"):
+                st.session_state["practice_question_index"] = q_index + 1
+                st.session_state.pop("practice_answer_submitted_for_question", None)
+                st.rerun()
+            if q_index == len(question_set) - 1:
+                st.success("You have reached Question 5. Complete and submit this answer to finish the set.")
+
+            extracted_transcript = ""
+            saved_video_filename = "N/A"
+            st.session_state["speech_detected"] = False
+
+            if mode == "Audio Response Mode":
+                st.subheader("Record Your Audio Answer")
+                audio_data = st.audio_input("Click to record your voice:", key=f"pi_audio_input_q_{st.session_state.get('practice_question_index', 0)}")
+                if audio_data is not None:
+                    st.audio(audio_data)
+                    with st.spinner("Converting audio to text via Whisper..."):
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+                            tmp_file.write(audio_data.getvalue())
+                            tmp_path = tmp_file.name
+                        try:
+                            st.session_state["communication_duration"] = get_media_duration_seconds(tmp_path)
+                            extracted_transcript, detected_speech_duration = transcribe_indian_english_audio(tmp_path)
+                            if detected_speech_duration > 0:
+                                st.session_state["communication_duration"] = detected_speech_duration
+                        except Exception as err:
+                            st.error(f"Speech transcription error: {err}")
+                            if not FFMPEG_PATH:
+                                st.info("FFmpeg is missing. Add `ffmpeg` to packages.txt (Streamlit Cloud) or install it in your Dockerfile (Cloud Run).")
+                        finally:
+                            if os.path.exists(tmp_path): os.remove(tmp_path)
+                
+                    if extracted_transcript:
                         st.session_state["speech_detected"] = bool(extracted_transcript.strip())
                         if extracted_transcript:
                             st.success("Human speech detected and transcribed successfully.")
                         else:
                             st.warning("No clear human speech was detected. Background music/noise was ignored, so no AI communication feedback was generated.")
-                except Exception as err:
-                    st.error(f"Video processing error: {err}")
-                    if os.path.exists(incoming_path):
-                        try: os.remove(incoming_path)
-                        except OSError: pass
 
-        final_response_text = st.text_area(
-            "Answer Transcript (Review or Edit Text Before Submitting):", 
-            value=extracted_transcript,
-            height=140,
-            key=f"pi_answer_transcript_q_{st.session_state.get('practice_question_index', 0)}"
-        )
-
-        if st.button("Submit Response for Feedback"):
-            if not final_response_text.strip():
-                st.error("Please record your audio/video response or write your transcript text first.")
-            elif mode in ("Audio Response Mode", "Video Response Mode") and not st.session_state.get("speech_detected", False):
-                st.error("No clear human speech was detected in this recording. Background music/noise has been ignored. Please record a spoken answer, or enter the transcript manually if you intentionally want to evaluate typed text.")
-            elif not st.session_state.get("current_question", "").strip():
-                st.error("Please generate a practice question before submitting your response.")
-            elif client is None:
-                st.error("AI feedback is unavailable because GROQ_API_KEY is not configured.")
-            else:
-                with st.spinner("Assessing communication and technical knowledge separately..."):
-                    c_name = st.session_state.get('first_name', 'Student')
-                    comm_metrics = communication_metrics(
-                        final_response_text, st.session_state.get("communication_duration", 0.0)
-                    )
-                    st.session_state["communication_metrics"] = comm_metrics
-
-                    # Strict placement rubric: the model must award marks only for evidence in the answer.
-                    # Communication and technical knowledge are deliberately scored independently.
-                    eval_prompt = f"""
-You are the senior interview assessor for the IPER MBA Placement Portal.
-Assess the candidate strictly and professionally. Be a MISTRAL SCORER: do not give marks merely because an answer sounds confident, fluent, long, or plausible.
-Only award marks that are supported by evidence in the candidate's actual response.
-High scores must be earned; scores above 80 are uncommon and require a clearly strong response. A response with major factual errors, invented facts, weak relevance, or missing core concepts must lose marks.
-Never invent facts that the candidate did not state.
-
-QUESTION:
-{st.session_state['current_question']}
-
-CANDIDATE RESPONSE:
-{final_response_text}
-
-PRACTICE CATEGORY: {category}
-TARGET COMPANY: {selected_comp or 'Not company-specific'}
-TARGET SPECIALIZATION: {selected_spec or 'Not specialization-specific'}
-RESUME CONTEXT (use only as context; do not reward claims not supported by the response):
-{json.dumps(st.session_state.get('resume_details', {}))}
-
-DETERMINISTIC COMMUNICATION METRICS:
-{json.dumps(comm_metrics)}
-
-DETERMINISTIC LANGUAGE CHECK:
-{json.dumps(detect_hindi_usage(final_response_text))}
-
-COMMUNICATION ASSESSMENT RULES:
-- Assess only what can be supported by the transcript and deterministic metrics.
-- RESPONSE SUFFICIENCY IS MANDATORY: a few words, a fragment, a one-line answer, or an answer too short to demonstrate structure must score very low. Do not infer communication ability from evidence the candidate did not provide.
-- Start communication scoring from 0 and add marks only for demonstrated clarity, grammar, structure, relevance and completeness.
-- Grammar: identify actual grammar errors; do not penalize normal Indian English accent/pronunciation merely for being different.
-- English-medium requirement: the assessment is conducted in English. If the response uses Hindi or sustained Hindi-English code-switching (including Hindi words detected in the transcript), treat that as a communication weakness and reduce the communication assessment accordingly. Do not use insulting or culturally loaded language; describe it professionally as a need to maintain English consistently in placement interviews.
-- Clarity: assess structure, coherence, relevance and ease of understanding.
-- Filler words: use the supplied counts; do not invent additional counts.
-- Rate of speech: use WPM only when duration is available.
-- Tone: if only transcript/audio transcript is available, do not claim to hear vocal tone. For video/audio, tone can only be assessed if the available evidence supports it.
-- Communication score must reflect communication quality, not subject knowledge.
-
-TECHNICAL KNOWLEDGE ASSESSMENT RULES:
-- First identify the concepts/facts that a correct answer to this exact question requires.
-- Judge the candidate's statements against established business/management concepts and the question asked.
-- Separate correct, partially correct, unsupported, and incorrect claims.
-- Penalize contradictions, wrong definitions, wrong formulas, wrong business logic, and materially incorrect facts.
-- Do not award technical marks for generic confidence statements or communication fluency.
-- If the question is behavioral, assess the quality of the reasoning, decision-making, business understanding and relevance of the example rather than demanding textbook terminology.
-- If the candidate says "I don't know" or provides no substantive answer, technical score should be low.
-- Do not invent a company fact to mark the candidate wrong when the question does not establish that fact.
-
-STRICT TECHNICAL KNOWLEDGE MARKING — BE DELIBERATELY MISELY:
-- Technical marks are NOT a reward for effort, length, confidence, fluency, or use of business buzzwords.
-- A very short response must remain very low technically because it provides too little evidence of knowledge, even when the few words stated are correct.
-- Do not treat naming a keyword, definition fragment, or isolated correct phrase as demonstration of the concept.
-- Start from 0 and add marks only for technically correct, relevant, clearly demonstrated knowledge.
-- A partially correct answer must remain low even if it sounds polished.
-- If a core concept is missing, the answer cannot receive a high technical score.
-- One or more material factual/conceptual errors should sharply reduce the score.
-- Unsupported claims, vague statements, circular explanations and generic examples earn little or no technical credit.
-- If the answer is mostly generic, treat technical knowledge as weak unless the question itself is behavioral.
-- For behavioral questions, technical/substance marks should reflect sound reasoning, decision-making, role understanding and evidence from the example; do not demand textbook terminology.
-- Do not give partial credit merely because an answer contains some correct words. The candidate must demonstrate the concept accurately.
-
-TECHNICAL SCORE ANCHORS — STRICT:
-0-19 = no meaningful technical understanding, irrelevant, or fundamentally wrong
-20-34 = very weak; isolated correct points but major misunderstanding or gaps
-35-49 = weak; some understanding but core concepts are missing or materially flawed
-50-59 = basic/partial; enough correct knowledge to show limited understanding, but important gaps remain
-60-69 = adequate; technically sound in the main points but with noticeable omissions or minor errors
-70-79 = good; mostly accurate, relevant and reasonably complete, but not deep or precise enough for a high score
-80-89 = strong; accurate, precise, complete and supported with appropriate application/example; uncommon
-90-100 = exceptional; near-expert accuracy, depth, completeness and application; extremely rare
-
-CALIBRATION RULES:
-- Do NOT default to 60, 70 or 80. A student must earn each mark.
-- If you are uncertain whether a technical claim is correct, do not award credit for that claim.
-- If the question has 4 clearly required technical elements and the candidate addresses only 2 adequately, the technical score should normally remain around the partial/basic range rather than being inflated for presentation quality.
-- A fluent but technically shallow answer should score lower technically than a simple but accurate answer.
-- 90+ should be used only when the response is exceptionally accurate and complete; normal good student answers should not receive it.
-
-SUGGESTED ANSWER REQUIREMENT:
-- Always provide a useful Suggested Answer in BenchmarkAnswer.
-- The Suggested Answer must directly answer the exact question asked, use only established/general business knowledge appropriate to the question, and be realistic for an MBA student.
-- Do not copy the candidate's response merely to make it look better. Show a materially improved version that addresses the important gaps identified.
-- For company-specific questions, do not invent current company facts; clearly use placeholders such as [verify latest company fact] where necessary.
-- The Suggested Answer is a learning aid, not a script to memorise.
-
-COMMUNICATION SCORE ANCHORS:
-0-29 = seriously inadequate communication
-30-49 = weak communication with substantial problems
-50-59 = below placement-ready
-60-69 = adequate but clear communication gaps
-70-79 = good communication with limited gaps
-80-89 = strong communication; uncommon
-90-100 = exceptional communication; very rare
-
-IMPORTANT: Do not inflate scores. Use integers only for internal calculation. The final internal score is the arithmetic average of Communication and Technical Knowledge, but the displayed Final Grade must not exceed the weaker of the two dimensions. This conservative rule makes B-level readiness difficult and A-level readiness rare.
-
-Return ONLY valid JSON matching this exact structure:
-{{
-  "CandidateName": "{c_name}",
-  "CommunicationScore": 0,
-  "TechnicalKnowledgeScore": 0,
-  "FinalScore": 0,
-  "CommunicationAssessment": "",
-  "TechnicalKnowledgeAssessment": "",
-  "TechnicalCorrectness": "",
-  "CorrectPoints": [],
-  "TechnicalErrorsOrGaps": [],
-  "GrammarIssues": [],
-  "FillerWordsUsed": [],
-  "RateOfSpeechAssessment": "",
-  "ToneAssessment": "",
-  "ClarityAssessment": "",
-  "CommunicationStrengths": [],
-  "CommunicationImprovements": [],
-  "TechnicalStrengths": [],
-  "TechnicalImprovements": [],
-  "KeyCorrections": [],
-  "BenchmarkAnswer": "",
-  "NextPracticeFocus": ""
-}}
-"""
+            elif mode == "Video Response Mode" and ENABLE_VIDEO_INTERVIEW_MODE:
+                st.subheader("1. Record & Save Video")
+                render_video_recorder_component()
+            
+                st.subheader("2. Upload Saved Video File")
+                uploaded_video = st.file_uploader("Upload recorded video file (.webm or .mp4):", type=["webm", "mp4"])
+            
+                if uploaded_video is not None:
+                    ts = time.strftime("%Y%m%d_%H%M%S")
+                    incoming_ext = "mp4" if uploaded_video.name.lower().endswith(".mp4") else "webm"
+                    incoming_path = os.path.join(VIDEO_STORAGE_DIR, f"incoming_{ts}.{incoming_ext}")
+                    saved_video_path = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}.mp4")
+                
+                    with open(incoming_path, "wb") as f:
+                        f.write(uploaded_video.getvalue())
+                
                     try:
-                        response = client.chat.completions.create(
-                            model=GROQ_MODEL,
-                            messages=[
-                                {"role": "system", "content": "You are an exceptionally strict, evidence-based MBA interview assessor for an English-medium placement assessment. Technical marks must be earned from demonstrated correctness; when in doubt, award less technical credit. Communication must be assessed strictly for professional English usage. Hindi/Hinglish code-switching is a communication weakness in this English assessment and should reduce the communication score; never penalize accent alone. Return only the requested JSON."},
-                                {"role": "user", "content": eval_prompt},
-                            ],
-                            temperature=0.15,
-                            response_format={
-                                "type": "json_schema",
-                                "json_schema": {
-                                    "name": "iper_interview_assessment",
-                                    "strict": True,
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "CandidateName": {"type": "string"},
-                                            "CommunicationScore": {"type": "integer", "minimum": 0, "maximum": 100},
-                                            "TechnicalKnowledgeScore": {"type": "integer", "minimum": 0, "maximum": 100},
-                                            "FinalScore": {"type": "integer", "minimum": 0, "maximum": 100},
-                                            "CommunicationAssessment": {"type": "string"},
-                                            "TechnicalKnowledgeAssessment": {"type": "string"},
-                                            "TechnicalCorrectness": {"type": "string"},
-                                            "CorrectPoints": {"type": "array", "items": {"type": "string"}},
-                                            "TechnicalErrorsOrGaps": {"type": "array", "items": {"type": "string"}},
-                                            "GrammarIssues": {"type": "array", "items": {"type": "string"}},
-                                            "FillerWordsUsed": {"type": "array", "items": {"type": "object", "properties": {"word": {"type": "string"}, "count": {"type": "integer", "minimum": 0}}, "required": ["word", "count"], "additionalProperties": False}},
-                                            "RateOfSpeechAssessment": {"type": "string"},
-                                            "ToneAssessment": {"type": "string"},
-                                            "ClarityAssessment": {"type": "string"},
-                                            "CommunicationStrengths": {"type": "array", "items": {"type": "string"}},
-                                            "CommunicationImprovements": {"type": "array", "items": {"type": "string"}},
-                                            "TechnicalStrengths": {"type": "array", "items": {"type": "string"}},
-                                            "TechnicalImprovements": {"type": "array", "items": {"type": "string"}},
-                                            "KeyCorrections": {"type": "array", "items": {"type": "string"}},
-                                            "BenchmarkAnswer": {"type": "string"},
-                                            "NextPracticeFocus": {"type": "string"}
-                                        },
-                                        "required": ["CandidateName", "CommunicationScore", "TechnicalKnowledgeScore", "FinalScore", "CommunicationAssessment", "TechnicalKnowledgeAssessment", "TechnicalCorrectness", "CorrectPoints", "TechnicalErrorsOrGaps", "GrammarIssues", "FillerWordsUsed", "RateOfSpeechAssessment", "ToneAssessment", "ClarityAssessment", "CommunicationStrengths", "CommunicationImprovements", "TechnicalStrengths", "TechnicalImprovements", "KeyCorrections", "BenchmarkAnswer", "NextPracticeFocus"],
-                                        "additionalProperties": False
+                        with st.spinner("Preparing MP4 interview video..."):
+                            if incoming_ext == "webm":
+                                saved_video_path = convert_video_to_mp4(incoming_path)
+                                if os.path.abspath(saved_video_path) != os.path.abspath(incoming_path):
+                                    # convert_video_to_mp4 uses the input stem, so rename it to the final naming convention.
+                                    target = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}.mp4")
+                                    if os.path.abspath(saved_video_path) != os.path.abspath(target):
+                                        os.replace(saved_video_path, target)
+                                    saved_video_path = target
+                            else:
+                                with open(saved_video_path, "wb") as out:
+                                    out.write(uploaded_video.getvalue())
+                        if os.path.exists(incoming_path) and os.path.abspath(incoming_path) != os.path.abspath(saved_video_path):
+                            os.remove(incoming_path)
+                        st.session_state["current_video_path"] = saved_video_path
+                        st.session_state["communication_duration"] = get_media_duration_seconds(saved_video_path)
+                        st.video(saved_video_path)
+                        st.success(f"Interview video saved as MP4: `{os.path.basename(saved_video_path)}`")
+                        with st.spinner("Transcribing video audio track via Whisper..."):
+                            extracted_transcript, detected_speech_duration = transcribe_indian_english_audio(saved_video_path)
+                            if detected_speech_duration > 0:
+                                st.session_state["communication_duration"] = detected_speech_duration
+                            st.session_state["speech_detected"] = bool(extracted_transcript.strip())
+                            if extracted_transcript:
+                                st.success("Human speech detected and transcribed successfully.")
+                            else:
+                                st.warning("No clear human speech was detected. Background music/noise was ignored, so no AI communication feedback was generated.")
+                    except Exception as err:
+                        st.error(f"Video processing error: {err}")
+                        if os.path.exists(incoming_path):
+                            try: os.remove(incoming_path)
+                            except OSError: pass
+
+            final_response_text = st.text_area(
+                "Answer Transcript (Review or Edit Text Before Submitting):", 
+                value=extracted_transcript,
+                height=140,
+                key=f"pi_answer_transcript_q_{st.session_state.get('practice_question_index', 0)}"
+            )
+
+            if st.button("Submit Response for Feedback"):
+                if not final_response_text.strip():
+                    st.error("Please record your audio/video response or write your transcript text first.")
+                elif mode in ("Audio Response Mode", "Video Response Mode") and not st.session_state.get("speech_detected", False):
+                    st.error("No clear human speech was detected in this recording. Background music/noise has been ignored. Please record a spoken answer, or enter the transcript manually if you intentionally want to evaluate typed text.")
+                elif not st.session_state.get("current_question", "").strip():
+                    st.error("Please generate a practice question before submitting your response.")
+                elif client is None:
+                    st.error("AI feedback is unavailable because GROQ_API_KEY is not configured.")
+                else:
+                    with st.spinner("Assessing communication and technical knowledge separately..."):
+                        c_name = st.session_state.get('first_name', 'Student')
+                        comm_metrics = communication_metrics(
+                            final_response_text, st.session_state.get("communication_duration", 0.0)
+                        )
+                        st.session_state["communication_metrics"] = comm_metrics
+
+                        # Strict placement rubric: the model must award marks only for evidence in the answer.
+                        # Communication and technical knowledge are deliberately scored independently.
+                        eval_prompt = f"""
+    You are the senior interview assessor for the IPER MBA Placement Portal.
+    Assess the candidate strictly and professionally. Be a MISTRAL SCORER: do not give marks merely because an answer sounds confident, fluent, long, or plausible.
+    Only award marks that are supported by evidence in the candidate's actual response.
+    High scores must be earned; scores above 80 are uncommon and require a clearly strong response. A response with major factual errors, invented facts, weak relevance, or missing core concepts must lose marks.
+    Never invent facts that the candidate did not state.
+
+    QUESTION:
+    {st.session_state['current_question']}
+
+    CANDIDATE RESPONSE:
+    {final_response_text}
+
+    PRACTICE CATEGORY: {category}
+    TARGET COMPANY: {selected_comp or 'Not company-specific'}
+    TARGET SPECIALIZATION: {selected_spec or 'Not specialization-specific'}
+    RESUME CONTEXT (use only as context; do not reward claims not supported by the response):
+    {json.dumps(st.session_state.get('resume_details', {}))}
+
+    DETERMINISTIC COMMUNICATION METRICS:
+    {json.dumps(comm_metrics)}
+
+    DETERMINISTIC LANGUAGE CHECK:
+    {json.dumps(detect_hindi_usage(final_response_text))}
+
+    COMMUNICATION ASSESSMENT RULES:
+    - Assess only what can be supported by the transcript and deterministic metrics.
+    - RESPONSE SUFFICIENCY IS MANDATORY: a few words, a fragment, a one-line answer, or an answer too short to demonstrate structure must score very low. Do not infer communication ability from evidence the candidate did not provide.
+    - Start communication scoring from 0 and add marks only for demonstrated clarity, grammar, structure, relevance and completeness.
+    - Grammar: identify actual grammar errors; do not penalize normal Indian English accent/pronunciation merely for being different.
+    - English-medium requirement: the assessment is conducted in English. If the response uses Hindi or sustained Hindi-English code-switching (including Hindi words detected in the transcript), treat that as a communication weakness and reduce the communication assessment accordingly. Do not use insulting or culturally loaded language; describe it professionally as a need to maintain English consistently in placement interviews.
+    - Clarity: assess structure, coherence, relevance and ease of understanding.
+    - Filler words: use the supplied counts; do not invent additional counts.
+    - Rate of speech: use WPM only when duration is available.
+    - Tone: if only transcript/audio transcript is available, do not claim to hear vocal tone. For video/audio, tone can only be assessed if the available evidence supports it.
+    - Communication score must reflect communication quality, not subject knowledge.
+
+    TECHNICAL KNOWLEDGE ASSESSMENT RULES:
+    - First identify the concepts/facts that a correct answer to this exact question requires.
+    - Judge the candidate's statements against established business/management concepts and the question asked.
+    - Separate correct, partially correct, unsupported, and incorrect claims.
+    - Penalize contradictions, wrong definitions, wrong formulas, wrong business logic, and materially incorrect facts.
+    - Do not award technical marks for generic confidence statements or communication fluency.
+    - If the question is behavioral, assess the quality of the reasoning, decision-making, business understanding and relevance of the example rather than demanding textbook terminology.
+    - If the candidate says "I don't know" or provides no substantive answer, technical score should be low.
+    - Do not invent a company fact to mark the candidate wrong when the question does not establish that fact.
+
+    STRICT TECHNICAL KNOWLEDGE MARKING — BE DELIBERATELY MISELY:
+    - Technical marks are NOT a reward for effort, length, confidence, fluency, or use of business buzzwords.
+    - A very short response must remain very low technically because it provides too little evidence of knowledge, even when the few words stated are correct.
+    - Do not treat naming a keyword, definition fragment, or isolated correct phrase as demonstration of the concept.
+    - Start from 0 and add marks only for technically correct, relevant, clearly demonstrated knowledge.
+    - A partially correct answer must remain low even if it sounds polished.
+    - If a core concept is missing, the answer cannot receive a high technical score.
+    - One or more material factual/conceptual errors should sharply reduce the score.
+    - Unsupported claims, vague statements, circular explanations and generic examples earn little or no technical credit.
+    - If the answer is mostly generic, treat technical knowledge as weak unless the question itself is behavioral.
+    - For behavioral questions, technical/substance marks should reflect sound reasoning, decision-making, role understanding and evidence from the example; do not demand textbook terminology.
+    - Do not give partial credit merely because an answer contains some correct words. The candidate must demonstrate the concept accurately.
+
+    TECHNICAL SCORE ANCHORS — STRICT:
+    0-19 = no meaningful technical understanding, irrelevant, or fundamentally wrong
+    20-34 = very weak; isolated correct points but major misunderstanding or gaps
+    35-49 = weak; some understanding but core concepts are missing or materially flawed
+    50-59 = basic/partial; enough correct knowledge to show limited understanding, but important gaps remain
+    60-69 = adequate; technically sound in the main points but with noticeable omissions or minor errors
+    70-79 = good; mostly accurate, relevant and reasonably complete, but not deep or precise enough for a high score
+    80-89 = strong; accurate, precise, complete and supported with appropriate application/example; uncommon
+    90-100 = exceptional; near-expert accuracy, depth, completeness and application; extremely rare
+
+    CALIBRATION RULES:
+    - Do NOT default to 60, 70 or 80. A student must earn each mark.
+    - If you are uncertain whether a technical claim is correct, do not award credit for that claim.
+    - If the question has 4 clearly required technical elements and the candidate addresses only 2 adequately, the technical score should normally remain around the partial/basic range rather than being inflated for presentation quality.
+    - A fluent but technically shallow answer should score lower technically than a simple but accurate answer.
+    - 90+ should be used only when the response is exceptionally accurate and complete; normal good student answers should not receive it.
+
+    SUGGESTED ANSWER REQUIREMENT:
+    - Always provide a useful Suggested Answer in BenchmarkAnswer.
+    - The Suggested Answer must directly answer the exact question asked, use only established/general business knowledge appropriate to the question, and be realistic for an MBA student.
+    - Do not copy the candidate's response merely to make it look better. Show a materially improved version that addresses the important gaps identified.
+    - For company-specific questions, do not invent current company facts; clearly use placeholders such as [verify latest company fact] where necessary.
+    - The Suggested Answer is a learning aid, not a script to memorise.
+
+    COMMUNICATION SCORE ANCHORS:
+    0-29 = seriously inadequate communication
+    30-49 = weak communication with substantial problems
+    50-59 = below placement-ready
+    60-69 = adequate but clear communication gaps
+    70-79 = good communication with limited gaps
+    80-89 = strong communication; uncommon
+    90-100 = exceptional communication; very rare
+
+    IMPORTANT: Do not inflate scores. Use integers only for internal calculation. The final internal score is the arithmetic average of Communication and Technical Knowledge, but the displayed Final Grade must not exceed the weaker of the two dimensions. This conservative rule makes B-level readiness difficult and A-level readiness rare.
+
+    Return ONLY valid JSON matching this exact structure:
+    {{
+      "CandidateName": "{c_name}",
+      "CommunicationScore": 0,
+      "TechnicalKnowledgeScore": 0,
+      "FinalScore": 0,
+      "CommunicationAssessment": "",
+      "TechnicalKnowledgeAssessment": "",
+      "TechnicalCorrectness": "",
+      "CorrectPoints": [],
+      "TechnicalErrorsOrGaps": [],
+      "GrammarIssues": [],
+      "FillerWordsUsed": [],
+      "RateOfSpeechAssessment": "",
+      "ToneAssessment": "",
+      "ClarityAssessment": "",
+      "CommunicationStrengths": [],
+      "CommunicationImprovements": [],
+      "TechnicalStrengths": [],
+      "TechnicalImprovements": [],
+      "KeyCorrections": [],
+      "BenchmarkAnswer": "",
+      "NextPracticeFocus": ""
+    }}
+    """
+                        try:
+                            response = client.chat.completions.create(
+                                model=GROQ_MODEL,
+                                messages=[
+                                    {"role": "system", "content": "You are an exceptionally strict, evidence-based MBA interview assessor for an English-medium placement assessment. Technical marks must be earned from demonstrated correctness; when in doubt, award less technical credit. Communication must be assessed strictly for professional English usage. Hindi/Hinglish code-switching is a communication weakness in this English assessment and should reduce the communication score; never penalize accent alone. Return only the requested JSON."},
+                                    {"role": "user", "content": eval_prompt},
+                                ],
+                                temperature=0.15,
+                                response_format={
+                                    "type": "json_schema",
+                                    "json_schema": {
+                                        "name": "iper_interview_assessment",
+                                        "strict": True,
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {
+                                                "CandidateName": {"type": "string"},
+                                                "CommunicationScore": {"type": "integer", "minimum": 0, "maximum": 100},
+                                                "TechnicalKnowledgeScore": {"type": "integer", "minimum": 0, "maximum": 100},
+                                                "FinalScore": {"type": "integer", "minimum": 0, "maximum": 100},
+                                                "CommunicationAssessment": {"type": "string"},
+                                                "TechnicalKnowledgeAssessment": {"type": "string"},
+                                                "TechnicalCorrectness": {"type": "string"},
+                                                "CorrectPoints": {"type": "array", "items": {"type": "string"}},
+                                                "TechnicalErrorsOrGaps": {"type": "array", "items": {"type": "string"}},
+                                                "GrammarIssues": {"type": "array", "items": {"type": "string"}},
+                                                "FillerWordsUsed": {"type": "array", "items": {"type": "object", "properties": {"word": {"type": "string"}, "count": {"type": "integer", "minimum": 0}}, "required": ["word", "count"], "additionalProperties": False}},
+                                                "RateOfSpeechAssessment": {"type": "string"},
+                                                "ToneAssessment": {"type": "string"},
+                                                "ClarityAssessment": {"type": "string"},
+                                                "CommunicationStrengths": {"type": "array", "items": {"type": "string"}},
+                                                "CommunicationImprovements": {"type": "array", "items": {"type": "string"}},
+                                                "TechnicalStrengths": {"type": "array", "items": {"type": "string"}},
+                                                "TechnicalImprovements": {"type": "array", "items": {"type": "string"}},
+                                                "KeyCorrections": {"type": "array", "items": {"type": "string"}},
+                                                "BenchmarkAnswer": {"type": "string"},
+                                                "NextPracticeFocus": {"type": "string"}
+                                            },
+                                            "required": ["CandidateName", "CommunicationScore", "TechnicalKnowledgeScore", "FinalScore", "CommunicationAssessment", "TechnicalKnowledgeAssessment", "TechnicalCorrectness", "CorrectPoints", "TechnicalErrorsOrGaps", "GrammarIssues", "FillerWordsUsed", "RateOfSpeechAssessment", "ToneAssessment", "ClarityAssessment", "CommunicationStrengths", "CommunicationImprovements", "TechnicalStrengths", "TechnicalImprovements", "KeyCorrections", "BenchmarkAnswer", "NextPracticeFocus"],
+                                            "additionalProperties": False
+                                        }
                                     }
                                 }
-                            }
-                        )
-                        eval_result = json.loads(response.choices[0].message.content or "{}")
-
-                        comm_score = max(0, min(100, int(eval_result.get("CommunicationScore", 0))))
-                        tech_score = max(0, min(100, int(eval_result.get("TechnicalKnowledgeScore", 0))))
-
-                        # Deterministic English-language penalty. Accent is never penalized;
-                        # actual Hindi/Hinglish usage in this English-medium assessment is.
-                        language_check = detect_hindi_usage(final_response_text)
-                        if language_check["penalty"]:
-                            comm_score = max(0, comm_score - language_check["penalty"])
-                            eval_result["CommunicationImprovements"] = [
-                                f"Maintain English consistently throughout the interview. The response contained Hindi/Hinglish usage; this reduced the communication grade by {language_check['penalty']} internal points."
-                            ] + list(eval_result.get("CommunicationImprovements", []))
-                            eval_result["CommunicationAssessment"] = (
-                                "The response did not maintain English consistently. Hindi/Hinglish usage was treated as a communication weakness for this English-medium placement assessment. "
-                                + eval_result.get("CommunicationAssessment", "")
                             )
+                            eval_result = json.loads(response.choices[0].message.content or "{}")
 
-                        # Deterministic evidence/completeness cap. Very short answers are still
-                        # evaluated, but they cannot earn inflated communication or technical marks.
-                        # This is enforced in Python after the AI assessment, so the model cannot
-                        # bypass it. Students can score anywhere from 0 up to the cap they earn.
-                        response_word_count = int(comm_metrics.get("word_count", 0) or 0)
-                        if response_word_count <= 0:
-                            evidence_cap = 0
-                        elif response_word_count <= 5:
-                            evidence_cap = 5
-                        elif response_word_count <= 10:
-                            evidence_cap = 10
-                        elif response_word_count <= 20:
-                            evidence_cap = 20
-                        elif response_word_count <= 35:
-                            evidence_cap = 35
-                        elif response_word_count <= 50:
-                            evidence_cap = 50
-                        elif response_word_count <= 75:
-                            evidence_cap = 65
-                        else:
-                            evidence_cap = 100
+                            comm_score = max(0, min(100, int(eval_result.get("CommunicationScore", 0))))
+                            tech_score = max(0, min(100, int(eval_result.get("TechnicalKnowledgeScore", 0))))
 
-                        comm_score = min(comm_score, evidence_cap)
-                        tech_score = min(tech_score, evidence_cap)
-
-                        if response_word_count <= 20:
-                            brevity_note = (
-                                f"The response contained only {response_word_count} words. "
-                                "Both Communication and Technical Knowledge were restricted because there was insufficient evidence for a fuller assessment."
-                            )
-                            eval_result["CommunicationAssessment"] = brevity_note + " " + eval_result.get("CommunicationAssessment", "")
-                            eval_result["TechnicalKnowledgeAssessment"] = brevity_note + " " + eval_result.get("TechnicalKnowledgeAssessment", "")
-
-                        # Final assessment is deliberately conservative: the overall result cannot
-                        # exceed the weaker of Communication and Technical Knowledge. This makes B
-                        # difficult to earn and A genuinely rare.
-                        final_score = min(int(round((comm_score + tech_score) / 2.0)), comm_score, tech_score)
-                        eval_result["FinalScore"] = final_score
-                        comm_grade = grade_from_score(comm_score)
-                        tech_grade = grade_from_score(tech_score)
-                        final_grade = grade_from_score(final_score)
-
-                        st.subheader(f"Interview Feedback for {c_name}")
-                        sc1, sc2, sc3 = st.columns(3)
-                        sc1.metric("Communication Grade", comm_grade)
-                        sc2.metric("Technical Knowledge Grade", tech_grade)
-                        sc3.metric("Final Grade", final_grade)
-                        render_grade_slabs()
-                        st.caption("Grading is deliberately strict and evidence-based. B-level readiness requires sustained placement-ready performance; A-level readiness is reserved for exceptional performance.")
-
-                        st.markdown("### 1. Communication Feedback")
-                        st.write(eval_result.get("CommunicationAssessment", ""))
-                        metrics = comm_metrics
-                        m1, m2, m3, m4 = st.columns(4)
-                        m1.metric("Language", "English-medium assessment")
-                        m2.metric("Rate of Speech", f"{metrics.get('wpm', 0)} WPM")
-                        m3.metric("Filler Words", str(metrics.get('filler_total', 0)))
-                        m4.metric("Duration", f"{metrics.get('duration_minutes', 0)} min")
-                        st.markdown("**Grammar Issues**")
-                        for issue in eval_result.get("GrammarIssues", []): st.markdown(f"- {issue}")
-                        st.markdown("**Filler Words Detected**")
-                        filler = metrics.get("filler_counts", {})
-                        st.write(filler if filler else "No common filler words detected.")
-                        st.markdown("**Rate of Speech**")
-                        st.write(eval_result.get("RateOfSpeechAssessment", ""))
-                        st.markdown("**Tone**")
-                        st.write(eval_result.get("ToneAssessment", ""))
-                        st.markdown("**Clarity**")
-                        st.write(eval_result.get("ClarityAssessment", ""))
-                        st.markdown("**Communication Strengths**")
-                        for item in eval_result.get("CommunicationStrengths", []): st.markdown(f"- {item}")
-                        st.markdown("**Communication Improvements**")
-                        for item in eval_result.get("CommunicationImprovements", []): st.markdown(f"- {item}")
-
-                        st.markdown("### 2. Technical Knowledge Feedback")
-                        st.write(eval_result.get("TechnicalKnowledgeAssessment", ""))
-                        st.markdown("**Technical Correctness**")
-                        st.write(eval_result.get("TechnicalCorrectness", ""))
-                        st.markdown("**What You Got Right**")
-                        for item in eval_result.get("CorrectPoints", []): st.markdown(f"- {item}")
-                        st.markdown("**Technical Errors / Knowledge Gaps**")
-                        for item in eval_result.get("TechnicalErrorsOrGaps", []): st.markdown(f"- {item}")
-                        st.markdown("**Technical Strengths**")
-                        for item in eval_result.get("TechnicalStrengths", []): st.markdown(f"- {item}")
-                        st.markdown("**Technical Improvements**")
-                        for item in eval_result.get("TechnicalImprovements", []): st.markdown(f"- {item}")
-                        st.markdown("**Key Corrections**")
-                        for item in eval_result.get("KeyCorrections", []): st.markdown(f"- {item}")
-
-                        st.markdown("### Suggested Answer")
-                        suggested_answer = eval_result.get("BenchmarkAnswer", "")
-                        if suggested_answer:
-                            st.write(suggested_answer)
-                        else:
-                            st.info("A suggested answer was not returned for this attempt. Use the Key Corrections and Next Practice Focus above to rebuild the response in your own words.")
-                        st.markdown("### Next Practice Focus")
-                        st.info(eval_result.get("NextPracticeFocus", ""))
-
-                        # Downloadable mentor-ready feedback report. Historical attempts are
-                        # included so the student can share a single development record with a mentor.
-                        current_feedback_report = {
-                            "Timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                            "Question": st.session_state.get("current_question", ""),
-                            "Mode": mode,
-                            "CommunicationGrade": comm_grade,
-                            "TechnicalGrade": tech_grade,
-                            "FinalGrade": final_grade,
-                            **eval_result,
-                            "SuggestedAnswer": eval_result.get("BenchmarkAnswer", ""),
-                        }
-                        historical_attempts_for_report = load_student_attempts(st.session_state["student_id"])
-                        word_report = build_feedback_report_docx(
-                            c_name, st.session_state.get("scholar_id", ""), current_feedback_report, historical_attempts_for_report
-                        )
-                        pdf_report = build_feedback_report_pdf(
-                            c_name, st.session_state.get("scholar_id", ""), current_feedback_report, historical_attempts_for_report
-                        )
-                        report_filename = re.sub(r"[^A-Za-z0-9_-]+", "_", f"{c_name}_{st.session_state.get('scholar_id','')}_Feedback_Report").strip("_") or "IPER_Feedback_Report"
-                        st.markdown("### Download & Share Feedback")
-                        st.caption("Your report includes present feedback, available historical feedback, suggestions/recommendations, and a blank mentor handwritten-feedback/signature section.")
-                        dl1, dl2 = st.columns(2)
-                        with dl1:
-                            st.download_button(
-                                " Download Word Feedback",
-                                data=word_report,
-                                file_name=f"{report_filename}.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                use_container_width=True,
-                                key="download_interview_feedback_word",
-                            )
-                        with dl2:
-                            if pdf_report is not None:
-                                st.download_button(
-                                    " Download PDF Feedback",
-                                    data=pdf_report,
-                                    file_name=f"{report_filename}.pdf",
-                                    mime="application/pdf",
-                                    use_container_width=True,
-                                    key="download_interview_feedback_pdf",
+                            # Deterministic English-language penalty. Accent is never penalized;
+                            # actual Hindi/Hinglish usage in this English-medium assessment is.
+                            language_check = detect_hindi_usage(final_response_text)
+                            if language_check["penalty"]:
+                                comm_score = max(0, comm_score - language_check["penalty"])
+                                eval_result["CommunicationImprovements"] = [
+                                    f"Maintain English consistently throughout the interview. The response contained Hindi/Hinglish usage; this reduced the communication grade by {language_check['penalty']} internal points."
+                                ] + list(eval_result.get("CommunicationImprovements", []))
+                                eval_result["CommunicationAssessment"] = (
+                                    "The response did not maintain English consistently. Hindi/Hinglish usage was treated as a communication weakness for this English-medium placement assessment. "
+                                    + eval_result.get("CommunicationAssessment", "")
                                 )
-                            else:
-                                st.warning("PDF export requires the 'reportlab' package. Add it to requirements.txt and redeploy.")
 
-                        attempt_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                        attempt = {
-                            "Timestamp": attempt_timestamp,
-                            "Candidate": c_name,
-                            "Domain": category,
-                            "Score": final_score,
-                            "CommunicationScore": comm_score,
-                            "TechnicalScore": tech_score,
-                            "Mode": mode,
-                            "Question": st.session_state.get("current_question", ""),
-                            "DurationSeconds": float(st.session_state.get("communication_duration", 0.0) or 0.0)
-                        }
-                        st.session_state["history"].append(attempt)
-                        save_student_attempt(
-                            st.session_state["student_id"],
-                            category,
-                            final_score,
-                            mode,
-                            st.session_state.get("current_question", ""),
-                            st.session_state.get("communication_duration", 0.0),
-                            comm_score,
-                            tech_score,
-                            eval_result,
-                        )
-                    except Exception as err:
-                        st.error(f"Interview assessment error: {err}")
-                        st.info("The answer was not scored. Please try the assessment again.")
+                            # Deterministic evidence/completeness cap. Very short answers are still
+                            # evaluated, but they cannot earn inflated communication or technical marks.
+                            # This is enforced in Python after the AI assessment, so the model cannot
+                            # bypass it. Students can score anywhere from 0 up to the cap they earn.
+                            response_word_count = int(comm_metrics.get("word_count", 0) or 0)
+                            if response_word_count <= 0:
+                                evidence_cap = 0
+                            elif response_word_count <= 5:
+                                evidence_cap = 5
+                            elif response_word_count <= 10:
+                                evidence_cap = 10
+                            elif response_word_count <= 20:
+                                evidence_cap = 20
+                            elif response_word_count <= 35:
+                                evidence_cap = 35
+                            elif response_word_count <= 50:
+                                evidence_cap = 50
+                            elif response_word_count <= 75:
+                                evidence_cap = 65
+                            else:
+                                evidence_cap = 100
+
+                            comm_score = min(comm_score, evidence_cap)
+                            tech_score = min(tech_score, evidence_cap)
+
+                            if response_word_count <= 20:
+                                brevity_note = (
+                                    f"The response contained only {response_word_count} words. "
+                                    "Both Communication and Technical Knowledge were restricted because there was insufficient evidence for a fuller assessment."
+                                )
+                                eval_result["CommunicationAssessment"] = brevity_note + " " + eval_result.get("CommunicationAssessment", "")
+                                eval_result["TechnicalKnowledgeAssessment"] = brevity_note + " " + eval_result.get("TechnicalKnowledgeAssessment", "")
+
+                            # Final assessment is deliberately conservative: the overall result cannot
+                            # exceed the weaker of Communication and Technical Knowledge. This makes B
+                            # difficult to earn and A genuinely rare.
+                            final_score = min(int(round((comm_score + tech_score) / 2.0)), comm_score, tech_score)
+                            eval_result["FinalScore"] = final_score
+                            comm_grade = grade_from_score(comm_score)
+                            tech_grade = grade_from_score(tech_score)
+                            final_grade = grade_from_score(final_score)
+
+                            st.subheader(f"Interview Feedback for {c_name}")
+                            sc1, sc2, sc3 = st.columns(3)
+                            sc1.metric("Communication Grade", comm_grade)
+                            sc2.metric("Technical Knowledge Grade", tech_grade)
+                            sc3.metric("Final Grade", final_grade)
+                            render_grade_slabs()
+                            st.caption("Grading is deliberately strict and evidence-based. B-level readiness requires sustained placement-ready performance; A-level readiness is reserved for exceptional performance.")
+
+                            st.markdown("### 1. Communication Feedback")
+                            st.write(eval_result.get("CommunicationAssessment", ""))
+                            metrics = comm_metrics
+                            m1, m2, m3, m4 = st.columns(4)
+                            m1.metric("Language", "English-medium assessment")
+                            m2.metric("Rate of Speech", f"{metrics.get('wpm', 0)} WPM")
+                            m3.metric("Filler Words", str(metrics.get('filler_total', 0)))
+                            m4.metric("Duration", f"{metrics.get('duration_minutes', 0)} min")
+                            st.markdown("**Grammar Issues**")
+                            for issue in eval_result.get("GrammarIssues", []): st.markdown(f"- {issue}")
+                            st.markdown("**Filler Words Detected**")
+                            filler = metrics.get("filler_counts", {})
+                            st.write(filler if filler else "No common filler words detected.")
+                            st.markdown("**Rate of Speech**")
+                            st.write(eval_result.get("RateOfSpeechAssessment", ""))
+                            st.markdown("**Tone**")
+                            st.write(eval_result.get("ToneAssessment", ""))
+                            st.markdown("**Clarity**")
+                            st.write(eval_result.get("ClarityAssessment", ""))
+                            st.markdown("**Communication Strengths**")
+                            for item in eval_result.get("CommunicationStrengths", []): st.markdown(f"- {item}")
+                            st.markdown("**Communication Improvements**")
+                            for item in eval_result.get("CommunicationImprovements", []): st.markdown(f"- {item}")
+
+                            st.markdown("### 2. Technical Knowledge Feedback")
+                            st.write(eval_result.get("TechnicalKnowledgeAssessment", ""))
+                            st.markdown("**Technical Correctness**")
+                            st.write(eval_result.get("TechnicalCorrectness", ""))
+                            st.markdown("**What You Got Right**")
+                            for item in eval_result.get("CorrectPoints", []): st.markdown(f"- {item}")
+                            st.markdown("**Technical Errors / Knowledge Gaps**")
+                            for item in eval_result.get("TechnicalErrorsOrGaps", []): st.markdown(f"- {item}")
+                            st.markdown("**Technical Strengths**")
+                            for item in eval_result.get("TechnicalStrengths", []): st.markdown(f"- {item}")
+                            st.markdown("**Technical Improvements**")
+                            for item in eval_result.get("TechnicalImprovements", []): st.markdown(f"- {item}")
+                            st.markdown("**Key Corrections**")
+                            for item in eval_result.get("KeyCorrections", []): st.markdown(f"- {item}")
+
+                            st.markdown("### Suggested Answer")
+                            suggested_answer = eval_result.get("BenchmarkAnswer", "")
+                            if suggested_answer:
+                                st.write(suggested_answer)
+                            else:
+                                st.info("A suggested answer was not returned for this attempt. Use the Key Corrections and Next Practice Focus above to rebuild the response in your own words.")
+                            st.markdown("### Next Practice Focus")
+                            st.info(eval_result.get("NextPracticeFocus", ""))
+
+                            # Downloadable mentor-ready feedback report. Historical attempts are
+                            # included so the student can share a single development record with a mentor.
+                            current_feedback_report = {
+                                "Timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "Question": st.session_state.get("current_question", ""),
+                                "Mode": mode,
+                                "CommunicationGrade": comm_grade,
+                                "TechnicalGrade": tech_grade,
+                                "FinalGrade": final_grade,
+                                **eval_result,
+                                "SuggestedAnswer": eval_result.get("BenchmarkAnswer", ""),
+                            }
+                            historical_attempts_for_report = load_student_attempts(st.session_state["student_id"])
+                            word_report = build_feedback_report_docx(
+                                c_name, st.session_state.get("scholar_id", ""), current_feedback_report, historical_attempts_for_report
+                            )
+                            pdf_report = build_feedback_report_pdf(
+                                c_name, st.session_state.get("scholar_id", ""), current_feedback_report, historical_attempts_for_report
+                            )
+                            report_filename = re.sub(r"[^A-Za-z0-9_-]+", "_", f"{c_name}_{st.session_state.get('scholar_id','')}_Feedback_Report").strip("_") or "IPER_Feedback_Report"
+                            st.markdown("### Download & Share Feedback")
+                            st.caption("Your report includes present feedback, available historical feedback, suggestions/recommendations, and a blank mentor handwritten-feedback/signature section.")
+                            dl1, dl2 = st.columns(2)
+                            with dl1:
+                                st.download_button(
+                                    " Download Word Feedback",
+                                    data=word_report,
+                                    file_name=f"{report_filename}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    use_container_width=True,
+                                    key="download_interview_feedback_word",
+                                )
+                            with dl2:
+                                if pdf_report is not None:
+                                    st.download_button(
+                                        " Download PDF Feedback",
+                                        data=pdf_report,
+                                        file_name=f"{report_filename}.pdf",
+                                        mime="application/pdf",
+                                        use_container_width=True,
+                                        key="download_interview_feedback_pdf",
+                                    )
+                                else:
+                                    st.warning("PDF export requires the 'reportlab' package. Add it to requirements.txt and redeploy.")
+
+                            attempt_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                            attempt = {
+                                "Timestamp": attempt_timestamp,
+                                "Candidate": c_name,
+                                "Domain": category,
+                                "Score": final_score,
+                                "CommunicationScore": comm_score,
+                                "TechnicalScore": tech_score,
+                                "Mode": mode,
+                                "Question": st.session_state.get("current_question", ""),
+                                "DurationSeconds": float(st.session_state.get("communication_duration", 0.0) or 0.0)
+                            }
+                            st.session_state["history"].append(attempt)
+                            save_student_attempt(
+                                st.session_state["student_id"],
+                                category,
+                                final_score,
+                                mode,
+                                st.session_state.get("current_question", ""),
+                                st.session_state.get("communication_duration", 0.0),
+                                comm_score,
+                                tech_score,
+                                eval_result,
+                            )
+                        except Exception as err:
+                            st.error(f"Interview assessment error: {err}")
+                            st.info("The answer was not scored. Please try the assessment again.")
 
 
 # SECTION 4: GROUP DISCUSSION HUB
@@ -7903,8 +8111,18 @@ elif selected_nav == "My Progress Dashboard":
                                     _gd_render_items("Observations", item.get("Observations") or item.get("BodyLanguageObservations"), "No individual observations recorded.")
                                     _gd_render_items("Suggestions", item.get("Suggestions") or item.get("BodyLanguageSuggestions"), "No individual suggestions recorded.")
 
-                    with st.expander("View raw assessment data (technical)", expanded=False):
-                        st.json(saved_gd_report)
+                    with st.expander("View Technical Data (Readable Format)", expanded=False):
+                        st.caption("Technical assessment details are shown below in a readable format rather than raw JSON. The saved assessment data remains unchanged.")
+                        if isinstance(saved_gd_report, dict) and saved_gd_report:
+                            for technical_key, technical_value in saved_gd_report.items():
+                                if technical_value in (None, "", [], {}):
+                                    continue
+                                st.markdown(f"#### {str(technical_key).replace('_', ' ')}")
+                                _gd_render_items(str(technical_key), technical_value, "Not recorded.")
+                        elif saved_gd_report:
+                            _gd_render_items("Assessment details", saved_gd_report, "Not recorded.")
+                        else:
+                            st.info("No technical assessment data was saved for this attempt.")
                 else:
                     _render_live_gd_feedback_summary(
                         record["item"],
