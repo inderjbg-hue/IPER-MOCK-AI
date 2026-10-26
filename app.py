@@ -16,7 +16,6 @@ import pandas as pd
 import numpy as np
 import pypdf
 import docx
-import whisper
 from groq import Groq
 try:
     from openai import OpenAI
@@ -236,19 +235,20 @@ st.markdown("""
 # ------------------------------------------------------------------------------
 # 3. HELPER FUNCTIONS & API INTEGRATION
 # ------------------------------------------------------------------------------
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading speech-recognition model…")
 def load_speech_model():
+    """Load Whisper only when a feature first requests transcription."""
+    import whisper
     return whisper.load_model("base")
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading live discussion speech model…")
 def load_live_gd_speech_model():
-    # The live GD needs low latency more than maximum transcription accuracy.
-    # Keep the existing base model for interview/video assessment and use the
-    # much faster tiny model only for short live-GD audio windows.
+    """Load the lightweight live-GD model only if that workflow uses it."""
+    import whisper
     return whisper.load_model("tiny")
 
-whisper_model = load_speech_model()
-live_gd_whisper_model = load_live_gd_speech_model()
+# IMPORTANT: Do not load either Whisper/Torch model at app startup.
+# They are loaded and cached only when transcription is actually requested.
 
 GROQ_MODEL = "openai/gpt-oss-120b"
 LIVE_GD_GROQ_MODEL = "openai/gpt-oss-20b"
@@ -428,7 +428,7 @@ def transcribe_indian_english_audio(audio_path):
     speech_path, speech_duration = _extract_speech_only_wav(audio_path)
     target_path = speech_path or audio_path
     try:
-        result = whisper_model.transcribe(
+        result = load_speech_model().transcribe(
             target_path,
             language="en",
             initial_prompt=prompt,
@@ -1375,31 +1375,31 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
     section.left_margin = docx.shared.Inches(0.72)
     section.right_margin = docx.shared.Inches(0.72)
 
-    purple = docx.shared.RGBColor(83, 49, 131)
+    purple = docx.shared.RGBColor(31, 78, 121)  # IPER-inspired corporate blue
     styles = document.styles
     normal = styles["Normal"]
-    normal.font.name = "Times New Roman"
-    normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    normal.font.size = docx.shared.Pt(11)
-    normal.paragraph_format.space_after = docx.shared.Pt(3)
+    normal.font.name = "Aptos"
+    normal._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
+    normal.font.size = docx.shared.Pt(10.5)
+    normal.paragraph_format.space_after = docx.shared.Pt(4)
     normal.paragraph_format.line_spacing = 1.0
 
     for style_name in ("Heading 1", "Heading 2", "List Bullet"):
         style = styles[style_name]
-        style.font.name = "Times New Roman"
-        style._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+        style.font.name = "Aptos"
+        style._element.rPr.rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
         if style_name == "Heading 1":
-            style.font.size = docx.shared.Pt(11)
+            style.font.size = docx.shared.Pt(10.5)
             style.font.bold = True
             style.font.color.rgb = purple
-            style.paragraph_format.space_before = docx.shared.Pt(7)
-            style.paragraph_format.space_after = docx.shared.Pt(2)
+            style.paragraph_format.space_before = docx.shared.Pt(9)
+            style.paragraph_format.space_after = docx.shared.Pt(3)
             style.paragraph_format.keep_with_next = True
         elif style_name == "Heading 2":
-            style.font.size = docx.shared.Pt(11)
+            style.font.size = docx.shared.Pt(10.5)
             style.font.bold = True
         else:
-            style.font.size = docx.shared.Pt(11)
+            style.font.size = docx.shared.Pt(10.5)
 
     # One fixed template: consistent name/contact header and predictable section order.
     name_p = document.add_paragraph()
@@ -1407,9 +1407,9 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
     name_p.paragraph_format.space_after = docx.shared.Pt(2)
     name_run = name_p.add_run(str(candidate_name or "Candidate").strip())
     name_run.bold = True
-    name_run.font.name = "Times New Roman"
-    name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
-    name_run.font.size = docx.shared.Pt(16)
+    name_run.font.name = "Aptos"
+    name_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
+    name_run.font.size = docx.shared.Pt(20)
     name_run.font.color.rgb = purple
 
     contacts = [x.strip() for x in (email, phone, linkedin) if x and x.strip()]
@@ -1483,26 +1483,131 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
             para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
             for run in para.runs:
                 run.bold = True
-                run.font.name = "Times New Roman"
-                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+                run.font.name = "Aptos"
+                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
                 run.font.size = docx.shared.Pt(11)
                 run.font.color.rgb = purple
         elif para is not name_p:
             para.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.LEFT
             for run in para.runs:
-                run.font.name = "Times New Roman"
-                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+                run.font.name = "Aptos"
+                run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
                 run.font.size = docx.shared.Pt(11)
 
     footer = section.footer.paragraphs[0]
     footer.alignment = docx.enum.text.WD_ALIGN_PARAGRAPH.CENTER
     footer_run = footer.add_run("IPER PEPTECH | Professional Resume")
-    footer_run.font.name = "Times New Roman"
-    footer_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Times New Roman")
+    footer_run.font.name = "Aptos"
+    footer_run._element.get_or_add_rPr().rFonts.set(docx.oxml.ns.qn("w:eastAsia"), "Aptos")
     footer_run.font.size = docx.shared.Pt(9)
 
     out = BytesIO()
     document.save(out)
+    return out.getvalue()
+
+
+def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="", linkedin=""):
+    """Render a polished, ATS-friendly PDF using the same section order as the Word resume."""
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError("PDF generation is unavailable because ReportLab is not installed.")
+    from xml.sax.saxutils import escape
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, KeepTogether, HRFlowable
+
+    blue = colors.HexColor("#1F4E79")
+    dark = colors.HexColor("#243447")
+    muted = colors.HexColor("#5B6573")
+    out = BytesIO()
+    doc = SimpleDocTemplate(
+        out, pagesize=A4, rightMargin=18*mm, leftMargin=18*mm,
+        topMargin=16*mm, bottomMargin=17*mm,
+        title=f"{candidate_name or 'Student'} - Resume",
+        author="IPER PEPTECH",
+    )
+    styles = {
+        "name": ParagraphStyle("ResumeName", fontName="Helvetica-Bold", fontSize=20, leading=23,
+                                textColor=blue, alignment=TA_CENTER, spaceAfter=3),
+        "contact": ParagraphStyle("ResumeContact", fontName="Helvetica", fontSize=8.5, leading=11,
+                                   textColor=muted, alignment=TA_CENTER, spaceAfter=7),
+        "heading": ParagraphStyle("ResumeHeading", fontName="Helvetica-Bold", fontSize=10.5, leading=13,
+                                   textColor=blue, alignment=TA_LEFT, spaceBefore=8, spaceAfter=3,
+                                   keepWithNext=True),
+        "body": ParagraphStyle("ResumeBody", fontName="Helvetica", fontSize=9.3, leading=12.3,
+                               textColor=dark, spaceAfter=3, splitLongWords=True),
+        "bullet": ParagraphStyle("ResumeBullet", fontName="Helvetica", fontSize=9.3, leading=12.3,
+                                 textColor=dark, leftIndent=11, firstLineIndent=-7, spaceAfter=2.5,
+                                 bulletIndent=0, splitLongWords=True),
+    }
+    section_aliases = {
+        "CAREER OBJECTIVE": "CAREER OBJECTIVE", "OBJECTIVE": "CAREER OBJECTIVE",
+        "PROFESSIONAL SUMMARY": "PROFESSIONAL SUMMARY", "SUMMARY": "PROFESSIONAL SUMMARY", "PROFILE": "PROFESSIONAL SUMMARY",
+        "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS", "KEY COMPETENCIES": "SKILLS",
+        "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
+        "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
+        "INTERNSHIP": "INTERNSHIPS", "INTERNSHIPS": "INTERNSHIPS",
+        "PROJECTS": "PROJECTS", "KEY PROJECTS": "PROJECTS", "ACADEMIC PROJECTS": "PROJECTS", "PROJECTS & ACHIEVEMENTS": "PROJECTS",
+        "CERTIFICATIONS": "CERTIFICATIONS", "CERTIFICATES": "CERTIFICATIONS", "COURSES": "CERTIFICATIONS", "COURSEWORK": "CERTIFICATIONS",
+        "ACHIEVEMENTS": "ACHIEVEMENTS", "AWARDS": "ACHIEVEMENTS", "HONOURS": "ACHIEVEMENTS",
+        "POSITIONS OF RESPONSIBILITY": "LEADERSHIP & ACTIVITIES", "LEADERSHIP": "LEADERSHIP & ACTIVITIES", "ACTIVITIES": "LEADERSHIP & ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "LEADERSHIP & ACTIVITIES", "VOLUNTEERING": "LEADERSHIP & ACTIVITIES",
+        "PUBLICATIONS": "ADDITIONAL INFORMATION", "RESEARCH": "ADDITIONAL INFORMATION", "PROFESSIONAL INTERESTS": "ADDITIONAL INFORMATION", "INTERESTS": "ADDITIONAL INFORMATION", "LANGUAGES": "ADDITIONAL INFORMATION", "PROFESSIONAL AFFILIATIONS": "ADDITIONAL INFORMATION", "PERSONAL DETAILS": "ADDITIONAL INFORMATION", "REFERENCES": "ADDITIONAL INFORMATION"
+    }
+    order = ["CAREER OBJECTIVE", "PROFESSIONAL SUMMARY", "SKILLS", "EDUCATION", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"]
+    sections = {key: [] for key in order}
+    current = "CAREER OBJECTIVE"
+    for raw in str(resume_text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
+        line = re.sub(r"\*{1,3}|__|`", "", line).strip()
+        line = re.sub(r"^\s*(?:[-•*]+|\d+[.)])\s*", "", line).strip()
+        normalized = re.sub(r"[^A-Z& ]", "", line.upper()).strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        if normalized in section_aliases:
+            current = section_aliases[normalized]
+            continue
+        if normalized in {"NAME", "CANDIDATE NAME", "CONTACT", "CONTACT DETAILS"}:
+            continue
+        sections.setdefault(current, []).append(line)
+    # The current tailoring workflow intentionally uses Career Objective rather than Summary.
+    sections["PROFESSIONAL SUMMARY"] = []
+
+    story = [Paragraph(escape(str(candidate_name or "Candidate").strip()), styles["name"])]
+    contacts = [str(x).strip() for x in (email, phone, linkedin) if x and str(x).strip()]
+    if contacts:
+        story.append(Paragraph(escape("  |  ".join(contacts)), styles["contact"]))
+    story.append(HRFlowable(width="100%", thickness=1, color=blue, spaceBefore=1, spaceAfter=5))
+    bullet_sections = {"SKILLS", "EXPERIENCE", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "LEADERSHIP & ACTIVITIES", "ADDITIONAL INFORMATION"}
+    for heading in order:
+        content = sections.get(heading, [])
+        if not content:
+            continue
+        story.append(Paragraph(escape(heading), styles["heading"]))
+        for item in content:
+            item = re.sub(r"^[*•?)+\-\s]+", "", item).strip()
+            if not item or re.fullmatch(r"[*)?._\-\s]+", item):
+                continue
+            safe = escape(item)
+            if heading in bullet_sections:
+                story.append(Paragraph("&#8226; " + safe, styles["bullet"]))
+            else:
+                story.append(Paragraph(safe, styles["body"]))
+
+    def page_footer(canvas, document):
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#D7DEE8"))
+        canvas.setLineWidth(0.5)
+        canvas.line(18*mm, 13*mm, A4[0]-18*mm, 13*mm)
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(muted)
+        canvas.drawString(18*mm, 8.5*mm, "IPER PEPTECH | Professional Resume")
+        canvas.drawRightString(A4[0]-18*mm, 8.5*mm, f"Page {document.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=page_footer, onLaterPages=page_footer)
     return out.getvalue()
 
 def init_database():
@@ -5331,7 +5436,7 @@ def _transcribe_live_audio_bytes(audio_bytes, sample_rate, channels):
             "words that are not supported by the speech. Transcribe all meaningful "
             "human speech."
         )
-        result = whisper_model.transcribe(
+        result = load_speech_model().transcribe(
             tmp.name,
             language="en",
             initial_prompt=transcription_prompt,
@@ -6231,9 +6336,9 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
                 st.markdown(f"- {item}")
 
 
-    save_col, reset_col, download_col = st.columns(3)
+    save_col, reset_col, create_col = st.columns(3)
     with save_col:
-        if st.button(" Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
+        if st.button("Save Resume & Job Description", key="save_resume_workspace", use_container_width=True):
             saved = save_resume_workspace(
                 student_id, st.session_state.get("resume_details") or {}, resume_editor_text,
                 st.session_state.get("resume_workspace_jd", jd_text), st.session_state.get("resume_source_filename", "")
@@ -6246,26 +6351,45 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
         if st.button("Reset Resume Workspace", key="reset_resume_workspace", use_container_width=True):
             st.session_state["pending_reset_resume_workspace"] = True
             st.rerun()
-    with download_col:
-        if st.button(" Create Professional Editable DOCX", key="create_resume_docx", use_container_width=True):
+    with create_col:
+        if st.button("Create PDF + Word Resumes", key="create_resume_both_formats", use_container_width=True):
             if not resume_editor_text.strip():
                 st.warning("Please add or edit your resume content first.")
             else:
-                docx_email, docx_phone = extract_resume_contacts(resume_editor_text)
-                if not docx_email:
-                    docx_email = str(st.session_state.get("student_email", "") or "").strip()
-                st.session_state["generated_resume_docx_bytes"] = build_professional_resume_docx(
-                    clean_resume_draft(resume_editor_text), account_name, email=docx_email, phone=docx_phone
-                )
-                st.success("Professional, editable Word resume created. Download it below and continue editing in Microsoft Word.")
-    if st.session_state.get("generated_resume_docx_bytes"):
-        st.download_button(
-            "Download My Editable Resume (.docx)",
-            data=st.session_state["generated_resume_docx_bytes"],
-            file_name=f"{re.sub(r'[^A-Za-z0-9_-]+', '_', account_name).strip('_') or 'Student'}_Resume.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True,
-        )
+                try:
+                    resume_clean = clean_resume_draft(resume_editor_text)
+                    docx_email, docx_phone = extract_resume_contacts(resume_clean)
+                    if not docx_email:
+                        docx_email = str(st.session_state.get("student_email", "") or "").strip()
+                    st.session_state["generated_resume_docx_bytes"] = build_professional_resume_docx(
+                        resume_clean, account_name, email=docx_email, phone=docx_phone
+                    )
+                    st.session_state["generated_resume_pdf_bytes"] = build_professional_resume_pdf(
+                        resume_clean, account_name, email=docx_email, phone=docx_phone
+                    )
+                    st.success("Your polished resume is ready in both PDF and editable Word formats.")
+                except Exception as exc:
+                    st.error(f"Could not create the resume files: {exc}")
+    safe_resume_filename = re.sub(r"[^A-Za-z0-9_-]+", "_", account_name).strip("_") or "Student"
+    word_col, pdf_col = st.columns(2)
+    with word_col:
+        if st.session_state.get("generated_resume_docx_bytes"):
+            st.download_button(
+                "Download Word Resume (.docx)",
+                data=st.session_state["generated_resume_docx_bytes"],
+                file_name=f"{safe_resume_filename}_Resume.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+            )
+    with pdf_col:
+        if st.session_state.get("generated_resume_pdf_bytes"):
+            st.download_button(
+                "Download PDF Resume (.pdf)",
+                data=st.session_state["generated_resume_pdf_bytes"],
+                file_name=f"{safe_resume_filename}_Resume.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
 
 # SECTION 2: CAREER DEVELOPMENT
