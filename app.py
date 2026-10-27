@@ -22,6 +22,13 @@ try:
 except Exception:
     OpenAI = None
 import streamlit as st
+
+def _safe_streamlit_secrets():
+    """Return Streamlit secrets when configured; otherwise an empty mapping."""
+    try:
+        return st.secrets
+    except Exception:
+        return {}
 import streamlit.components.v1 as components
 
 try:
@@ -254,8 +261,8 @@ GROQ_MODEL = "openai/gpt-oss-120b"
 LIVE_GD_GROQ_MODEL = "openai/gpt-oss-20b"
 
 GROQ_API_KEY = None
-if "GROQ_API_KEY" in st.secrets:
-    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+if "GROQ_API_KEY" in _safe_streamlit_secrets():
+    GROQ_API_KEY = _safe_streamlit_secrets()["GROQ_API_KEY"]
 elif os.getenv("GROQ_API_KEY"):
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -267,7 +274,7 @@ else:
 # OpenAI is optional at startup. It is required only for the uploaded-GD
 # speaker diarization/transcription workflow.
 try:
-    OPENAI_API_KEY = str(st.secrets.get("OPENAI_API_KEY", "") or "").strip()
+    OPENAI_API_KEY = str(_safe_streamlit_secrets().get("OPENAI_API_KEY", "") or "").strip()
 except Exception:
     OPENAI_API_KEY = ""
 if not OPENAI_API_KEY:
@@ -916,12 +923,12 @@ st.markdown(
 
 if not DATABASE_URL:
     try:
-        DATABASE_URL = str(st.secrets.get("DATABASE_URL", "") or "").strip()
+        DATABASE_URL = str(_safe_streamlit_secrets().get("DATABASE_URL", "") or "").strip()
     except Exception:
         DATABASE_URL = ""
 if not DATABASE_URL:
     try:
-        DATABASE_URL = str(st.secrets.get("POSTGRES_URL", "") or "").strip()
+        DATABASE_URL = str(_safe_streamlit_secrets().get("POSTGRES_URL", "") or "").strip()
     except Exception:
         pass
 
@@ -2637,8 +2644,8 @@ GD_ROOM_COUNT = 7
 
 # Optional external video engine configuration for in-built GD practice.
 # The app gracefully falls back to the local/in-browser GD flow when these are not configured.
-VIDEO_ENGINE_URL = os.getenv("VIDEO_ENGINE_URL", st.secrets.get("VIDEO_ENGINE_URL", "")).strip().rstrip("/")
-VIDEO_ENGINE_JWT_SECRET = os.getenv("VIDEO_ENGINE_JWT_SECRET", st.secrets.get("VIDEO_ENGINE_JWT_SECRET", "")).strip()
+VIDEO_ENGINE_URL = os.getenv("VIDEO_ENGINE_URL", _safe_streamlit_secrets().get("VIDEO_ENGINE_URL", "")).strip().rstrip("/")
+VIDEO_ENGINE_JWT_SECRET = os.getenv("VIDEO_ENGINE_JWT_SECRET", _safe_streamlit_secrets().get("VIDEO_ENGINE_JWT_SECRET", "")).strip()
 
 GD_TOPICS = [
     "Artificial Intelligence: Job Creator or Job Killer?",
@@ -3964,7 +3971,7 @@ def render_mentor_portal():
     with tabs[3]:
         admin_key=""
         try:
-            admin_key=str(st.secrets.get("ADMIN_ACCESS_KEY", "") or "")
+            admin_key=str(_safe_streamlit_secrets().get("ADMIN_ACCESS_KEY", "") or "")
         except Exception:
             admin_key=""
         if not admin_key:
@@ -5896,12 +5903,12 @@ def _render_live_gd_voice_room(topic, student_name):
     # Copy TURN values into the environment so streamlit-webrtc 0.78.1+ can
     # request short-lived Cloudflare TURN credentials automatically.
     try:
-        if not os.getenv("CLOUDFLARE_TURN_KEY_ID") and st.secrets.get("CLOUDFLARE_TURN_KEY_ID"):
-            os.environ["CLOUDFLARE_TURN_KEY_ID"] = str(st.secrets.get("CLOUDFLARE_TURN_KEY_ID"))
-        if not os.getenv("CLOUDFLARE_TURN_KEY_API_TOKEN") and st.secrets.get("CLOUDFLARE_TURN_KEY_API_TOKEN"):
-            os.environ["CLOUDFLARE_TURN_KEY_API_TOKEN"] = str(st.secrets.get("CLOUDFLARE_TURN_KEY_API_TOKEN"))
+        if not os.getenv("CLOUDFLARE_TURN_KEY_ID") and _safe_streamlit_secrets().get("CLOUDFLARE_TURN_KEY_ID"):
+            os.environ["CLOUDFLARE_TURN_KEY_ID"] = str(_safe_streamlit_secrets().get("CLOUDFLARE_TURN_KEY_ID"))
+        if not os.getenv("CLOUDFLARE_TURN_KEY_API_TOKEN") and _safe_streamlit_secrets().get("CLOUDFLARE_TURN_KEY_API_TOKEN"):
+            os.environ["CLOUDFLARE_TURN_KEY_API_TOKEN"] = str(_safe_streamlit_secrets().get("CLOUDFLARE_TURN_KEY_API_TOKEN"))
     except Exception:
-        # st.secrets may be unavailable or empty during local development.
+        # _safe_streamlit_secrets() may be unavailable or empty during local development.
         pass
 
     cloudflare_turn_ready = bool(
