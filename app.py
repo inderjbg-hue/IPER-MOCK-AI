@@ -423,13 +423,18 @@ def _extract_speech_only_wav(audio_path):
 
 
 def transcribe_indian_english_audio(audio_path):
-    """Transcribe human speech only; aggressively suppress music/noise hallucinations."""
-    prompt = "Official MBA placement interview response in Indian English. Transcribe only clearly audible human speech. Do not invent words from music, singing, background conversation, or noise."
+    """Transcribe interview audio, with a safe fallback if speech filtering loses words."""
+    prompt = (
+        "Official MBA placement interview response in Indian English. "
+        "Transcribe clearly audible human speech. Do not invent words from music, "
+        "singing, background conversation, or noise."
+    )
     speech_path, speech_duration = _extract_speech_only_wav(audio_path)
-    target_path = speech_path or audio_path
-    try:
-        result = load_speech_model().transcribe(
-            target_path,
+    model = load_speech_model()
+
+    def run_transcription(path):
+        return model.transcribe(
+            path,
             language="en",
             initial_prompt=prompt,
             temperature=0.0,
@@ -437,26 +442,43 @@ def transcribe_indian_english_audio(audio_path):
             no_speech_threshold=0.72,
             logprob_threshold=-0.8,
             compression_ratio_threshold=2.2,
-            fp16=False
+            fp16=False,
         )
 
-        # Keep only segments that Whisper itself considers speech-like.
+    def clean_result(result):
         accepted = []
         for seg in result.get("segments", []):
-            text = (seg.get("text") or "").strip()
-            no_speech = float(seg.get("no_speech_prob", 1.0) or 1.0)
-            avg_logprob = float(seg.get("avg_logprob", -99.0) or -99.0)
-            if text and no_speech < 0.70 and avg_logprob > -1.05:
-                accepted.append(text)
+            segment_text = (seg.get("text") or "").strip()
+            # Do not use `value or default`: a legitimate numeric 0.0 must stay 0.0.
+            no_speech_value = seg.get("no_speech_prob")
+            avg_logprob_value = seg.get("avg_logprob")
+            no_speech = float(1.0 if no_speech_value is None else no_speech_value)
+            avg_logprob = float(-99.0 if avg_logprob_value is None else avg_logprob_value)
+            if segment_text and no_speech < 0.80 and avg_logprob > -1.35:
+                accepted.append(segment_text)
 
         transcript = " ".join(accepted).strip()
         # Guard against common Whisper hallucination loops.
         if transcript:
-            words = re.findall(r"\b[\w']+\b", transcript.lower())
+            words = re.findall(r"\\b[\\w']+\\b", transcript.lower())
             if len(words) >= 8:
                 unique_ratio = len(set(words)) / len(words)
                 if unique_ratio < 0.25:
                     transcript = ""
+        return transcript
+
+    try:
+        result = run_transcription(speech_path or audio_path)
+        transcript = clean_result(result)
+
+        # A strict voice-activity filter can occasionally remove quiet/soft-spoken words.
+        # If it produced an empty transcript, retry the original recording once.
+        # Keep the segment-level speech checks on the fallback to avoid accepting
+        # unfiltered Whisper hallucinations from music or noise.
+        if not transcript and speech_path:
+            fallback_result = run_transcription(audio_path)
+            transcript = clean_result(fallback_result)
+
         return transcript, speech_duration
     finally:
         if speech_path and os.path.exists(speech_path):
