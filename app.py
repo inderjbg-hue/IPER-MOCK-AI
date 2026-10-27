@@ -6294,6 +6294,53 @@ Resume text:
         if pending_resume is not None:
             st.session_state["resume_editor_text"] = clean_resume_draft(pending_resume)
             save_resume_workspace(student_id, st.session_state.get("resume_details") or {}, st.session_state["resume_editor_text"], st.session_state.get("resume_workspace_jd", ""), st.session_state.get("resume_source_filename", ""))
+        # Allow students to create a first draft from their saved About Myself profile
+        # without requiring an existing resume upload. Set session state BEFORE the
+        # editor widget is instantiated to comply with Streamlit's widget-state rules.
+        if st.button("Build Resume Draft from My Profile", key="build_resume_from_profile", use_container_width=True):
+            profile_fields = [
+                ("about_yourself", "CAREER OBJECTIVE"),
+                ("post_graduation", "EDUCATION"),
+                ("undergraduation", "EDUCATION"),
+                ("twelfth_percentage", "EDUCATION"),
+                ("tenth_percentage", "EDUCATION"),
+                ("internship", "INTERNSHIP"),
+                ("certification_courses", "SCHOLASTIC ACTIVITIES"),
+                ("achievements", "SCHOLASTIC ACTIVITIES"),
+                ("activities_participated", "EXTRACURRICULAR ACTIVITIES"),
+                ("professional_interest", "INTEREST"),
+            ]
+            sections = {}
+            for field_name, heading in profile_fields:
+                value = str(profile.get(field_name, "") or "").strip()
+                if value:
+                    sections.setdefault(heading, []).append(value)
+            skills_text = str((st.session_state.get("resume_details") or {}).get("Key_Skills", "") or "").strip()
+            if skills_text:
+                sections.setdefault("SKILLS", []).append(skills_text)
+            order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS",
+                     "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST"]
+            draft_parts = []
+            for heading in order:
+                values = sections.get(heading, [])
+                if values:
+                    draft_parts.append(heading)
+                    draft_parts.extend(values)
+                    draft_parts.append("")
+            if draft_parts:
+                st.session_state["resume_editor_text"] = clean_resume_draft("\\n".join(draft_parts))
+                st.session_state.pop("generated_resume_docx_bytes", None)
+                st.session_state.pop("generated_resume_pdf_bytes", None)
+                save_resume_workspace(
+                    student_id, st.session_state.get("resume_details") or {},
+                    st.session_state["resume_editor_text"],
+                    st.session_state.get("resume_workspace_jd", ""),
+                    st.session_state.get("resume_source_filename", "")
+                )
+                st.success("A first draft has been created from your saved profile. Review and edit every section before downloading.")
+            else:
+                st.warning("Your About Myself profile is empty. Fill in your education, internship, skills, activities and interests first, or upload your existing resume.")
+
         # Students can edit their uploaded/verified resume, then tailor it to the target job.
         resume_editor_text = st.text_area(
             "Editable Professional Resume Draft", key="resume_editor_text", height=360,
@@ -6336,7 +6383,6 @@ Return only the final resume text, with no commentary.
                         tailored_text = get_groq_response(edit_prompt)
                     if tailored_text and not tailored_text.strip().lower().startswith("error"):
                         st.session_state["pending_resume_editor_text"] = clean_resume_draft(tailored_text)
-                        st.rerun()
                         st.rerun()
                     else:
                         st.error("The resume draft could not be generated. Your current draft remains unchanged.")
