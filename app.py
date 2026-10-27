@@ -1445,16 +1445,15 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         "PROFILE": "PROFESSIONAL SUMMARY",
         "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS", "KEY COMPETENCIES": "SKILLS",
         "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
-        "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE", "CAREER HISTORY": "EXPERIENCE",
+        "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
         "INTERNSHIP": "INTERNSHIP", "INTERNSHIPS": "INTERNSHIP",
-        "RESEARCH & PUBLICATIONS": "RESEARCH & PUBLICATIONS", "RESEARCH AND PUBLICATIONS": "RESEARCH & PUBLICATIONS", "PUBLICATIONS": "RESEARCH & PUBLICATIONS", "RESEARCH": "RESEARCH & PUBLICATIONS",
         "PROJECTS": "SCHOLASTIC ACTIVITIES", "KEY PROJECTS": "SCHOLASTIC ACTIVITIES", "ACADEMIC PROJECTS": "SCHOLASTIC ACTIVITIES", "PROJECTS & ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES",
         "CERTIFICATIONS": "SCHOLASTIC ACTIVITIES", "CERTIFICATES": "SCHOLASTIC ACTIVITIES", "COURSES": "SCHOLASTIC ACTIVITIES", "COURSEWORK": "SCHOLASTIC ACTIVITIES",
         "ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES", "AWARDS": "SCHOLASTIC ACTIVITIES", "HONOURS": "SCHOLASTIC ACTIVITIES", "SCHOLASTIC ACTIVITIES": "SCHOLASTIC ACTIVITIES",
         "POSITIONS OF RESPONSIBILITY": "EXTRACURRICULAR ACTIVITIES", "LEADERSHIP": "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "VOLUNTEERING": "EXTRACURRICULAR ACTIVITIES",
-        "INTEREST": "INTEREST", "INTERESTS": "INTEREST", "PROFESSIONAL INTERESTS": "INTEREST", "ADDITIONAL INFORMATION": "INTEREST", "LANGUAGES": "INTEREST", "PROFESSIONAL AFFILIATIONS": "EXTRACURRICULAR ACTIVITIES", "PERSONAL DETAILS": "INTEREST", "REFERENCES": "INTEREST"
+        "INTEREST": "INTEREST", "INTERESTS": "INTEREST", "PROFESSIONAL INTERESTS": "INTEREST", "ADDITIONAL INFORMATION": "INTEREST", "PUBLICATIONS": "SCHOLASTIC ACTIVITIES", "RESEARCH": "SCHOLASTIC ACTIVITIES", "LANGUAGES": "INTEREST", "PROFESSIONAL AFFILIATIONS": "EXTRACURRICULAR ACTIVITIES", "PERSONAL DETAILS": "INTEREST", "REFERENCES": "INTEREST"
     }
-    order = ["CAREER OBJECTIVE", "EDUCATION", "EXPERIENCE", "INTERNSHIP", "SKILLS", "RESEARCH & PUBLICATIONS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY"]
+    order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY", "EXPERIENCE"]
     sections = {key: [] for key in order}
     current = "CAREER OBJECTIVE"
     candidate_name_norm = re.sub(r"\s+", " ", str(candidate_name or "").strip()).casefold()
@@ -1524,7 +1523,7 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
                 bp.add_run(re.sub(r"^(responsibilities|key responsibilities)\s*:?\s*", "", item, flags=re.I))
             else:
                 # Keep role and organisation lines unbulleted; use bullets only for list-like sections.
-                list_sections = {"SKILLS", "SCHOLASTIC ACTIVITIES", "RESEARCH & PUBLICATIONS", "EXTRACURRICULAR ACTIVITIES", "INTEREST"}
+                list_sections = {"SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST"}
                 if heading in list_sections and len(item) < 500:
                     bp = document.add_paragraph(style="List Bullet")
                     bp.paragraph_format.left_indent = docx.shared.Inches(0.22)
@@ -1598,16 +1597,15 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
         "PROFESSIONAL SUMMARY": "PROFESSIONAL SUMMARY", "SUMMARY": "PROFESSIONAL SUMMARY", "PROFILE": "PROFESSIONAL SUMMARY",
         "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS", "KEY COMPETENCIES": "SKILLS",
         "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
-        "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE", "CAREER HISTORY": "EXPERIENCE",
+        "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
         "INTERNSHIP": "INTERNSHIP", "INTERNSHIPS": "INTERNSHIP",
-        "RESEARCH & PUBLICATIONS": "RESEARCH & PUBLICATIONS", "RESEARCH AND PUBLICATIONS": "RESEARCH & PUBLICATIONS", "PUBLICATIONS": "RESEARCH & PUBLICATIONS", "RESEARCH": "RESEARCH & PUBLICATIONS",
         "PROJECTS": "SCHOLASTIC ACTIVITIES", "KEY PROJECTS": "SCHOLASTIC ACTIVITIES", "ACADEMIC PROJECTS": "SCHOLASTIC ACTIVITIES", "PROJECTS & ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES",
         "CERTIFICATIONS": "SCHOLASTIC ACTIVITIES", "CERTIFICATES": "SCHOLASTIC ACTIVITIES", "COURSES": "SCHOLASTIC ACTIVITIES", "COURSEWORK": "SCHOLASTIC ACTIVITIES",
         "ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES", "AWARDS": "SCHOLASTIC ACTIVITIES", "HONOURS": "SCHOLASTIC ACTIVITIES", "SCHOLASTIC ACTIVITIES": "SCHOLASTIC ACTIVITIES",
         "POSITIONS OF RESPONSIBILITY": "EXTRACURRICULAR ACTIVITIES", "LEADERSHIP": "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "VOLUNTEERING": "EXTRACURRICULAR ACTIVITIES",
-        "INTEREST": "INTEREST", "INTERESTS": "INTEREST", "PROFESSIONAL INTERESTS": "INTEREST", "ADDITIONAL INFORMATION": "INTEREST", "LANGUAGES": "INTEREST", "PROFESSIONAL AFFILIATIONS": "EXTRACURRICULAR ACTIVITIES", "PERSONAL DETAILS": "INTEREST", "REFERENCES": "INTEREST"
+        "INTEREST": "INTEREST", "INTERESTS": "INTEREST", "PROFESSIONAL INTERESTS": "INTEREST", "ADDITIONAL INFORMATION": "INTEREST", "PUBLICATIONS": "SCHOLASTIC ACTIVITIES", "RESEARCH": "SCHOLASTIC ACTIVITIES", "LANGUAGES": "INTEREST", "PROFESSIONAL AFFILIATIONS": "EXTRACURRICULAR ACTIVITIES", "PERSONAL DETAILS": "INTEREST", "REFERENCES": "INTEREST"
     }
-    order = ["CAREER OBJECTIVE", "EDUCATION", "EXPERIENCE", "INTERNSHIP", "SKILLS", "RESEARCH & PUBLICATIONS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY"]
+    order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY", "EXPERIENCE"]
     sections = {key: [] for key in order}
     current = "CAREER OBJECTIVE"
     candidate_name_norm = re.sub(r"\s+", " ", str(candidate_name or "").strip()).casefold()
@@ -1644,7 +1642,7 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
     if contacts:
         story.append(Paragraph(escape("  •  ".join(contacts)), styles["contact"]))
     story.append(HRFlowable(width="100%", thickness=0.8, color=black, spaceBefore=0, spaceAfter=5))
-    bullet_sections = {"SKILLS", "SCHOLASTIC ACTIVITIES", "RESEARCH & PUBLICATIONS", "EXTRACURRICULAR ACTIVITIES", "INTEREST"}
+    bullet_sections = {"SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST"}
     for heading in order:
         content = sections.get(heading, [])
         if not content:
@@ -6293,17 +6291,17 @@ Resume text:
                     edit_prompt = f"""You are the expert ATS resume editor for IPER PEPTECH. Produce a polished, one-column, ATS-friendly resume tailored to the target job description. Use plain-text headings and clean, concise bullets. Do not use Markdown decoration, tables, columns, icons, emojis, text boxes, or numbered-list clutter. Start with the candidate's full name, then contact details only if present in the student's own resume. Never invent contact details.
 
 MANDATORY MBA RESUME STRUCTURE AND JOB-TAILORING RULES:
-1. Use these sections in exactly this order, omitting a section only if there is no genuine information for it: CAREER OBJECTIVE, EDUCATION, EXPERIENCE, INTERNSHIP, SKILLS, RESEARCH & PUBLICATIONS, SCHOLASTIC ACTIVITIES, EXTRACURRICULAR ACTIVITIES, INTEREST.
-2. Do NOT include PROFESSIONAL SUMMARY, SUMMARY, PROFILE, or ABOUT ME. The Career Objective replaces the Professional Summary. EXPERIENCE is a required distinct section for paid/full-time/part-time employment and professional roles. Never place a job title, employer, or job responsibilities under SCHOLASTIC ACTIVITIES, EXTRACURRICULAR ACTIVITIES, or INTEREST. INTERNSHIP is only for roles explicitly identified as internships; never reclassify full-time employment as an internship.
+1. Use these sections in exactly this order, omitting a section only if the student has no genuine information for it: CAREER OBJECTIVE, EDUCATION, INTERNSHIP, SKILLS, SCHOLASTIC ACTIVITIES, EXTRACURRICULAR ACTIVITIES, INTEREST.
+2. Do NOT include PROFESSIONAL SUMMARY, SUMMARY, PROFILE, ABOUT ME, WORK EXPERIENCE, or extra sections in the final MBA-student resume. The Career Objective replaces the Professional Summary. If a student has substantial full-time employment rather than an internship, represent the role under INTERNSHIP only if it is genuinely an internship; otherwise preserve the factual experience within the closest suitable existing section without changing its nature.
 3. Keep the CAREER OBJECTIVE concise (usually 1–2 sentences), specific to the target role/company, and supported by the student's actual education, experience and strengths. Do not make generic claims or imply experience the student does not have.
 4. EDUCATION must appear before SKILLS. Include MBA/postgraduate study first, then undergraduate study, then Class XII and Class X where provided. Preserve institution names, years, and percentages/CGPA accurately.
-5. Under EXPERIENCE and INTERNSHIP, format each role as a clear role/title line, employer/organisation line, and concise responsibility bullets. Use the label 'Responsibilities' only if helpful; do not leave it as an empty heading. Keep dates/duration only when supplied. EXPERIENCE is for employment; INTERNSHIP is only for internships. Do not fabricate either.
+5. Under INTERNSHIP, format each entry in this exact hierarchy: Post/Role on its own unbulleted line; Organisation on the next unbulleted line; then a clear 'Responsibilities' label followed by concise responsibility bullets. Do not put bullets before the post or organisation. Keep dates/duration only when supplied. If internship details are missing, do not fabricate an internship.
 6. Tailor the resume to the target job description by identifying its core responsibilities, required/preferred skills, qualifications and relevant keywords. Prioritise the student's real, relevant evidence; reorder and clarify existing information to improve relevance. Do not keyword-stuff or claim a match unsupported by evidence.
 7. Use SKILLS for only skills the student has actually learned or demonstrated. Separate functional, technical and communication skills where useful, but keep the section concise. Never add a skill merely because it appears in the JD.
-8. Use RESEARCH & PUBLICATIONS for research papers, publications and academic research. Use SCHOLASTIC ACTIVITIES for academic projects, presentations, certifications, academic awards and competition achievements. Use EXTRACURRICULAR ACTIVITIES for clubs, volunteering, sports, event participation and positions of responsibility; use INTEREST for genuine interests. Keep employment and its responsibilities exclusively in EXPERIENCE. Do not duplicate the same item across sections.
+8. Use SCHOLASTIC ACTIVITIES for academic projects, research, presentations, certifications, academic awards and competition achievements; use EXTRACURRICULAR ACTIVITIES for clubs, volunteering, sports, event participation and positions of responsibility; use INTEREST for genuine interests. Do not duplicate the same item across sections.
 9. Refine rough notes into professional, action-led language while preserving facts. For example, 'Winner, Inter-College Debate Competition' may become 'Won the Inter-College Debate Competition'; do not add dates, rankings, metrics or details not supplied. Do not turn participation into a win or imply leadership where none is stated.
 10. Never invent or exaggerate qualifications, skills, employers, responsibilities, achievements, outcomes, dates, metrics or contact details. Do not insert placeholders. Keep supplied 10th/12th marks and education details when present. If a JD requirement is missing from the student's evidence, do not pretend the student has it.
-11. Return a clean, ATS-friendly plain-text resume for the app's PDF/Word templates to format. Use exact plain-text headings from rule 1. Under EXPERIENCE and INTERNSHIP, use role and employer lines followed by responsibility bullets. Use simple bullets for lists and achievements. Never put a person's job title or job duties inside SCHOLASTIC ACTIVITIES. No Markdown decoration, tables, columns, icons, emojis, text boxes or commentary.
+11. Return a clean, ATS-friendly plain-text resume for the app's PDF/Word templates to format. Use clear section headings and simple responsibility bullets; no Markdown decoration, tables, columns, icons, emojis, text boxes or commentary.
 Return only the final resume text, with no commentary.
     Candidate account name: {account_name}
     Email extracted from student's own resume (use if present): {extracted_email}
@@ -6316,6 +6314,7 @@ Return only the final resume text, with no commentary.
                         tailored_text = get_groq_response(edit_prompt)
                     if tailored_text and not tailored_text.strip().lower().startswith("error"):
                         st.session_state["pending_resume_editor_text"] = clean_resume_draft(tailored_text)
+                        st.rerun()
                         st.rerun()
                     else:
                         st.error("The resume draft could not be generated. Your current draft remains unchanged.")
@@ -6821,7 +6820,10 @@ CANDIDATE CONTEXT:
 
         extracted_transcript = ""
         saved_video_filename = "N/A"
-        st.session_state["speech_detected"] = False
+        # Keep speech-detection state across Streamlit reruns. Reset it only when
+        # a new recording is actually processed, not on every mobile/browser rerun.
+        if "speech_detected" not in st.session_state:
+            st.session_state["speech_detected"] = False
 
         if mode == "Audio Response Mode":
             st.subheader("Record Your Audio Answer")
@@ -6844,12 +6846,13 @@ CANDIDATE CONTEXT:
                     finally:
                         if os.path.exists(tmp_path): os.remove(tmp_path)
                 
-                if extracted_transcript:
-                    st.session_state["speech_detected"] = bool(extracted_transcript.strip())
-                    if extracted_transcript:
-                        st.success("Human speech detected and transcribed successfully.")
-                    else:
-                        st.warning("No clear human speech was detected. Background music/noise was ignored, so no AI communication feedback was generated.")
+                if extracted_transcript and extracted_transcript.strip():
+                    st.session_state["speech_detected"] = True
+                    st.session_state[f"pi_answer_transcript_q_{st.session_state.get('practice_question_index', 0)}"] = extracted_transcript.strip()
+                    st.success("Human speech detected and transcribed successfully.")
+                else:
+                    st.session_state["speech_detected"] = False
+                    st.warning("No clear human speech was detected. You can still type or edit your answer in the transcript box below.")
 
         elif mode == "Video Response Mode" and ENABLE_VIDEO_INTERVIEW_MODE:
             st.subheader("1. Record & Save Video")
@@ -6891,10 +6894,11 @@ CANDIDATE CONTEXT:
                         if detected_speech_duration > 0:
                             st.session_state["communication_duration"] = detected_speech_duration
                         st.session_state["speech_detected"] = bool(extracted_transcript.strip())
-                        if extracted_transcript:
+                        if extracted_transcript and extracted_transcript.strip():
+                            st.session_state[f"pi_answer_transcript_q_{st.session_state.get('practice_question_index', 0)}"] = extracted_transcript.strip()
                             st.success("Human speech detected and transcribed successfully.")
                         else:
-                            st.warning("No clear human speech was detected. Background music/noise was ignored, so no AI communication feedback was generated.")
+                            st.warning("No clear human speech was detected. You can still type or edit your answer in the transcript box below.")
                 except Exception as err:
                     st.error(f"Video processing error: {err}")
                     if os.path.exists(incoming_path):
@@ -6911,8 +6915,9 @@ CANDIDATE CONTEXT:
         if st.button("Submit Response for Feedback"):
             if not final_response_text.strip():
                 st.error("Please record your audio/video response or write your transcript text first.")
-            elif mode in ("Audio Response Mode", "Video Response Mode") and not st.session_state.get("speech_detected", False):
-                st.error("No clear human speech was detected in this recording. Background music/noise has been ignored. Please record a spoken answer, or enter the transcript manually if you intentionally want to evaluate typed text.")
+            # A non-empty, user-reviewed transcript is sufficient for assessment.
+            # Audio speech detection is useful feedback, but must not block a typed
+            # or manually corrected transcript (especially on mobile devices).
             elif not st.session_state.get("current_question", "").strip():
                 st.error("Please generate a practice question before submitting your response.")
             elif client is None:
