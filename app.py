@@ -1358,6 +1358,12 @@ def extract_resume_contacts(text):
     return (email_match.group(0) if email_match else "", phone)
 
 
+def clear_generated_resume_files():
+    """Invalidate previously generated files whenever the editable resume changes."""
+    st.session_state.pop("generated_resume_docx_bytes", None)
+    st.session_state.pop("generated_resume_pdf_bytes", None)
+
+
 def add_keyword_to_resume_editor(keyword, checkbox_key=None):
     """Append a selected, user-approved keyword under Skills without duplicates."""
     if checkbox_key and not st.session_state.get(checkbox_key, False):
@@ -1864,6 +1870,7 @@ def init_database():
                 certification_courses TEXT,
                 activities_participated TEXT,
                 achievements TEXT,
+                scholastic_activities TEXT,
                 professional_interest TEXT,
                 about_yourself TEXT,
                 profile_hash TEXT,
@@ -1876,7 +1883,7 @@ def init_database():
         profile_columns = [row[1] for row in conn.execute("PRAGMA table_info(student_profiles)").fetchall()]
         for column_name in [
             "mba_why_objectives", "institute_about", "mba_value_added", "specialization_why",
-            "school", "family_values", "personality_uniqueness", "skills_learned", "future_self"
+            "school", "family_values", "personality_uniqueness", "skills_learned", "future_self", "scholastic_activities"
         ]:
             if column_name not in profile_columns:
                 try:
@@ -2424,9 +2431,9 @@ def save_student_profile(student_id, profile, about_yourself, profile_hash):
             (student_id, tenth_percentage, twelfth_percentage, mba_why_objectives, institute_about,
              mba_value_added, specialization_why, undergraduation, school, family_values,
              personality_uniqueness, skills_learned, future_self, post_graduation, internship,
-             certification_courses, activities_participated, achievements, professional_interest,
+             certification_courses, activities_participated, achievements, scholastic_activities, professional_interest,
              about_yourself, profile_hash, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(student_id) DO UPDATE SET
                 tenth_percentage=excluded.tenth_percentage,
                 twelfth_percentage=excluded.twelfth_percentage,
@@ -2445,6 +2452,7 @@ def save_student_profile(student_id, profile, about_yourself, profile_hash):
                 certification_courses=excluded.certification_courses,
                 activities_participated=excluded.activities_participated,
                 achievements=excluded.achievements,
+                scholastic_activities=excluded.scholastic_activities,
                 professional_interest=excluded.professional_interest,
                 about_yourself=excluded.about_yourself,
                 profile_hash=excluded.profile_hash,
@@ -2457,7 +2465,7 @@ def save_student_profile(student_id, profile, about_yourself, profile_hash):
             profile.get('personality_uniqueness',''), profile.get('skills_learned',''), profile.get('future_self',''),
             profile.get('post_graduation',''), profile.get('internship',''),
             profile.get('certification_courses',''), profile.get('activities_participated',''),
-            profile.get('achievements',''), profile.get('professional_interest',''), about_yourself,
+            profile.get('achievements',''), profile.get('scholastic_activities',''), profile.get('professional_interest',''), about_yourself,
             profile_hash, datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         ))
         conn.commit()
@@ -5400,6 +5408,7 @@ elif selected_nav == "About Myself":
         "skills_learned": st.text_area("Skills Specially Learned", value=existing_profile.get("skills_learned", ""), placeholder="Which skills you learned, where/from whom you learned them, and how they are useful to an organisation", height=90),
         "certification_courses": st.text_area("Certification Courses", value=existing_profile.get("certification_courses", ""), placeholder="Course/certification, platform/provider and practical skills learned", height=85),
         "achievements": st.text_area("Achievements & Recognition", value=existing_profile.get("achievements", ""), placeholder="Specific academic, internship, competition or extracurricular achievements", height=85),
+        "scholastic_activities": st.text_area("Scholastic Activities (Manual Entry)", value=existing_profile.get("scholastic_activities", ""), placeholder="Enter academic projects, research, case studies, presentations, competitions or other scholastic activities you can confidently discuss", height=95),
         "future_self": st.text_area("Where Do You See Yourself in the Coming Years?", value=existing_profile.get("future_self", ""), placeholder="A realistic role or career direction and how it connects to your strengths and specialization", height=85),
         "professional_interest": st.text_area("Professional Interests", value=existing_profile.get("professional_interest", ""), placeholder="Functions, sectors, roles or career areas you want to explore", height=80),
     }
@@ -6278,7 +6287,7 @@ Resume text:
                     # facts parsed from the resume; profile fields remain clearly identified.
                     resume_data["About_Myself_Profile"] = {
                         key: str(profile.get(key, "") or "").strip()
-                        for key in ["post_graduation", "mba_why_objectives", "institute_about", "mba_value_added", "specialization_why", "undergraduation", "school", "family_values", "personality_uniqueness", "skills_learned", "future_self", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "tenth_percentage", "twelfth_percentage", "about_yourself"]
+                        for key in ["post_graduation", "mba_why_objectives", "institute_about", "mba_value_added", "specialization_why", "undergraduation", "school", "family_values", "personality_uniqueness", "skills_learned", "future_self", "internship", "certification_courses", "activities_participated", "achievements", "scholastic_activities", "professional_interest", "tenth_percentage", "twelfth_percentage", "about_yourself"]
                         if str(profile.get(key, "") or "").strip()
                     }
                     st.session_state["resume_details"] = resume_data
@@ -6375,6 +6384,7 @@ Resume text:
                 ("internship", "INTERNSHIP"),
                 ("certification_courses", "SCHOLASTIC ACTIVITIES"),
                 ("achievements", "SCHOLASTIC ACTIVITIES"),
+                ("scholastic_activities", "SCHOLASTIC ACTIVITIES"),
                 ("activities_participated", "EXTRACURRICULAR ACTIVITIES"),
                 ("professional_interest", "INTEREST"),
             ]
@@ -6396,7 +6406,7 @@ Resume text:
                     draft_parts.extend(values)
                     draft_parts.append("")
             if draft_parts:
-                st.session_state["resume_editor_text"] = clean_resume_draft("\\n".join(draft_parts))
+                st.session_state["resume_editor_text"] = clean_resume_draft("\n".join(draft_parts))
                 st.session_state.pop("generated_resume_docx_bytes", None)
                 st.session_state.pop("generated_resume_pdf_bytes", None)
                 save_resume_workspace(
@@ -6412,7 +6422,8 @@ Resume text:
         # Students can edit their uploaded/verified resume, then tailor it to the target job.
         resume_editor_text = st.text_area(
             "Editable Professional Resume Draft", key="resume_editor_text", height=360,
-            placeholder="Review or edit your uploaded/verified resume here, then tailor it to the target job..."
+            placeholder="Review or edit your uploaded/verified resume here, then tailor it to the target job...",
+            on_change=clear_generated_resume_files,
         )
         ai_edit_col, ai_edit_help_col = st.columns([1, 2])
         with ai_edit_col:
