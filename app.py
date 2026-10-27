@@ -1364,38 +1364,60 @@ def clear_generated_resume_files():
     st.session_state.pop("generated_resume_pdf_bytes", None)
 
 
+def on_resume_editor_change():
+    """Invalidate downloads and preserve manually entered contact details separately."""
+    clear_generated_resume_files()
+    email, phone = extract_resume_contacts(st.session_state.get("resume_editor_text", ""))
+    st.session_state["resume_manual_email"] = email
+    st.session_state["resume_manual_phone"] = phone
+
+
 def add_keyword_to_resume_editor(keyword, checkbox_key=None):
-    """Append a selected, user-approved keyword under Skills without duplicates."""
+    """Add a selected, user-approved keyword under Skills without damaging other sections."""
     if checkbox_key and not st.session_state.get(checkbox_key, False):
         return
     keyword = str(keyword or "").strip().strip("`*•- ")
     if not keyword:
         return
-    text = str(st.session_state.get("resume_editor_text", "") or "")
-    lines = text.splitlines()
-    skill_headers = {"SKILLS", "KEY SKILLS", "KEY_SKILLS", "TECHNICAL SKILLS", "CORE COMPETENCIES", "CORE SKILLS"}
-    start = next((i for i, line in enumerate(lines) if line.strip().strip(":").upper() in skill_headers), None)
-    if start is None:
-        # Place Skills before Education when possible; otherwise append it at the end.
-        education = next((i for i, line in enumerate(lines) if line.strip().strip(":").upper() in {"EDUCATION", "EDUCATIONAL QUALIFICATIONS"}), None)
-        insert_at = education if education is not None else len(lines)
-        block = ["Skills", keyword]
-        lines[insert_at:insert_at] = ([""] if insert_at and lines[insert_at-1].strip() else []) + block + ([""] if insert_at < len(lines) else [])
-    else:
-        end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().strip(":").upper() in {
-            "PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE", "EDUCATION", "EDUCATIONAL QUALIFICATIONS", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE", "EXPERIENCE", "INTERNSHIP", "INTERNSHIPS", "PROJECTS", "CERTIFICATIONS", "ACHIEVEMENTS", "ACTIVITIES"
+
+    lines = str(st.session_state.get("resume_editor_text", "") or "").splitlines()
+    heading_names = {
+        "CAREER OBJECTIVE", "OBJECTIVE", "EDUCATION", "EDUCATIONAL QUALIFICATIONS",
+        "ACADEMIC QUALIFICATIONS", "INTERNSHIP", "INTERNSHIPS", "SKILLS", "KEY SKILLS",
+        "TECHNICAL SKILLS", "CORE SKILLS", "CORE COMPETENCIES", "KEY COMPETENCIES",
+        "SCHOLASTIC ACTIVITIES", "PROJECTS", "KEY PROJECTS", "ACADEMIC PROJECTS",
+        "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES", "POSITIONS OF RESPONSIBILITY",
+        "INTEREST", "INTERESTS", "PROFESSIONAL INTERESTS", "CERTIFICATIONS",
+        "ACHIEVEMENTS", "EXPERIENCE", "WORK EXPERIENCE", "PROFESSIONAL EXPERIENCE",
+        "PROFESSIONAL SUMMARY", "SUMMARY", "PROFILE"
+    }
+    skill_headers = {"SKILLS", "KEY SKILLS", "TECHNICAL SKILLS", "CORE SKILLS", "CORE COMPETENCIES", "KEY COMPETENCIES"}
+    start_idx = next((i for i, line in enumerate(lines) if line.strip().strip(":").upper() in skill_headers), None)
+
+    if start_idx is None:
+        insert_at = next((i for i, line in enumerate(lines) if line.strip().strip(":").upper() in {
+            "SCHOLASTIC ACTIVITIES", "PROJECTS", "EDUCATION", "EDUCATIONAL QUALIFICATIONS"
         }), len(lines))
-        existing = " ".join(lines[start+1:end]).casefold()
+        block = ["SKILLS", keyword]
+        if insert_at and lines[insert_at - 1].strip():
+            block.insert(0, "")
+        if insert_at < len(lines):
+            block.append("")
+        lines[insert_at:insert_at] = block
+    else:
+        end_idx = next((i for i in range(start_idx + 1, len(lines)) if lines[i].strip().strip(":").upper() in heading_names), len(lines))
+        existing = " ".join(lines[start_idx + 1:end_idx]).casefold()
         if keyword.casefold() in existing:
             return
-        # Keep skills concise and readable as a comma-separated list.
-        current = [x.strip(" •-*\t") for x in lines[start+1:end] if x.strip()]
-        if current:
-            lines[start+1:end] = [", ".join(current + [keyword])]
+        content_indices = [i for i in range(start_idx + 1, end_idx) if lines[i].strip()]
+        if content_indices:
+            last_idx = content_indices[-1]
+            lines[last_idx] = lines[last_idx].rstrip(" ,;") + ", " + keyword
         else:
-            lines.insert(start+1, keyword)
+            lines.insert(start_idx + 1, keyword)
+
     st.session_state["resume_editor_text"] = clean_resume_draft("\n".join(lines))
-    st.session_state.pop("generated_resume_docx_bytes", None)
+    clear_generated_resume_files()
 
 
 def build_professional_resume_docx(resume_text, candidate_name, email="", phone="", linkedin=""):
@@ -1498,6 +1520,14 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         # The candidate name is already displayed prominently in the header; don't
         # repeat it as an accidental first line under Career Objective.
         if re.sub(r"\s+", " ", line).casefold() == candidate_name_norm:
+            continue
+        # Contact details are rendered in the dedicated header; don't let them leak into a section.
+        if re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", line, re.I):
+            continue
+        if re.match(r"^\s*(?:email|e-mail|contact(?: number)?|phone|mobile|telephone|linkedin|website|portfolio)\s*[:：-]", line, re.I):
+            continue
+        phone_digits = re.sub(r"\D", "", line)
+        if re.fullmatch(r"[+()0-9 .-]{8,}", line) and 10 <= len(phone_digits) <= 15:
             continue
         line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
         line = re.sub(r"\*{1,3}|__|`", "", line).strip()
@@ -1650,6 +1680,14 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
         # The candidate name is already displayed prominently in the header; don't
         # repeat it as an accidental first line under Career Objective.
         if re.sub(r"\s+", " ", line).casefold() == candidate_name_norm:
+            continue
+        # Contact details are rendered in the dedicated header; don't let them leak into a section.
+        if re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", line, re.I):
+            continue
+        if re.match(r"^\s*(?:email|e-mail|contact(?: number)?|phone|mobile|telephone|linkedin|website|portfolio)\s*[:：-]", line, re.I):
+            continue
+        phone_digits = re.sub(r"\D", "", line)
+        if re.fullmatch(r"[+()0-9 .-]{8,}", line) and 10 <= len(phone_digits) <= 15:
             continue
         line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
         line = re.sub(r"\*{1,3}|__|`", "", line).strip()
@@ -3576,6 +3614,7 @@ Do not invent facts. When evidence is limited, clearly say the feedback is based
 def generate_career_objective_and_power_words(resume_details, jd_text, student_name):
     prompt = f"""You are an MBA placement advisor at IPER Bhopal. Help {student_name} create a truthful, tailored career objective.
 Use only information supported by the resume and job description. Do not invent experience.
+Each Career Objective must be 1–2 sentences, name the target role/function, connect the student's real education, skills or activities to 1–2 specific priorities in the JD, and state a realistic contribution or learning goal. Avoid generic openings such as "seeking a challenging position." Never include email, phone, address, LinkedIn URL or other contact details in the objective. Make the three options meaningfully different, concise and suitable for an MBA student/fresher.
 Resume: {json.dumps(resume_details)}
 Job Description: {jd_text}
 Return ONLY valid JSON with keys: CareerObjectives (3 options), PowerWords (5 tailored words/phrases), WhereToUseThem (5 matching usage suggestions). Use simple, professional language for an MBA fresher."""
@@ -6187,6 +6226,11 @@ if selected_nav == "Resume Checker & Job Matcher":
         st.session_state["resume_editor_text"] = saved_workspace.get("resume_text") or resume_text_from_data(saved_workspace.get("resume_details") or {})
         st.session_state["resume_workspace_jd"] = saved_workspace.get("job_description", "")
         st.session_state["resume_source_filename"] = saved_workspace.get("source_filename", "")
+        loaded_email, loaded_phone = extract_resume_contacts(st.session_state.get("resume_editor_text", ""))
+        if loaded_email:
+            st.session_state["resume_manual_email"] = loaded_email
+        if loaded_phone:
+            st.session_state["resume_manual_phone"] = loaded_phone
         st.session_state["resume_workspace_loaded_for"] = student_id
 
     # Apply reset requests BEFORE any widgets using these session-state keys are created.
@@ -6202,6 +6246,9 @@ if selected_nav == "Resume Checker & Job Matcher":
         st.session_state["resume_jd_input_option"] = "Upload File (PDF/DOCX/TXT)"
         st.session_state["resume_jd_paste_version"] = int(st.session_state.get("resume_jd_paste_version", 0)) + 1
         st.session_state.pop("generated_resume_docx_bytes", None)
+        st.session_state.pop("generated_resume_pdf_bytes", None)
+        st.session_state.pop("resume_manual_email", None)
+        st.session_state.pop("resume_manual_phone", None)
         st.session_state.pop("last_resume_ats_result", None)
         st.session_state.pop("resume_upload_rejected", None)
         save_resume_workspace(student_id, {}, "", "", "")
@@ -6292,6 +6339,11 @@ Resume text:
                     }
                     st.session_state["resume_details"] = resume_data
                     st.session_state["resume_editor_text"] = resume_text_from_data(resume_data)
+                    parsed_email, parsed_phone = extract_resume_contacts(res_raw_text)
+                    if parsed_email:
+                        st.session_state["resume_manual_email"] = parsed_email
+                    if parsed_phone:
+                        st.session_state["resume_manual_phone"] = parsed_phone
                     st.session_state["resume_source_filename"] = ats_resume_file.name
                     st.session_state.pop("resume_upload_rejected", None)
                     # Save the verified resume immediately so it survives navigation and future logins.
@@ -6371,59 +6423,11 @@ Resume text:
         if pending_resume is not None:
             st.session_state["resume_editor_text"] = clean_resume_draft(pending_resume)
             save_resume_workspace(student_id, st.session_state.get("resume_details") or {}, st.session_state["resume_editor_text"], st.session_state.get("resume_workspace_jd", ""), st.session_state.get("resume_source_filename", ""))
-        # Allow students to create a first draft from their saved About Myself profile
-        # without requiring an existing resume upload. Set session state BEFORE the
-        # editor widget is instantiated to comply with Streamlit's widget-state rules.
-        if st.button("Build Resume Draft from My Profile", key="build_resume_from_profile", use_container_width=True):
-            profile_fields = [
-                ("about_yourself", "CAREER OBJECTIVE"),
-                ("post_graduation", "EDUCATION"),
-                ("undergraduation", "EDUCATION"),
-                ("twelfth_percentage", "EDUCATION"),
-                ("tenth_percentage", "EDUCATION"),
-                ("internship", "INTERNSHIP"),
-                ("certification_courses", "SCHOLASTIC ACTIVITIES"),
-                ("achievements", "SCHOLASTIC ACTIVITIES"),
-                ("scholastic_activities", "SCHOLASTIC ACTIVITIES"),
-                ("activities_participated", "EXTRACURRICULAR ACTIVITIES"),
-                ("professional_interest", "INTEREST"),
-            ]
-            sections = {}
-            for field_name, heading in profile_fields:
-                value = str(profile.get(field_name, "") or "").strip()
-                if value:
-                    sections.setdefault(heading, []).append(value)
-            skills_text = str((st.session_state.get("resume_details") or {}).get("Key_Skills", "") or "").strip()
-            if skills_text:
-                sections.setdefault("SKILLS", []).append(skills_text)
-            order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS",
-                     "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST"]
-            draft_parts = []
-            for heading in order:
-                values = sections.get(heading, [])
-                if values:
-                    draft_parts.append(heading)
-                    draft_parts.extend(values)
-                    draft_parts.append("")
-            if draft_parts:
-                st.session_state["resume_editor_text"] = clean_resume_draft("\n".join(draft_parts))
-                st.session_state.pop("generated_resume_docx_bytes", None)
-                st.session_state.pop("generated_resume_pdf_bytes", None)
-                save_resume_workspace(
-                    student_id, st.session_state.get("resume_details") or {},
-                    st.session_state["resume_editor_text"],
-                    st.session_state.get("resume_workspace_jd", ""),
-                    st.session_state.get("resume_source_filename", "")
-                )
-                st.success("A first draft has been created from your saved profile. Review and edit every section before downloading.")
-            else:
-                st.warning("Your About Myself profile is empty. Fill in your education, internship, skills, activities and interests first, or upload your existing resume.")
-
         # Students can edit their uploaded/verified resume, then tailor it to the target job.
         resume_editor_text = st.text_area(
             "Editable Professional Resume Draft", key="resume_editor_text", height=360,
             placeholder="Review or edit your uploaded/verified resume here, then tailor it to the target job...",
-            on_change=clear_generated_resume_files,
+            on_change=on_resume_editor_change,
         )
         ai_edit_col, ai_edit_help_col = st.columns([1, 2])
         with ai_edit_col:
@@ -6436,12 +6440,16 @@ Resume text:
                     profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["post_graduation", "mba_why_objectives", "institute_about", "mba_value_added", "specialization_why", "undergraduation", "school", "family_values", "personality_uniqueness", "skills_learned", "future_self", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "tenth_percentage", "twelfth_percentage", "about_yourself"] if str(profile.get(key, "") or "").strip()}
                     source_resume_text = str(resume_editor_text or "") + "\n" + json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)
                     extracted_email, extracted_phone = extract_resume_contacts(source_resume_text)
+                    if extracted_email:
+                        st.session_state["resume_manual_email"] = extracted_email
+                    if extracted_phone:
+                        st.session_state["resume_manual_phone"] = extracted_phone
                     edit_prompt = f"""You are the expert ATS resume editor for IPER PEPTECH. Produce a polished, one-column, ATS-friendly resume tailored to the target job description. Use plain-text headings and clean, concise bullets. Do not use Markdown decoration, tables, columns, icons, emojis, text boxes, or numbered-list clutter. Start with the candidate's full name, then contact details only if present in the student's own resume. Never invent contact details.
 
 MANDATORY MBA RESUME STRUCTURE AND JOB-TAILORING RULES:
 1. Use these sections in exactly this order, omitting a section only if the student has no genuine information for it: CAREER OBJECTIVE, EDUCATION, INTERNSHIP, SKILLS, SCHOLASTIC ACTIVITIES, EXTRACURRICULAR ACTIVITIES, INTEREST.
 2. Do NOT include PROFESSIONAL SUMMARY, SUMMARY, PROFILE, ABOUT ME, WORK EXPERIENCE, or extra sections in the final MBA-student resume. The Career Objective replaces the Professional Summary. If a student has substantial full-time employment rather than an internship, represent the role under INTERNSHIP only if it is genuinely an internship; otherwise preserve the factual experience within the closest suitable existing section without changing its nature.
-3. Keep the CAREER OBJECTIVE concise (usually 1–2 sentences), specific to the target role/company, and supported by the student's actual education, experience and strengths. Do not make generic claims or imply experience the student does not have.
+3. Keep the CAREER OBJECTIVE concise (1–2 sentences) and specifically tailored to the target job description: name the target role/function, connect 1–2 relevant skills or academic experiences from the student's evidence to actual JD priorities, and state a realistic contribution or learning goal. Avoid generic phrases such as "seeking a challenging position" or "to work in a reputed organisation." Do not imply experience the student does not have. Never put email, phone number, address, LinkedIn URL or other contact details in the Career Objective or body; those belong only in the header.
 4. EDUCATION must appear before SKILLS. Include MBA/postgraduate study first, then undergraduate study, then Class XII and Class X where provided. Preserve institution names, years, and percentages/CGPA accurately.
 5. Under INTERNSHIP, format each entry in this exact hierarchy: Post/Role on its own unbulleted line; Organisation on the next unbulleted line; then a clear 'Responsibilities' label followed by concise responsibility bullets. Do not put bullets before the post or organisation. Keep dates/duration only when supplied. If internship details are missing, do not fabricate an internship.
 6. Tailor the resume to the target job description by identifying its core responsibilities, required/preferred skills, qualifications and relevant keywords. Prioritise the student's real, relevant evidence; reorder and clarify existing information to improve relevance. Do not keyword-stuff or claim a match unsupported by evidence.
@@ -6543,10 +6551,17 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
                     if not keyword:
                         continue
                     safe_key = re.sub(r"[^a-zA-Z0-9]+", "_", keyword).strip("_").lower()[:50] or str(idx)
-                    check_key = f"resume_keyword_add_{safe_key}"
-                    if check_key not in st.session_state:
-                        st.session_state[check_key] = False
-                    st.checkbox(keyword, key=check_key, on_change=add_keyword_to_resume_editor, args=(keyword, check_key))
+                    add_col, keyword_col = st.columns([1, 4])
+                    with add_col:
+                        st.button(
+                            "Add",
+                            key=f"resume_keyword_add_btn_{safe_key}",
+                            on_click=add_keyword_to_resume_editor,
+                            args=(keyword, None),
+                            help=f"Add {keyword} to Skills in your editable resume",
+                        )
+                    with keyword_col:
+                        st.write(keyword)
             else:
                 st.caption("No additional keywords were suggested for this JD.")
         with c2:
@@ -6582,7 +6597,9 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
                     resume_clean = clean_resume_draft(resume_editor_text)
                     docx_email, docx_phone = extract_resume_contacts(resume_clean)
                     if not docx_email:
-                        docx_email = str(st.session_state.get("student_email", "") or "").strip()
+                        docx_email = str(st.session_state.get("resume_manual_email", "") or st.session_state.get("student_email", "") or "").strip()
+                    if not docx_phone:
+                        docx_phone = str(st.session_state.get("resume_manual_phone", "") or "").strip()
                     st.session_state["generated_resume_docx_bytes"] = build_professional_resume_docx(
                         resume_clean, account_name, email=docx_email, phone=docx_phone
                     )
