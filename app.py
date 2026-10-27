@@ -1849,7 +1849,16 @@ def init_database():
                 student_id INTEGER PRIMARY KEY,
                 tenth_percentage TEXT,
                 twelfth_percentage TEXT,
+                mba_why_objectives TEXT,
+                institute_about TEXT,
+                mba_value_added TEXT,
+                specialization_why TEXT,
                 undergraduation TEXT,
+                school TEXT,
+                family_values TEXT,
+                personality_uniqueness TEXT,
+                skills_learned TEXT,
+                future_self TEXT,
                 post_graduation TEXT,
                 internship TEXT,
                 certification_courses TEXT,
@@ -1862,6 +1871,20 @@ def init_database():
                 FOREIGN KEY(student_id) REFERENCES students(id)
             )
         """)
+
+        # Add structured About Myself fields to existing student profile tables safely.
+        profile_columns = [row[1] for row in conn.execute("PRAGMA table_info(student_profiles)").fetchall()]
+        for column_name in [
+            "mba_why_objectives", "institute_about", "mba_value_added", "specialization_why",
+            "school", "family_values", "personality_uniqueness", "skills_learned", "future_self"
+        ]:
+            if column_name not in profile_columns:
+                try:
+                    conn.execute(f"ALTER TABLE student_profiles ADD COLUMN {column_name} TEXT")
+                except Exception:
+                    refreshed = [row[1] for row in conn.execute("PRAGMA table_info(student_profiles)").fetchall()]
+                    if column_name not in refreshed:
+                        raise
 
         # Per-student resume/JD workspace. This stores only the signed-in student's
         # own resume context and job-description workspace, keyed by student ID.
@@ -2398,14 +2421,25 @@ def save_student_profile(student_id, profile, about_yourself, profile_hash):
     try:
         conn.execute("""
             INSERT INTO student_profiles
-            (student_id, tenth_percentage, twelfth_percentage, undergraduation, post_graduation,
-             internship, certification_courses, activities_participated, achievements,
-             professional_interest, about_yourself, profile_hash, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (student_id, tenth_percentage, twelfth_percentage, mba_why_objectives, institute_about,
+             mba_value_added, specialization_why, undergraduation, school, family_values,
+             personality_uniqueness, skills_learned, future_self, post_graduation, internship,
+             certification_courses, activities_participated, achievements, professional_interest,
+             about_yourself, profile_hash, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(student_id) DO UPDATE SET
                 tenth_percentage=excluded.tenth_percentage,
                 twelfth_percentage=excluded.twelfth_percentage,
+                mba_why_objectives=excluded.mba_why_objectives,
+                institute_about=excluded.institute_about,
+                mba_value_added=excluded.mba_value_added,
+                specialization_why=excluded.specialization_why,
                 undergraduation=excluded.undergraduation,
+                school=excluded.school,
+                family_values=excluded.family_values,
+                personality_uniqueness=excluded.personality_uniqueness,
+                skills_learned=excluded.skills_learned,
+                future_self=excluded.future_self,
                 post_graduation=excluded.post_graduation,
                 internship=excluded.internship,
                 certification_courses=excluded.certification_courses,
@@ -2417,7 +2451,11 @@ def save_student_profile(student_id, profile, about_yourself, profile_hash):
                 updated_at=excluded.updated_at
         """, (
             student_id, profile.get('tenth_percentage',''), profile.get('twelfth_percentage',''),
-            profile.get('undergraduation',''), profile.get('post_graduation',''), profile.get('internship',''),
+            profile.get('mba_why_objectives',''), profile.get('institute_about',''),
+            profile.get('mba_value_added',''), profile.get('specialization_why',''),
+            profile.get('undergraduation',''), profile.get('school',''), profile.get('family_values',''),
+            profile.get('personality_uniqueness',''), profile.get('skills_learned',''), profile.get('future_self',''),
+            profile.get('post_graduation',''), profile.get('internship',''),
             profile.get('certification_courses',''), profile.get('activities_participated',''),
             profile.get('achievements',''), profile.get('professional_interest',''), about_yourself,
             profile_hash, datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -2443,19 +2481,29 @@ def generate_about_yourself(profile):
     prompt = f"""Create a professional, natural and interview-ready 'About Yourself' response for an MBA placement student at IPER Bhopal.
 Use ONLY the information supplied below. Do not invent companies, roles, percentages, achievements, skills, responsibilities or experience.
 Write in first person, confident but not exaggerated, suitable for a 60-90 second interview answer.
-Integrate only the student's supplied education, internship, certifications, activities, achievements and professional interests.
+Follow this order: MBA journey first (about 70%): MBA and objectives, institute, value added through MBA, specialization, participation, internship, skills/certifications, achievements and future direction; then educational/personal background (about 30%): graduation, school, family values and personality. Treat 10th and 12th percentages as the final category and mention them only if relevant to a natural 60-90 second answer.
+Integrate only the student's supplied information, education, internship, certifications, activities, achievements and professional interests.
 If a field is blank, do not mention it. Do not add an AI preamble, heading, quotation marks, bullets or commentary. Return ONLY the spoken response.
 
 Student profile:
-10th Percentage: {profile.get('tenth_percentage','')}
-12th Percentage: {profile.get('twelfth_percentage','')}
-Undergraduation: {profile.get('undergraduation','')}
-Post Graduation: {profile.get('post_graduation','')}
+MBA / Post Graduation: {profile.get('post_graduation','')}
+Why MBA and objectives: {profile.get('mba_why_objectives','')}
+Institute: {profile.get('institute_about','')}
+Value added through MBA: {profile.get('mba_value_added','')}
+Specialization choice: {profile.get('specialization_why','')}
+Participation and leadership: {profile.get('activities_participated','')}
 Internship: {profile.get('internship','')}
-Certification Courses: {profile.get('certification_courses','')}
-Activities Participated: {profile.get('activities_participated','')}
-Achievements: {profile.get('achievements','')}
-Professional Interest: {profile.get('professional_interest','')}
+Skills learned: {profile.get('skills_learned','')}
+Certifications: {profile.get('certification_courses','')}
+Achievements and recognition: {profile.get('achievements','')}
+Future career direction: {profile.get('future_self','')}
+Professional interests: {profile.get('professional_interest','')}
+Graduation: {profile.get('undergraduation','')}
+School: {profile.get('school','')}
+Family and value systems: {profile.get('family_values','')}
+Personality and uniqueness: {profile.get('personality_uniqueness','')}
+10th Percentage (last category): {profile.get('tenth_percentage','')}
+12th Percentage (last category): {profile.get('twelfth_percentage','')}
 """
     try:
         response = client.chat.completions.create(
@@ -5339,17 +5387,37 @@ elif selected_nav == "About Myself":
     student_id = st.session_state.get("student_id")
     existing_profile = load_student_profile(student_id) if student_id else {}
 
+    st.markdown("### 1. MBA Journey — 70% of your introduction")
+    st.caption("Focus on your MBA choice, institute, learning, specialization, participation, internship, skills and career direction.")
     fields = {
+        "post_graduation": st.text_area("MBA / Post Graduation", value=existing_profile.get("post_graduation", ""), placeholder="MBA degree, institute, specialization and relevant learning", height=85),
+        "mba_why_objectives": st.text_area("Why MBA? What are your objectives?", value=existing_profile.get("mba_why_objectives", ""), placeholder="Why you chose an MBA, what you want to learn, and your career objectives", height=85),
+        "institute_about": st.text_area("About Your Institute", value=existing_profile.get("institute_about", ""), placeholder="What is distinctive about your institute? Mention only what you know and can explain", height=85),
+        "mba_value_added": st.text_area("What Have You Added Value Through in Your MBA?", value=existing_profile.get("mba_value_added", ""), placeholder="Case studies, simulations, group assignments, projects and skills gained; explain how they can help an organisation", height=95),
+        "specialization_why": st.text_area("Why This Specialization?", value=existing_profile.get("specialization_why", ""), placeholder="Why you chose your specialization and what you like about it", height=85),
+        "activities_participated": st.text_area("Participation & Leadership", value=existing_profile.get("activities_participated", ""), placeholder="Where you participated; committees, events, competitions; what you organised or conducted; skills gained and value to an organisation", height=95),
+        "internship": st.text_area("Internship", value=existing_profile.get("internship", ""), placeholder="Company, location, role, duration, responsibilities, contribution, learning, awards and skills acquired", height=100),
+        "skills_learned": st.text_area("Skills Specially Learned", value=existing_profile.get("skills_learned", ""), placeholder="Which skills you learned, where/from whom you learned them, and how they are useful to an organisation", height=90),
+        "certification_courses": st.text_area("Certification Courses", value=existing_profile.get("certification_courses", ""), placeholder="Course/certification, platform/provider and practical skills learned", height=85),
+        "achievements": st.text_area("Achievements & Recognition", value=existing_profile.get("achievements", ""), placeholder="Specific academic, internship, competition or extracurricular achievements", height=85),
+        "future_self": st.text_area("Where Do You See Yourself in the Coming Years?", value=existing_profile.get("future_self", ""), placeholder="A realistic role or career direction and how it connects to your strengths and specialization", height=85),
+        "professional_interest": st.text_area("Professional Interests", value=existing_profile.get("professional_interest", ""), placeholder="Functions, sectors, roles or career areas you want to explore", height=80),
+    }
+
+    st.markdown("### 2. Educational & Personal Background — 30% of your introduction")
+    fields.update({
+        "undergraduation": st.text_area("Graduation", value=existing_profile.get("undergraduation", ""), placeholder="Degree, institute/place, what you learned that is useful in management, and anything distinctive", height=90),
+        "school": st.text_area("School", value=existing_profile.get("school", ""), placeholder="School background or one relevant learning/experience", height=75),
+        "family_values": st.text_area("Family & Value Systems", value=existing_profile.get("family_values", ""), placeholder="Values that shaped you; share only what you are comfortable discussing", height=75),
+        "personality_uniqueness": st.text_area("Personality & Uniqueness", value=existing_profile.get("personality_uniqueness", ""), placeholder="Personal strengths, what makes you distinctive, and a brief example that supports it", height=85),
+    })
+
+    st.markdown("### 3. School Academic Scores — Last Category")
+    st.caption("Enter these last. Mention them in your introduction only if relevant or asked by the interviewer.")
+    fields.update({
         "tenth_percentage": st.text_input("10th Percentage", value=existing_profile.get("tenth_percentage", ""), placeholder="e.g., 82%"),
         "twelfth_percentage": st.text_input("12th Percentage", value=existing_profile.get("twelfth_percentage", ""), placeholder="e.g., 78%"),
-        "undergraduation": st.text_area("Undergraduation", value=existing_profile.get("undergraduation", ""), placeholder="Degree, college/university, specialization, year, relevant learning", height=90),
-        "post_graduation": st.text_area("Post Graduation", value=existing_profile.get("post_graduation", ""), placeholder="MBA/PG degree, specialization, institute, relevant learning", height=90),
-        "internship": st.text_area("Internship", value=existing_profile.get("internship", ""), placeholder="Company, role, duration, responsibilities, key learning", height=100),
-        "certification_courses": st.text_area("Certification Courses", value=existing_profile.get("certification_courses", ""), placeholder="Courses, certifications, platforms and key skills learned", height=100),
-        "activities_participated": st.text_area("Activities Participated", value=existing_profile.get("activities_participated", ""), placeholder="Clubs, events, competitions, sports, volunteering, leadership activities", height=100),
-        "achievements": st.text_area("Achievements", value=existing_profile.get("achievements", ""), placeholder="Academic, professional, competition or extracurricular achievements", height=100),
-        "professional_interest": st.text_area("Professional Interest", value=existing_profile.get("professional_interest", ""), placeholder="Roles, sectors, functions or career areas you want to pursue", height=100),
-    }
+    })
 
     profile_payload = {k: (v or "").strip() for k, v in fields.items()}
     profile_hash = hashlib.sha256(json.dumps(profile_payload, sort_keys=True).encode("utf-8")).hexdigest()
@@ -6210,7 +6278,7 @@ Resume text:
                     # facts parsed from the resume; profile fields remain clearly identified.
                     resume_data["About_Myself_Profile"] = {
                         key: str(profile.get(key, "") or "").strip()
-                        for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"]
+                        for key in ["post_graduation", "mba_why_objectives", "institute_about", "mba_value_added", "specialization_why", "undergraduation", "school", "family_values", "personality_uniqueness", "skills_learned", "future_self", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "tenth_percentage", "twelfth_percentage", "about_yourself"]
                         if str(profile.get(key, "") or "").strip()
                     }
                     st.session_state["resume_details"] = resume_data
@@ -6354,7 +6422,7 @@ Resume text:
                 elif not str(jd_text or st.session_state.get("resume_workspace_jd", "")).strip():
                     st.warning("Add or upload the target Job Description first.")
                 else:
-                    profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"] if str(profile.get(key, "") or "").strip()}
+                    profile_context = {key: str(profile.get(key, "") or "").strip() for key in ["post_graduation", "mba_why_objectives", "institute_about", "mba_value_added", "specialization_why", "undergraduation", "school", "family_values", "personality_uniqueness", "skills_learned", "future_self", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "tenth_percentage", "twelfth_percentage", "about_yourself"] if str(profile.get(key, "") or "").strip()}
                     source_resume_text = str(resume_editor_text or "") + "\n" + json.dumps(st.session_state.get('resume_details') or {}, ensure_ascii=False)
                     extracted_email, extracted_phone = extract_resume_contacts(source_resume_text)
                     edit_prompt = f"""You are the expert ATS resume editor for IPER PEPTECH. Produce a polished, one-column, ATS-friendly resume tailored to the target job description. Use plain-text headings and clean, concise bullets. Do not use Markdown decoration, tables, columns, icons, emojis, text boxes, or numbered-list clutter. Start with the candidate's full name, then contact details only if present in the student's own resume. Never invent contact details.
@@ -6408,7 +6476,7 @@ Return only the final resume text, with no commentary.
             resume_context = dict(st.session_state.get("resume_details") or {})
             resume_context["About_Myself_Profile"] = {
                 key: str(profile.get(key, "") or "").strip()
-                for key in ["tenth_percentage", "twelfth_percentage", "undergraduation", "post_graduation", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "about_yourself"]
+                for key in ["post_graduation", "mba_why_objectives", "institute_about", "mba_value_added", "specialization_why", "undergraduation", "school", "family_values", "personality_uniqueness", "skills_learned", "future_self", "internship", "certification_courses", "activities_participated", "achievements", "professional_interest", "tenth_percentage", "twelfth_percentage", "about_yourself"]
                 if str(profile.get(key, "") or "").strip()
             }
             st.session_state["resume_workspace_jd"] = jd_text.strip()
