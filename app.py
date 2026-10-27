@@ -24,9 +24,9 @@ except Exception:
 import streamlit as st
 
 def _safe_streamlit_secrets():
-    """Return Streamlit secrets when configured; otherwise an empty mapping."""
+    """Return a plain mapping of Streamlit secrets, or empty if unconfigured."""
     try:
-        return st.secrets
+        return dict(st.secrets)
     except Exception:
         return {}
 import streamlit.components.v1 as components
