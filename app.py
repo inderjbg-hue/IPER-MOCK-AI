@@ -1748,6 +1748,7 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
     doc.build(story, onFirstPage=page_footer, onLaterPages=page_footer)
     return out.getvalue()
 
+@st.cache_resource(show_spinner=False)
 def init_database():
     conn = get_db_connection()
     try:
@@ -2580,6 +2581,7 @@ def require_persistent_database_for_production():
         )
 
 
+@st.cache_resource(show_spinner=False)
 def migrate_local_sqlite_to_postgres():
     """One-time best-effort migration of an existing local students.db into PostgreSQL.
 
