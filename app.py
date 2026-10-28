@@ -35,7 +35,13 @@ except Exception:
 # ------------------------------------------------------------------------------
 # 1. ENVIRONMENT & STREAMLIT CONFIGURATION
 # ------------------------------------------------------------------------------
-os.environ["PATH"] += os.pathsep + "/opt/homebrew/bin" + os.pathsep + "/usr/local/bin" + os.pathsep + "/usr/bin"
+# Keep PATH additions idempotent: Streamlit reruns this script in the same process.
+# Re-appending on every rerun can grow the environment until subprocess launches fail.
+_extra_path_entries = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
+_current_path_entries = os.environ.get("PATH", "").split(os.pathsep)
+os.environ["PATH"] = os.pathsep.join(
+    _current_path_entries + [entry for entry in _extra_path_entries if entry not in _current_path_entries]
+)
 ssl._create_default_https_context = ssl._create_unverified_context
 
 st.set_page_config(page_title="IPER PEPTECH", layout="wide")
@@ -601,17 +607,39 @@ def convert_video_to_mp4(input_path):
 
 
 def get_media_duration_seconds(media_path):
-    """Return media duration in seconds using ffprobe/ffmpeg."""
-    ffprobe = shutil.which('ffprobe')
+    """Return media duration safely; duration detection must never block transcription."""
+    # Streamlit's audio_input normally provides WAV data. Read it directly first,
+    # avoiding an unnecessary subprocess for the common case.
+    try:
+        with wave.open(str(media_path), "rb") as audio_file:
+            frames = audio_file.getnframes()
+            rate = audio_file.getframerate()
+            if rate > 0 and frames >= 0:
+                return frames / float(rate)
+    except (wave.Error, EOFError, OSError):
+        pass
+
+    ffprobe = shutil.which("ffprobe")
     if not ffprobe:
         return 0.0
-    result = subprocess.run(
-        [ffprobe, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', str(media_path)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    )
     try:
+        result = subprocess.run(
+            [
+                ffprobe, "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(media_path)
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if result.returncode != 0:
+            return 0.0
         return max(0.0, float(result.stdout.strip()))
-    except (TypeError, ValueError):
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError):
+        # An ffprobe launch/parse failure is non-fatal; let the transcription
+        # pipeline try the original audio rather than falsely stopping it here.
         return 0.0
 
 
