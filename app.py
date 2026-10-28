@@ -3181,10 +3181,15 @@ def _ffmpeg_extract_gd_audio(video_path):
     out = tempfile.NamedTemporaryFile(delete=False, suffix="_gd_audio.mp3")
     out_path = out.name
     out.close()
+    # Keep speech intelligibility high for Indian English, names and MBA vocabulary.
+    # 24 kHz / 96 kbps is still compact for the 25 MB API limit, but less lossy
+    # than the earlier 16 kHz / 64 kbps extraction. Loudness normalisation helps
+    # when students sit at different distances from the microphone.
     cmd = [
         ffmpeg, "-hide_banner", "-nostdin", "-y", "-i", str(video_path),
-        "-vn", "-ac", "1", "-ar", "16000",
-        "-codec:a", "libmp3lame", "-b:a", "64k",
+        "-vn", "-ac", "1", "-ar", "24000",
+        "-af", "loudnorm=I=-18:TP=-2:LRA=11",
+        "-codec:a", "libmp3lame", "-b:a", "96k",
         out_path
     ]
     try:
@@ -3228,7 +3233,11 @@ def transcribe_gd_with_diarization(audio_path):
                 model="gpt-4o-transcribe-diarize",
                 file=audio_file,
                 response_format="diarized_json",
-                chunking_strategy="auto"
+                chunking_strategy="auto",
+                # The GD is conducted in English. An explicit language hint can
+                # improve recognition/latency; this model does not accept prompt
+                # or keywords, so do not pass unsupported context parameters.
+                language="en",
             )
         raw = result.model_dump() if hasattr(result, "model_dump") else dict(result)
         segments = raw.get("segments") or []
@@ -3270,9 +3279,22 @@ def _extract_gd_self_introductions(text):
         r"\bmyself\s+is\s+([A-Z][a-z]+(?:[ '-][A-Z][a-z]+){0,3})\b",
     ]
     found = []
+    stop_words = {
+        "and", "currently", "pursuing", "studying", "doing", "from", "at", "in",
+        "with", "who", "which", "working", "work", "a", "an", "the", "my",
+        "i", "we", "our", "have", "has", "is", "am", "was", "are", "also",
+        "basically", "first", "second", "semester", "mba", "bba", "bcom",
+    }
     for pattern in patterns:
         for match in re.finditer(pattern, text, flags=re.I):
-            name = re.sub(r"\s+", " ", match.group(1)).strip(" .,'-")
+            raw_name = re.sub(r"\s+", " ", match.group(1)).strip(" .,'-")
+            tokens = raw_name.split()
+            clean_tokens = []
+            for token in tokens:
+                if token.strip(" .,'-!?;:").casefold() in stop_words:
+                    break
+                clean_tokens.append(token.strip(" .,'-!?;:"))
+            name = " ".join(token for token in clean_tokens if token).strip()
             if name and name.casefold() not in {"good", "thank", "technology", "everyone", "agree"}:
                 if name.casefold() not in {n.casefold() for n in found}:
                     found.append(name)
@@ -3326,13 +3348,39 @@ def split_gd_segments_on_conflicting_introductions(segments):
 
 
 def detect_gd_speaker_identity_conflicts(segments):
-    """Detect unresolved cases where one diarisation ID contains multiple introductions."""
+    """Flag unsafe speaker/name collisions before any individual grade is generated.
+
+    A diarisation ID that contains two distinct explicit self-introductions is
+    unresolved. Also flag an exact full name introduced under multiple IDs, which
+    can indicate that one real participant was split into multiple diarisation IDs.
+    This is a safety check, not a claim that names alone prove speaker identity.
+    """
     by_speaker = {}
+    by_name = {}
     for seg in segments or []:
         sid = str(seg.get("speaker") or "speaker_0")
         for name in _extract_gd_self_introductions(seg.get("text", "")):
-            by_speaker.setdefault(sid, set()).add(name.casefold())
-    return {sid: sorted(names) for sid, names in by_speaker.items() if len(names) > 1}
+            norm = re.sub(r"\s+", " ", name).strip().casefold()
+            by_speaker.setdefault(sid, {})[norm] = name
+            by_name.setdefault(norm, set()).add(sid)
+
+    conflicts = {}
+    for sid, names in by_speaker.items():
+        if len(names) > 1:
+            conflicts[sid] = list(names.values())
+
+    for norm, speaker_ids in by_name.items():
+        if len(speaker_ids) > 1:
+            display_name = next(
+                (name for names in by_speaker.values() for key, name in names.items() if key == norm),
+                norm,
+            )
+            for sid in speaker_ids:
+                existing = conflicts.setdefault(sid, [])
+                label = f"{display_name} (also introduced under another speaker ID)"
+                if label not in existing:
+                    existing.append(label)
+    return conflicts
 
 
 def identify_gd_speaker_names(segments, fallback_map):
@@ -3424,17 +3472,20 @@ def _gd_speaker_stats(segments, speaker_map=None):
     return stats
 
 
-def _extract_gd_visual_samples(video_path, max_frames=5):
+def _extract_gd_visual_samples(video_path, max_frames=3):
     """Extract a small, low-resolution set of frames spread across the whole recording."""
     if not shutil.which("ffmpeg"):
         return [], "FFmpeg is unavailable; visual feedback could not be generated."
     temp_dir = tempfile.mkdtemp(prefix="iper_gd_frames_")
     try:
         duration_seconds = 0.0
-        if shutil.which("ffprobe"):
+        safe_env = _safe_subprocess_env()
+        ffprobe = shutil.which("ffprobe", path=safe_env.get("PATH", ""))
+        ffmpeg = shutil.which("ffmpeg", path=safe_env.get("PATH", ""))
+        if ffprobe:
             probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30,
+                [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30, env=safe_env,
             )
             if probe.returncode == 0:
                 try: duration_seconds = max(0.0, float(probe.stdout.strip()))
@@ -3447,8 +3498,10 @@ def _extract_gd_visual_samples(video_path, max_frames=5):
         encoded = []
         for index, sample_time in enumerate(sample_times):
             frame_path = os.path.join(temp_dir, f"frame_{index:02d}.jpg")
-            cmd = ["ffmpeg", "-y", "-ss", str(sample_time), "-i", video_path, "-frames:v", "1", "-vf", "scale=640:-1", "-q:v", "5", frame_path]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=45)
+            if not ffmpeg:
+                return [], "FFmpeg is unavailable; visual feedback could not be generated."
+            cmd = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-ss", str(sample_time), "-i", video_path, "-frames:v", "1", "-vf", "scale=640:-1", "-q:v", "5", frame_path]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30, env=safe_env)
             if result.returncode == 0 and os.path.exists(frame_path) and os.path.getsize(frame_path) > 1000:
                 with open(frame_path, "rb") as image_file:
                     encoded.append(base64.b64encode(image_file.read()).decode("ascii"))
@@ -7785,23 +7838,73 @@ elif selected_nav == "Group Discussion Hub":
             if gd_video_file.size > 200 * 1024 * 1024:
                 st.error("This GD video exceeds the 200 MB upload limit. Compress it or export an audio-only file before uploading.")
             else:
-                st.session_state["uploaded_gd_video_bytes"] = gd_video_file.getvalue()
-                st.session_state["uploaded_gd_video_original_name"] = gd_video_file.name
-                st.session_state["uploaded_gd_video_size"] = gd_video_file.size
-        saved_video_bytes = st.session_state.get("uploaded_gd_video_bytes")
+                # Keep one disk-backed copy for this Streamlit session rather than
+                # duplicating a large video in session_state and rendering another
+                # in-page video preview on every rerun.
+                existing_path = st.session_state.get("uploaded_gd_video_path")
+                existing_name = st.session_state.get("uploaded_gd_video_original_name")
+                existing_size = int(st.session_state.get("uploaded_gd_video_size", 0) or 0)
+                current_upload_id = getattr(gd_video_file, "file_id", None)
+                previous_upload_id = st.session_state.get("uploaded_gd_video_widget_file_id")
+                same_upload = (
+                    existing_path and os.path.isfile(existing_path)
+                    and existing_name == gd_video_file.name
+                    and existing_size == gd_video_file.size
+                    and (not current_upload_id or not previous_upload_id or current_upload_id == previous_upload_id)
+                )
+                if not same_upload:
+                    if existing_path and os.path.isfile(existing_path):
+                        try:
+                            os.remove(existing_path)
+                        except OSError:
+                            pass
+                    old_audio_path = st.session_state.get("uploaded_gd_audio_path")
+                    if old_audio_path and os.path.isfile(old_audio_path):
+                        try:
+                            os.remove(old_audio_path)
+                        except OSError:
+                            pass
+                    for stale_key in (
+                        "uploaded_gd_audio_path", "uploaded_gd_audio_bytes", "uploaded_gd_segments",
+                        "uploaded_gd_visual_frames", "uploaded_gd_report", "uploaded_gd_split_notes",
+                        "uploaded_gd_topic_processed", "uploaded_gd_filename_processed",
+                        "uploaded_gd_processing_timings", "uploaded_gd_final_speaker_records",
+                        "uploaded_gd_final_speaker_map", "uploaded_gd_final_stats",
+                    ):
+                        st.session_state.pop(stale_key, None)
+                    suffix = Path(gd_video_file.name).suffix or ".mp4"
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, prefix="iper_gd_upload_") as tmp_upload:
+                        tmp_upload.write(gd_video_file.getbuffer())
+                        existing_path = tmp_upload.name
+                    st.session_state["uploaded_gd_video_path"] = existing_path
+                    st.session_state["uploaded_gd_video_original_name"] = gd_video_file.name
+                    st.session_state["uploaded_gd_video_size"] = gd_video_file.size
+                    st.session_state["uploaded_gd_video_widget_file_id"] = current_upload_id
+
+        saved_video_path = st.session_state.get("uploaded_gd_video_path")
         saved_video_name = st.session_state.get("uploaded_gd_video_original_name", "Uploaded GD video")
-        saved_video_size = int(st.session_state.get("uploaded_gd_video_size", len(saved_video_bytes or b"")) or 0)
-        if saved_video_bytes:
-            st.video(saved_video_bytes)
-            st.caption(f"Saved in this session: {saved_video_name} • {saved_video_size / (1024 * 1024):.1f} MB. It will remain available when you switch tabs in this session.")
+        saved_video_size = int(st.session_state.get("uploaded_gd_video_size", 0) or 0)
+        if saved_video_path and os.path.isfile(saved_video_path):
+            st.caption(f"GD video ready: {saved_video_name} • {saved_video_size / (1024 * 1024):.1f} MB. The file is kept on disk for this session; switching tabs will not require another copy.")
             if st.button("Reset / Remove Uploaded GD Video and Feedback", key="reset_uploaded_gd_video_and_feedback", use_container_width=True):
+                reset_path = st.session_state.get("uploaded_gd_video_path")
+                if reset_path and os.path.isfile(reset_path):
+                    try:
+                        os.remove(reset_path)
+                    except OSError:
+                        pass
+                reset_audio_path = st.session_state.get("uploaded_gd_audio_path")
+                if reset_audio_path and os.path.isfile(reset_audio_path):
+                    try:
+                        os.remove(reset_audio_path)
+                    except OSError:
+                        pass
                 reset_keys = [
-                    "uploaded_gd_video_bytes", "uploaded_gd_video_original_name", "uploaded_gd_video_size",
+                    "uploaded_gd_video_path", "uploaded_gd_video_bytes", "uploaded_gd_video_original_name", "uploaded_gd_video_size",
                     "uploaded_gd_segments", "uploaded_gd_topic_processed", "uploaded_gd_filename_processed",
-                    "uploaded_gd_speaker_map", "uploaded_gd_visual_frames", "uploaded_gd_audio_bytes",
-                    "uploaded_gd_final_speaker_records", "uploaded_gd_final_speaker_map", "uploaded_gd_final_stats",
-                    "uploaded_gd_split_notes",
-                    "uploaded_gd_report", "uploaded_gd_upload_error",
+                    "uploaded_gd_speaker_map", "uploaded_gd_video_widget_file_id", "uploaded_gd_visual_frames", "uploaded_gd_audio_bytes", "uploaded_gd_audio_path",
+                    "uploaded_gd_processing_timings", "uploaded_gd_final_speaker_records", "uploaded_gd_final_speaker_map", "uploaded_gd_final_stats",
+                    "uploaded_gd_split_notes", "uploaded_gd_report", "uploaded_gd_upload_error",
                 ]
                 for reset_key in reset_keys:
                     st.session_state.pop(reset_key, None)
@@ -7812,63 +7915,69 @@ elif selected_nav == "Group Discussion Hub":
         if st.button(" Transcribe and Identify Speakers", use_container_width=True, key="run_uploaded_gd_diarization", disabled=not ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY):
             if not video_topic.strip():
                 st.error("Please enter the GD topic.")
-            elif not st.session_state.get("uploaded_gd_video_bytes"):
+            elif not (st.session_state.get("uploaded_gd_video_path") and os.path.isfile(st.session_state.get("uploaded_gd_video_path", ""))):
                 st.error("Please upload a GD video first.")
             elif not openai_client:
                 st.error("OpenAI is not configured. Add OPENAI_API_KEY to Streamlit Secrets.")
             elif not shutil.which("ffmpeg"):
                 st.error("FFmpeg is unavailable. Install it through packages.txt and redeploy.")
             else:
-                video_temp_path = None
+                video_temp_path = st.session_state.get("uploaded_gd_video_path")
                 audio_temp_path = None
                 try:
-                    active_video_name = st.session_state.get("uploaded_gd_video_original_name", getattr(gd_video_file, "name", "uploaded_gd_video.mp4"))
-                    suffix = Path(active_video_name).suffix or ".mp4"
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_video:
-                        tmp_video.write(st.session_state.get("uploaded_gd_video_bytes") or gd_video_file.getvalue())
-                        video_temp_path = tmp_video.name
-                    with st.spinner("Extracting audio and generating speaker-labelled transcript..."):
-                        try:
-                            audio_temp_path = _ffmpeg_extract_gd_audio(video_temp_path)
-                        except RuntimeError as extraction_error:
-                            st.error(f"Audio extraction failed: {extraction_error}")
-                            audio_temp_path = None
-                        if audio_temp_path:
-                            segments, diarization_error = transcribe_gd_with_diarization(audio_temp_path)
-                            if diarization_error:
-                                st.error(diarization_error)
-                            else:
-                                st.session_state["uploaded_gd_segments"] = segments
-                                st.session_state["uploaded_gd_topic_processed"] = video_topic.strip()
-                                st.session_state["uploaded_gd_filename_processed"] = st.session_state.get("uploaded_gd_video_original_name", getattr(gd_video_file, "name", "Uploaded GD video"))
-                                st.session_state["uploaded_gd_speaker_map"] = {}
-                                sampled_frames, frame_sample_error = _extract_gd_visual_samples(video_temp_path)
-                                st.session_state["uploaded_gd_visual_frames"] = sampled_frames
-                                with open(audio_temp_path, "rb") as audio_cache_file:
-                                    st.session_state["uploaded_gd_audio_bytes"] = audio_cache_file.read()
-                                if frame_sample_error:
-                                    st.info(f"Body-language feedback may be unavailable: {frame_sample_error}")
-                                st.success(f"Transcript ready: {len(segments)} speech segments identified.")
+                    if not video_temp_path or not os.path.isfile(video_temp_path):
+                        raise RuntimeError("The session's uploaded video is no longer available. Please upload it again.")
+                    stage_started = time.perf_counter()
+                    with st.spinner("Step 1/3: Extracting and normalising audio..."):
+                        audio_temp_path = _ffmpeg_extract_gd_audio(video_temp_path)
+                    extraction_seconds = time.perf_counter() - stage_started
+
+                    stage_started = time.perf_counter()
+                    with st.spinner("Step 2/3: Transcribing English speech and identifying speaker turns..."):
+                        segments, diarization_error = transcribe_gd_with_diarization(audio_temp_path)
+                    transcription_seconds = time.perf_counter() - stage_started
+                    if diarization_error:
+                        st.error(diarization_error)
+                    else:
+                        st.session_state["uploaded_gd_segments"] = segments
+                        st.session_state["uploaded_gd_topic_processed"] = video_topic.strip()
+                        st.session_state["uploaded_gd_filename_processed"] = st.session_state.get("uploaded_gd_video_original_name", "Uploaded GD video")
+                        st.session_state["uploaded_gd_speaker_map"] = {}
+                        stage_started = time.perf_counter()
+                        with st.spinner("Step 3/3: Sampling a few frames for optional visual feedback..."):
+                            sampled_frames, frame_sample_error = _extract_gd_visual_samples(video_temp_path)
+                        frame_seconds = time.perf_counter() - stage_started
+                        st.session_state["uploaded_gd_visual_frames"] = sampled_frames
+                        # The audio file is already on disk; store only its path for
+                        # this session rather than loading another full copy into RAM.
+                        st.session_state["uploaded_gd_audio_path"] = audio_temp_path
+                        st.session_state["uploaded_gd_processing_timings"] = {
+                            "audio_extraction_seconds": round(extraction_seconds, 1),
+                            "transcription_seconds": round(transcription_seconds, 1),
+                            "frame_sampling_seconds": round(frame_seconds, 1),
+                        }
+                        if frame_sample_error:
+                            st.info(f"Body-language feedback may be unavailable: {frame_sample_error}")
+                        st.success(
+                            f"Transcript ready: {len(segments)} speech segments identified. "
+                            f"Audio extraction {extraction_seconds:.0f}s · transcription {transcription_seconds:.0f}s · frame sampling {frame_seconds:.0f}s."
+                        )
                 except Exception as exc:
                     st.error(f"Could not process this GD video: {exc}")
                 finally:
-                    for temp_path in (audio_temp_path, video_temp_path):
-                        if temp_path and os.path.exists(temp_path):
-                            try:
-                                os.remove(temp_path)
-                            except OSError:
-                                pass
+                    # The video remains on disk for reprocessing without another upload.
+                    if audio_temp_path and not st.session_state.get("uploaded_gd_audio_path") == audio_temp_path and os.path.exists(audio_temp_path):
+                        try:
+                            os.remove(audio_temp_path)
+                        except OSError:
+                            pass
 
         uploaded_segments = st.session_state.get("uploaded_gd_segments") or []
         if uploaded_segments:
-            # Repair obvious ID collisions at later explicit self-introductions before grading.
-            # This is a transcript-guided split and is visibly disclosed to the reviewer.
-            split_segments, newly_split_notes = split_gd_segments_on_conflicting_introductions(uploaded_segments)
-            if newly_split_notes:
-                uploaded_segments = split_segments
-                st.session_state["uploaded_gd_segments"] = uploaded_segments
-                st.session_state["uploaded_gd_split_notes"] = newly_split_notes
-            split_notes = st.session_state.get("uploaded_gd_split_notes", [])
+            # Never auto-split a speaker ID based only on text: that can silently
+            # assign one student's later turns to another student's identity. Keep
+            # the raw diarisation intact and block grading when names conflict.
+            split_notes = []
             st.markdown("#### Step 2 — Review speaker-labelled transcript")
             # Assign stable, readable labels by first appearance in the recording.
             raw_speakers = list(dict.fromkeys(str(seg.get("speaker") or "speaker_0") for seg in uploaded_segments))
@@ -7896,7 +8005,7 @@ elif selected_nav == "Group Discussion Hub":
                     label = speaker_labels.get(conflict_sid, f"Speaker {conflict_sid}")
                     conflict_lines.append(f"{label}: {', '.join(names_found)}")
                 st.error(
-                    "Possible speaker-merging error detected: one diarisation label contains multiple self-introduced names. "
+                    "Speaker identity conflict detected: a diarisation label contains multiple self-introduced names, or the same full name appears under multiple labels. "
                     "Individual grades could be assigned to the wrong student, so assessment is paused for this transcript. "
                     "Please check the recording/audio quality and re-upload or reprocess it before grading.\n\n" + "\n".join(conflict_lines)
                 )
@@ -7954,15 +8063,11 @@ elif selected_nav == "Group Discussion Hub":
                                 participant["Name"] = speaker_map[matched_id]
                             else:
                                 participant["Name"] = "Unmapped speaker — review required"
-                    audio_path_for_tone = None
-                    try:
-                        audio_bytes_for_tone = st.session_state.get("uploaded_gd_audio_bytes")
-                        if audio_bytes_for_tone:
-                            with tempfile.NamedTemporaryFile(delete=False, suffix="_tone_source.mp3") as tone_audio_file:
-                                tone_audio_file.write(audio_bytes_for_tone)
-                                audio_path_for_tone = tone_audio_file.name
-                    except Exception as temp_exc:
-                        st.warning(f"Could not prepare temporary audio for tone analysis: {temp_exc}")
+                    # Reuse the already-extracted audio file; avoid another full
+                    # in-memory copy and another temporary-file write.
+                    audio_path_for_tone = st.session_state.get("uploaded_gd_audio_path")
+                    if not (audio_path_for_tone and os.path.isfile(audio_path_for_tone)):
+                        audio_path_for_tone = None
 
                     visual_frames = st.session_state.get("uploaded_gd_visual_frames", [])
                     if visual_frames:
@@ -8003,12 +8108,6 @@ elif selected_nav == "Group Discussion Hub":
                     else:
                         report["VocalToneAssessment"] = {"AvailabilityNote": "The audio sample was unavailable; rerun transcription or check the uploaded recording."}
                         st.warning("Vocal-tone feedback is mandatory, but the audio sample was unavailable.")
-                    if audio_path_for_tone and os.path.exists(audio_path_for_tone):
-                        try:
-                            os.remove(audio_path_for_tone)
-                        except OSError:
-                            pass
-
                     st.session_state["uploaded_gd_report"] = report
                     st.session_state["uploaded_gd_final_speaker_map"] = speaker_map
                     st.session_state["uploaded_gd_final_speaker_records"] = speaker_records
