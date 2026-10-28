@@ -35,13 +35,21 @@ except Exception:
 # ------------------------------------------------------------------------------
 # 1. ENVIRONMENT & STREAMLIT CONFIGURATION
 # ------------------------------------------------------------------------------
-# Keep PATH additions idempotent: Streamlit reruns this script in the same process.
-# Re-appending on every rerun can grow the environment until subprocess launches fail.
-_extra_path_entries = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
-_current_path_entries = os.environ.get("PATH", "").split(os.pathsep)
-os.environ["PATH"] = os.pathsep.join(
-    _current_path_entries + [entry for entry in _extra_path_entries if entry not in _current_path_entries]
-)
+# Add common FFmpeg locations once. Streamlit reruns this file repeatedly;
+# blindly appending to PATH on every rerun can grow the process environment
+# until subprocess launches fail with [Errno 7] Argument list too long.
+def _ensure_path_entries(*entries):
+    current = os.environ.get("PATH", "").split(os.pathsep)
+    seen = set()
+    unique = []
+    for entry in [*current, *entries]:
+        entry = entry.strip()
+        if entry and entry not in seen:
+            seen.add(entry)
+            unique.append(entry)
+    os.environ["PATH"] = os.pathsep.join(unique)
+
+_ensure_path_entries("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
 ssl._create_default_https_context = ssl._create_unverified_context
 
 st.set_page_config(page_title="IPER PEPTECH", layout="wide")
@@ -367,7 +375,13 @@ def _extract_speech_only_wav(audio_path):
         ffmpeg, "-y", "-i", str(audio_path),
         "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"
     ]
-    result = subprocess.run(pcm_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        result = subprocess.run(
+            pcm_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45
+        )
+    except (OSError, subprocess.SubprocessError):
+        # Let Whisper try the original audio file as a fallback.
+        return None, 0.0
     if result.returncode != 0 or not result.stdout:
         return None, 0.0
 
@@ -607,39 +621,20 @@ def convert_video_to_mp4(input_path):
 
 
 def get_media_duration_seconds(media_path):
-    """Return media duration safely; duration detection must never block transcription."""
-    # Streamlit's audio_input normally provides WAV data. Read it directly first,
-    # avoiding an unnecessary subprocess for the common case.
-    try:
-        with wave.open(str(media_path), "rb") as audio_file:
-            frames = audio_file.getnframes()
-            rate = audio_file.getframerate()
-            if rate > 0 and frames >= 0:
-                return frames / float(rate)
-    except (wave.Error, EOFError, OSError):
-        pass
-
-    ffprobe = shutil.which("ffprobe")
+    """Return media duration in seconds using ffprobe/ffmpeg."""
+    ffprobe = shutil.which('ffprobe')
     if not ffprobe:
         return 0.0
     try:
         result = subprocess.run(
-            [
-                ffprobe, "-v", "error", "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1", str(media_path)
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=15,
-            check=False,
+            [ffprobe, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', str(media_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15
         )
         if result.returncode != 0:
             return 0.0
         return max(0.0, float(result.stdout.strip()))
     except (OSError, subprocess.SubprocessError, TypeError, ValueError):
-        # An ffprobe launch/parse failure is non-fatal; let the transcription
-        # pipeline try the original audio rather than falsely stopping it here.
+        # Duration is helpful but not required for speech transcription.
         return 0.0
 
 
@@ -2993,27 +2988,82 @@ def get_student_gd_feedback(scholar_id):
 
 
 
+def _safe_subprocess_env():
+    """Return a subprocess environment with a compact, de-duplicated PATH.
+
+    Some long-running Streamlit processes can inherit an oversized PATH from
+    earlier reruns/deployments. Passing a compact PATH to media tools prevents
+    execve from failing with E2BIG ("Argument list too long").
+    """
+    source_env = os.environ
+    raw_path = source_env.get("PATH", "")
+    preferred = ["/usr/local/bin", "/usr/bin", "/bin", "/opt/homebrew/bin"]
+    seen = set()
+    compact = []
+    for entry in preferred + raw_path.split(os.pathsep):
+        entry = entry.strip()
+        if entry and entry not in seen:
+            seen.add(entry)
+            compact.append(entry)
+    # Media decoding does not need the full application environment (which can
+    # contain API secrets and oversized variables). Keep only runtime essentials.
+    env = {"PATH": os.pathsep.join(compact)}
+    for key in ("HOME", "LANG", "LC_ALL", "TMPDIR", "LD_LIBRARY_PATH"):
+        value = source_env.get(key)
+        if value and len(value) < 4096:
+            env[key] = value
+    return env
+
+
 def _ffmpeg_extract_gd_audio(video_path):
-    """Convert uploaded GD video to compact mono MP3 for diarized transcription."""
+    """Extract compact mono MP3 audio from an uploaded GD video.
+
+    Returns the temporary audio path on success, otherwise raises a readable
+    RuntimeError so the UI can show the real failure rather than a generic
+    extraction message.
+    """
+    ffmpeg = shutil.which("ffmpeg", path=_safe_subprocess_env().get("PATH", ""))
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg executable was not found in the deployment environment.")
+
+    if not video_path or not os.path.isfile(video_path):
+        raise RuntimeError("The uploaded GD video file is missing or could not be saved.")
+
     out = tempfile.NamedTemporaryFile(delete=False, suffix="_gd_audio.mp3")
+    out_path = out.name
     out.close()
     cmd = [
-        "ffmpeg", "-y", "-i", video_path,
+        ffmpeg, "-hide_banner", "-nostdin", "-y", "-i", str(video_path),
         "-vn", "-ac", "1", "-ar", "16000",
         "-codec:a", "libmp3lame", "-b:a", "64k",
-        out.name
+        out_path
     ]
     try:
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
-        if result.returncode != 0 or not os.path.exists(out.name) or os.path.getsize(out.name) == 0:
-            try: os.remove(out.name)
-            except OSError: pass
-            return None
-        return out.name
-    except Exception:
-        try: os.remove(out.name)
-        except OSError: pass
-        return None
+        result = subprocess.run(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            text=True, timeout=300, env=_safe_subprocess_env()
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip().splitlines()
+            detail = " | ".join(detail[-4:])[-1200:]
+            raise RuntimeError("FFmpeg could not extract audio" + (f": {detail}" if detail else f" (exit code {result.returncode})"))
+        if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+            raise RuntimeError("FFmpeg finished but produced an empty audio file. Check that the video contains an audio track.")
+        return out_path
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Audio extraction timed out after 5 minutes. Try a shorter or smaller video.") from exc
+    except OSError as exc:
+        if getattr(exc, "errno", None) == 7:
+            raise RuntimeError("FFmpeg could not start because the process environment is too large. The app will retry with a compact PATH; if this persists, restart the Streamlit app and inspect its environment.") from exc
+        raise RuntimeError(f"Could not start FFmpeg: {exc}") from exc
+    finally:
+        # Keep the output only after successful extraction; clean up on failures.
+        if os.path.exists(out_path):
+            try:
+                if os.path.getsize(out_path) == 0:
+                    os.remove(out_path)
+            except OSError:
+                pass
 
 
 def transcribe_gd_with_diarization(audio_path):
@@ -3426,11 +3476,50 @@ Return ONLY valid JSON in this exact structure:
 Be deliberately strict. Do not reward fluency, length, confidence or business buzzwords without evidence. A strong B-level performance must be clearly demonstrated and A-level performance must be exceptional and rare; use the readiness labels rather than exposing numeric marks to students. Hindi/Hinglish usage in the English-medium assessment should materially reduce CommunicationScore. Return internal numeric scores for calculation only; the portal will display grades, never marks.
 """
     raw = get_groq_response(prompt)
+
+    def _parse_report_json(value):
+        """Parse a model response that may include a Markdown fence or surrounding text."""
+        if not isinstance(value, str):
+            raise ValueError("The AI response was empty or not text.")
+        clean = value.strip()
+        clean = re.sub(r"^```(?:json)?\s*", "", clean, flags=re.IGNORECASE)
+        clean = re.sub(r"\s*```$", "", clean)
+        # First try the full response, then decode the first JSON object if extra text exists.
+        try:
+            parsed = json.loads(clean)
+        except json.JSONDecodeError:
+            start = clean.find("{")
+            if start < 0:
+                raise
+            parsed, _end = json.JSONDecoder().raw_decode(clean[start:])
+        if not isinstance(parsed, dict):
+            raise ValueError("The AI response did not contain a JSON object.")
+        if not isinstance(parsed.get("GroupAssessment"), dict) or not isinstance(parsed.get("Participants"), list):
+            raise ValueError("The AI response is missing required group or participant sections.")
+        return parsed
+
     try:
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean), None
-    except Exception:
-        return None, raw
+        return _parse_report_json(raw), None
+    except Exception as first_parse_error:
+        # One repair attempt prevents a nearly complete assessment from being discarded
+        # when the model adds a fence, trailing text, or minor JSON formatting errors.
+        try:
+            repair_prompt = f"""Convert the following attempted GD assessment into STRICT VALID JSON only.
+Do not change, invent, remove, or summarize assessment content. Fix JSON syntax/escaping only.
+The top-level object must contain GroupAssessment (object) and Participants (array).
+
+ATTEMPTED RESPONSE:
+{str(raw)[:28000]}"""
+            repaired_raw = get_groq_response(repair_prompt)
+            repaired_report = _parse_report_json(repaired_raw)
+            return repaired_report, None
+        except Exception as repair_error:
+            # Do not dump a large malformed report into the student's UI.
+            return None, (
+                "The AI returned an invalid assessment format and automatic repair failed. "
+                "Please retry once. If it repeats, share the timestamp with the administrator. "
+                f"(Parse: {type(first_parse_error).__name__}; repair: {type(repair_error).__name__})"
+            )
 
 
 def save_gd_video_assessment(scholar_id, topic, participants, segments, report, video_filename, source_type="Video GD"):
@@ -7539,13 +7628,17 @@ elif selected_nav == "Group Discussion Hub":
         gd_video_file = st.file_uploader(
             "Upload GD video",
             type=["mp4", "mov", "m4v", "webm", "mpeg", "mpg"],
-            help="For the prototype, use a clear recording of up to 10–15 minutes. Audio is extracted before sending it for transcription.",
+            help="Upload limit for this field: 200 MB. For reliable processing, prefer compressed recordings under 80 MB and up to 10–15 minutes. Audio is extracted before transcription.",
             key=f"uploaded_gd_video_file_{upload_version}",
+            max_upload_size=200,
         )
         if gd_video_file:
-            st.session_state["uploaded_gd_video_bytes"] = gd_video_file.getvalue()
-            st.session_state["uploaded_gd_video_original_name"] = gd_video_file.name
-            st.session_state["uploaded_gd_video_size"] = gd_video_file.size
+            if gd_video_file.size > 200 * 1024 * 1024:
+                st.error("This GD video exceeds the 200 MB upload limit. Compress it or export an audio-only file before uploading.")
+            else:
+                st.session_state["uploaded_gd_video_bytes"] = gd_video_file.getvalue()
+                st.session_state["uploaded_gd_video_original_name"] = gd_video_file.name
+                st.session_state["uploaded_gd_video_size"] = gd_video_file.size
         saved_video_bytes = st.session_state.get("uploaded_gd_video_bytes")
         saved_video_name = st.session_state.get("uploaded_gd_video_original_name", "Uploaded GD video")
         saved_video_size = int(st.session_state.get("uploaded_gd_video_size", len(saved_video_bytes or b"")) or 0)
@@ -7586,10 +7679,12 @@ elif selected_nav == "Group Discussion Hub":
                         tmp_video.write(st.session_state.get("uploaded_gd_video_bytes") or gd_video_file.getvalue())
                         video_temp_path = tmp_video.name
                     with st.spinner("Extracting audio and generating speaker-labelled transcript..."):
-                        audio_temp_path = _ffmpeg_extract_gd_audio(video_temp_path)
-                        if not audio_temp_path:
-                            st.error("Audio extraction failed. Please check that the video contains an audio track and try another file.")
-                        else:
+                        try:
+                            audio_temp_path = _ffmpeg_extract_gd_audio(video_temp_path)
+                        except RuntimeError as extraction_error:
+                            st.error(f"Audio extraction failed: {extraction_error}")
+                            audio_temp_path = None
+                        if audio_temp_path:
                             segments, diarization_error = transcribe_gd_with_diarization(audio_temp_path)
                             if diarization_error:
                                 st.error(diarization_error)
