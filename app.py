@@ -239,96 +239,6 @@ st.markdown("""
             border-color: var(--iper-border) !important;
         }
 
-        /* Reliable text contrast across Streamlit versions and light/dark browser themes. */
-        [data-testid="stAppViewContainer"],
-        [data-testid="stMain"],
-        [data-testid="stMainBlockContainer"],
-        [data-testid="stSidebar"] {
-            color: #0F172A !important;
-        }
-
-        [data-testid="stMarkdownContainer"],
-        [data-testid="stMarkdownContainer"] p,
-        [data-testid="stMarkdownContainer"] li,
-        [data-testid="stMarkdownContainer"] blockquote,
-        [data-testid="stMarkdownContainer"] strong,
-        [data-testid="stMarkdownContainer"] em,
-        [data-testid="stText"],
-        [data-testid="stWidgetLabel"],
-        [data-testid="stWidgetLabel"] p,
-        [data-testid="stCaptionContainer"],
-        [data-testid="stHeader"],
-        [data-testid="stSubheader"] {
-            color: #1E293B;
-        }
-
-        [data-testid="stMarkdownContainer"] a {
-            color: #1D4ED8 !important;
-            text-decoration: underline;
-            text-underline-offset: 2px;
-        }
-
-        /* Inputs, dropdowns, multiselect chips and placeholders must remain readable. */
-        input, textarea,
-        div[data-baseweb="select"] input,
-        div[data-baseweb="select"] [role="combobox"],
-        div[data-baseweb="select"] > div,
-        div[data-baseweb="popover"] [role="option"],
-        ul[role="listbox"] li,
-        [data-testid="stMultiSelect"] span,
-        [data-testid="stSelectbox"] span {
-            color: #0F172A !important;
-        }
-        input::placeholder, textarea::placeholder {
-            color: #64748B !important;
-            opacity: 1 !important;
-        }
-        input:disabled, textarea:disabled {
-            color: #475569 !important;
-            -webkit-text-fill-color: #475569 !important;
-            opacity: 1 !important;
-        }
-
-        /* Widget choices, file uploader instructions, tabs and expanders. */
-        [data-testid="stRadio"] label,
-        [data-testid="stCheckbox"] label,
-        [data-testid="stToggle"] label,
-        [data-testid="stSlider"] label,
-        [data-testid="stFileUploader"] label,
-        [data-testid="stFileUploader"] small,
-        [data-testid="stFileUploader"] section,
-        [data-testid="stExpander"] summary,
-        [data-baseweb="tab"],
-        [data-testid="stTabs"] button,
-        [data-testid="stPagination"] button {
-            color: #1E293B !important;
-        }
-        [data-testid="stTabs"] button[aria-selected="true"] {
-            color: #0F172A !important;
-            font-weight: 700 !important;
-        }
-
-        /* Alerts and metrics: readable labels and values without changing status meaning. */
-        [data-testid="stAlert"] p,
-        [data-testid="stAlert"] div,
-        [data-testid="stMetricLabel"],
-        [data-testid="stMetricValue"],
-        [data-testid="stMetricDelta"] {
-            overflow-wrap: anywhere;
-        }
-        [data-testid="stMetricLabel"] { color: #475569 !important; }
-        [data-testid="stMetricValue"] { color: #0F172A !important; }
-        [data-testid="stDataFrame"], [data-testid="stTable"] {
-            color: #1E293B !important;
-        }
-
-        /* Keep the sidebar navigation text visible even when Streamlit updates its DOM. */
-        [data-testid="stSidebar"] [role="radiogroup"] label,
-        [data-testid="stSidebar"] [role="radiogroup"] label p,
-        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
-            color: #0F172A !important;
-        }
-
         /* Reserved professional accents: use sparingly for status/highlight elements. */
         .iper-accent-gold { color: var(--iper-gold) !important; }
         .iper-accent-green { color: var(--iper-success) !important; }
@@ -1022,7 +932,72 @@ st.markdown(
         font-size: 0.92rem; line-height: 1.48; overflow-wrap: anywhere;
     }
     div[data-testid="stAlert"] { font-size: 0.9rem; line-height: 1.45; }
-    </style>
+    
+    /* PEPTECH visibility fix: force readable select controls and dropdown menus.
+       BaseWeb renders the selected value and popup options in separate layers. */
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="select"] [role="combobox"],
+    div[data-baseweb="select"] input,
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+    div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
+        background-color: #FFFFFF !important;
+        color: #0F172A !important;
+        -webkit-text-fill-color: #0F172A !important;
+        border-color: #CBD5E1 !important;
+        opacity: 1 !important;
+    }
+    div[data-baseweb="select"] *,
+    div[data-testid="stSelectbox"] *,
+    div[data-testid="stMultiSelect"] * {
+        color: #0F172A !important;
+        -webkit-text-fill-color: #0F172A !important;
+        opacity: 1 !important;
+    }
+    /* Dropdown popovers are mounted outside the selectbox container. */
+    div[role="listbox"],
+    ul[role="listbox"],
+    li[role="option"],
+    div[role="option"],
+    [data-baseweb="popover"] [role="listbox"],
+    [data-baseweb="popover"] [role="option"] {
+        background-color: #FFFFFF !important;
+        color: #0F172A !important;
+        -webkit-text-fill-color: #0F172A !important;
+        opacity: 1 !important;
+    }
+    [data-baseweb="popover"] [role="option"]:hover,
+    [data-baseweb="popover"] [aria-selected="true"] {
+        background-color: #E8F0F7 !important;
+        color: #0F172A !important;
+    }
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stTextArea"] textarea,
+    div[data-testid="stNumberInput"] input {
+        background-color: #FFFFFF !important;
+        color: #0F172A !important;
+        -webkit-text-fill-color: #0F172A !important;
+        caret-color: #0F172A !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stTextInput"] input::placeholder,
+    div[data-testid="stTextArea"] textarea::placeholder {
+        color: #64748B !important;
+        -webkit-text-fill-color: #64748B !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stRadio"] label,
+    div[data-testid="stCheckbox"] label,
+    div[data-testid="stWidgetLabel"] p,
+    div[data-testid="stSelectbox"] label,
+    div[data-testid="stMultiSelect"] label {
+        color: #1E293B !important;
+    }
+    .stButton > button,
+    .stButton > button * {
+        color: #FFFFFF !important;
+        -webkit-text-fill-color: #FFFFFF !important;
+    }
+</style>
     """,
     unsafe_allow_html=True,
 )
