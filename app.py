@@ -966,16 +966,28 @@ st.markdown(
         color: #0F172A !important;
         border-color: #CBD5E1 !important;
     }
-    div[data-testid="stFileUploader"] section button {
+    /* Streamlit versions differ in the uploader DOM: target the actual
+       button and every possible label wrapper, not only buttons inside section. */
+    div[data-testid="stFileUploader"] button,
+    div[data-testid="stFileUploader"] [role="button"],
+    div[data-testid="stFileUploader"] [data-testid*="BaseButton"],
+    div[data-testid="stFileUploader"] [data-testid*="FileUploader"] button {
         background: #1E3A5F !important;
         background-color: #1E3A5F !important;
         color: #FFFFFF !important;
+        -webkit-text-fill-color: #FFFFFF !important;
         border-color: #1E3A5F !important;
+        opacity: 1 !important;
     }
-    div[data-testid="stFileUploader"] section button *,
-    div[data-testid="stFileUploader"] section button span {
+    div[data-testid="stFileUploader"] button *,
+    div[data-testid="stFileUploader"] button p,
+    div[data-testid="stFileUploader"] button span,
+    div[data-testid="stFileUploader"] button div,
+    div[data-testid="stFileUploader"] [role="button"] *,
+    div[data-testid="stFileUploader"] [data-testid*="BaseButton"] * {
         color: #FFFFFF !important;
         -webkit-text-fill-color: #FFFFFF !important;
+        opacity: 1 !important;
     }
     div[data-testid="stFileUploader"] section small,
     div[data-testid="stFileUploader"] section span,
@@ -1027,6 +1039,16 @@ st.markdown(
     .stButton > button * {
         color: #FFFFFF !important;
         -webkit-text-fill-color: #FFFFFF !important;
+    }
+    /* Last-resort uploader label contrast override for theme inheritance. */
+    html body div[data-testid="stFileUploader"] button,
+    html body div[data-testid="stFileUploader"] button *,
+    html body div[data-testid="stFileUploader"] [role="button"],
+    html body div[data-testid="stFileUploader"] [role="button"] * {
+        color: #FFFFFF !important;
+        -webkit-text-fill-color: #FFFFFF !important;
+        opacity: 1 !important;
+        text-shadow: none !important;
     }
 </style>
     """,
