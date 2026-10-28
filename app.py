@@ -239,6 +239,96 @@ st.markdown("""
             border-color: var(--iper-border) !important;
         }
 
+        /* Reliable text contrast across Streamlit versions and light/dark browser themes. */
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"],
+        [data-testid="stMainBlockContainer"],
+        [data-testid="stSidebar"] {
+            color: #0F172A !important;
+        }
+
+        [data-testid="stMarkdownContainer"],
+        [data-testid="stMarkdownContainer"] p,
+        [data-testid="stMarkdownContainer"] li,
+        [data-testid="stMarkdownContainer"] blockquote,
+        [data-testid="stMarkdownContainer"] strong,
+        [data-testid="stMarkdownContainer"] em,
+        [data-testid="stText"],
+        [data-testid="stWidgetLabel"],
+        [data-testid="stWidgetLabel"] p,
+        [data-testid="stCaptionContainer"],
+        [data-testid="stHeader"],
+        [data-testid="stSubheader"] {
+            color: #1E293B;
+        }
+
+        [data-testid="stMarkdownContainer"] a {
+            color: #1D4ED8 !important;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        /* Inputs, dropdowns, multiselect chips and placeholders must remain readable. */
+        input, textarea,
+        div[data-baseweb="select"] input,
+        div[data-baseweb="select"] [role="combobox"],
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="popover"] [role="option"],
+        ul[role="listbox"] li,
+        [data-testid="stMultiSelect"] span,
+        [data-testid="stSelectbox"] span {
+            color: #0F172A !important;
+        }
+        input::placeholder, textarea::placeholder {
+            color: #64748B !important;
+            opacity: 1 !important;
+        }
+        input:disabled, textarea:disabled {
+            color: #475569 !important;
+            -webkit-text-fill-color: #475569 !important;
+            opacity: 1 !important;
+        }
+
+        /* Widget choices, file uploader instructions, tabs and expanders. */
+        [data-testid="stRadio"] label,
+        [data-testid="stCheckbox"] label,
+        [data-testid="stToggle"] label,
+        [data-testid="stSlider"] label,
+        [data-testid="stFileUploader"] label,
+        [data-testid="stFileUploader"] small,
+        [data-testid="stFileUploader"] section,
+        [data-testid="stExpander"] summary,
+        [data-baseweb="tab"],
+        [data-testid="stTabs"] button,
+        [data-testid="stPagination"] button {
+            color: #1E293B !important;
+        }
+        [data-testid="stTabs"] button[aria-selected="true"] {
+            color: #0F172A !important;
+            font-weight: 700 !important;
+        }
+
+        /* Alerts and metrics: readable labels and values without changing status meaning. */
+        [data-testid="stAlert"] p,
+        [data-testid="stAlert"] div,
+        [data-testid="stMetricLabel"],
+        [data-testid="stMetricValue"],
+        [data-testid="stMetricDelta"] {
+            overflow-wrap: anywhere;
+        }
+        [data-testid="stMetricLabel"] { color: #475569 !important; }
+        [data-testid="stMetricValue"] { color: #0F172A !important; }
+        [data-testid="stDataFrame"], [data-testid="stTable"] {
+            color: #1E293B !important;
+        }
+
+        /* Keep the sidebar navigation text visible even when Streamlit updates its DOM. */
+        [data-testid="stSidebar"] [role="radiogroup"] label,
+        [data-testid="stSidebar"] [role="radiogroup"] label p,
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+            color: #0F172A !important;
+        }
+
         /* Reserved professional accents: use sparingly for status/highlight elements. */
         .iper-accent-gold { color: var(--iper-gold) !important; }
         .iper-accent-green { color: var(--iper-success) !important; }
