@@ -935,23 +935,53 @@ st.markdown(
     
     /* PEPTECH visibility fix: force readable select controls and dropdown menus.
        BaseWeb renders the selected value and popup options in separate layers. */
-    div[data-baseweb="select"] > div,
-    div[data-baseweb="select"] [role="combobox"],
-    div[data-baseweb="select"] input,
+    /* Streamlit's dark theme can colour the INNER BaseWeb control, not just
+       the outer select wrapper. Explicitly style each control layer. */
     div[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
-    div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div {
+    div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] > div > div,
+    div[data-testid="stMultiSelect"] div[data-baseweb="select"] > div > div,
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] [role="combobox"],
+    div[data-testid="stMultiSelect"] div[data-baseweb="select"] [role="combobox"],
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] input,
+    div[data-testid="stMultiSelect"] div[data-baseweb="select"] input {
+        background: #FFFFFF !important;
         background-color: #FFFFFF !important;
         color: #0F172A !important;
         -webkit-text-fill-color: #0F172A !important;
         border-color: #CBD5E1 !important;
         opacity: 1 !important;
     }
-    div[data-baseweb="select"] *,
-    div[data-testid="stSelectbox"] *,
-    div[data-testid="stMultiSelect"] * {
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] *,
+    div[data-testid="stMultiSelect"] div[data-baseweb="select"] * {
         color: #0F172A !important;
         -webkit-text-fill-color: #0F172A !important;
         opacity: 1 !important;
+    }
+    /* Make uploader drop zones and their upload buttons readable as well. */
+    div[data-testid="stFileUploader"] section,
+    div[data-testid="stFileUploader"] section > div {
+        background: #F8FAFC !important;
+        background-color: #F8FAFC !important;
+        color: #0F172A !important;
+        border-color: #CBD5E1 !important;
+    }
+    div[data-testid="stFileUploader"] section button {
+        background: #1E3A5F !important;
+        background-color: #1E3A5F !important;
+        color: #FFFFFF !important;
+        border-color: #1E3A5F !important;
+    }
+    div[data-testid="stFileUploader"] section button *,
+    div[data-testid="stFileUploader"] section button span {
+        color: #FFFFFF !important;
+        -webkit-text-fill-color: #FFFFFF !important;
+    }
+    div[data-testid="stFileUploader"] section small,
+    div[data-testid="stFileUploader"] section span,
+    div[data-testid="stFileUploader"] section p {
+        color: #334155 !important;
+        -webkit-text-fill-color: #334155 !important;
     }
     /* Dropdown popovers are mounted outside the selectbox container. */
     div[role="listbox"],
@@ -959,7 +989,8 @@ st.markdown(
     li[role="option"],
     div[role="option"],
     [data-baseweb="popover"] [role="listbox"],
-    [data-baseweb="popover"] [role="option"] {
+    [data-baseweb="popover"] [role="option"],
+    [data-baseweb="popover"] [role="option"] * {
         background-color: #FFFFFF !important;
         color: #0F172A !important;
         -webkit-text-fill-color: #0F172A !important;
