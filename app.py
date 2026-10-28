@@ -228,6 +228,37 @@ st.markdown("""
         [data-testid="stExpander"] {
             border: 1px solid var(--iper-border) !important;
             border-radius: 7px !important;
+            background: #FFFFFF !important;
+            color: var(--iper-navy) !important;
+        }
+
+        /* Fix dark-theme inheritance on expander headers (e.g. saved PI feedback). */
+        [data-testid="stExpander"] details,
+        [data-testid="stExpander"] details > summary,
+        [data-testid="stExpander"] summary,
+        [data-testid="stExpander"] summary:hover,
+        [data-testid="stExpander"] summary:focus,
+        [data-testid="stExpander"] summary:focus-visible {
+            background: #FFFFFF !important;
+            background-color: #FFFFFF !important;
+            color: #0F172A !important;
+            border-color: #CBD5E1 !important;
+        }
+
+        [data-testid="stExpander"] summary *,
+        [data-testid="stExpander"] summary p,
+        [data-testid="stExpander"] summary span,
+        [data-testid="stExpander"] summary svg,
+        [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"],
+        [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] p {
+            color: #0F172A !important;
+            fill: #0F172A !important;
+            opacity: 1 !important;
+        }
+
+        [data-testid="stExpander"] [data-testid="stExpanderDetails"],
+        [data-testid="stExpander"] [data-testid="stExpanderDetails"] * {
+            color: #1E293B;
         }
 
         [data-testid="stDataFrame"] {
