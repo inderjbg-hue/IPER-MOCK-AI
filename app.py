@@ -2196,6 +2196,7 @@ def init_database():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_scholar_time ON student_activity_log (scholar_id, activity_timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_type_time ON student_activity_log (activity_type, activity_timestamp)")
+
         mis_view_sql = """
             SELECT a.id AS activity_id, a.student_id, a.scholar_id,
                    COALESCE(NULLIF(TRIM(COALESCE(s.first_name, '') || ' ' || COALESCE(s.last_name, '')), ''), r.full_name) AS student_name,
@@ -4144,6 +4145,81 @@ def save_mentor_note(mentor_id, scholar_id, note, action_points, follow_up_date)
         conn.close()
 
 
+def render_peptech_usage_dashboard():
+    """Ephemeral usage snapshot based only on existing activity records."""
+    st.subheader("PEPTECH Usage Dashboard")
+    st.caption(
+        "Read-only snapshot from existing activity records. This feature creates no heartbeat records and writes no monitoring data to Neon. "
+        "Recently active means a student has a logged activity in the last 5 minutes, not necessarily that their browser is open."
+    )
+
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    now_epoch = time.time()
+    last_refresh_epoch = float(st.session_state.get("peptech_usage_last_refresh_epoch", 0) or 0)
+    snapshot = st.session_state.get("peptech_usage_snapshot")
+
+    # Build a snapshot on first view, or after the administrator explicitly refreshes.
+    if snapshot is None:
+        conn = None
+        try:
+            conn = get_db_connection()
+            cutoff = (now - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+            day_start = now.strftime("%Y-%m-%d 00:00:00")
+            active_row = conn.execute(
+                "SELECT COUNT(DISTINCT scholar_id) AS n FROM student_activity_log WHERE activity_timestamp >= ?",
+                (cutoff,),
+            ).fetchone()
+            daily_row = conn.execute(
+                "SELECT COUNT(DISTINCT scholar_id) AS n FROM student_activity_log WHERE activity_timestamp >= ?",
+                (day_start,),
+            ).fetchone()
+            attempts_row = conn.execute(
+                "SELECT COUNT(*) AS n FROM student_activity_log WHERE activity_timestamp >= ?",
+                (day_start,),
+            ).fetchone()
+            snapshot = {
+                "active_count": int(active_row["n"] or 0),
+                "daily_active": int(daily_row["n"] or 0),
+                "daily_activities": int(attempts_row["n"] or 0),
+                "snapshot_time": now.strftime("%d %b %Y, %I:%M:%S %p"),
+            }
+            st.session_state["peptech_usage_snapshot"] = snapshot
+            st.session_state["peptech_usage_last_refresh_epoch"] = now_epoch
+            last_refresh_epoch = now_epoch
+        except Exception:
+            st.warning("Usage metrics are temporarily unavailable. Student portal features remain unaffected.")
+            return
+        finally:
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Recently active students*", snapshot["active_count"])
+    col2.metric("Students with activity today", snapshot["daily_active"])
+    col3.metric("Recorded activities today", snapshot["daily_activities"])
+    st.caption(f"Snapshot time: {snapshot['snapshot_time']} IST")
+    st.caption("*Based on existing logged activities in the last 5 minutes; this is not a precise real-time online-user count.")
+
+    elapsed = time.time() - last_refresh_epoch
+    refresh_available = elapsed >= 300
+    remaining = max(0, 300 - int(elapsed))
+    mins, secs = divmod(remaining, 60)
+    if st.button(
+        "Refresh usage snapshot" if refresh_available else f"Refresh available in {mins}m {secs}s",
+        key="peptech_usage_refresh",
+        disabled=not refresh_available,
+    ):
+        # The snapshot and refresh timer are session-only; no monitoring record is written.
+        st.session_state.pop("peptech_usage_snapshot", None)
+        st.session_state["peptech_usage_last_refresh_epoch"] = time.time()
+        st.rerun()
+    if not refresh_available:
+        st.caption("Refresh is available every 5 minutes. No automatic polling is running.")
+
+
 def render_mentor_portal():
     mentor_id = int(st.session_state.get("mentor_id", 0) or 0)
     mentor_name = st.session_state.get("mentor_name", "Mentor")
@@ -4295,6 +4371,9 @@ def render_mentor_portal():
             entered=st.text_input("Administrator access key", type="password", key="mentor_admin_access_key")
             if entered and secrets.compare_digest(entered, admin_key):
                 st.success("Administrator access verified for this session.")
+                render_peptech_usage_dashboard()
+                st.divider()
+                st.subheader("Student Master Roster")
                 st.caption("Upload Excel (.xlsx) or CSV. Required columns: Scholar ID, Full Name, Section. Every additional column is retained as student information. Existing roster records and mentee assignments are preserved by Scholar ID.")
                 upload=st.file_uploader("Upload student master list (Excel or CSV)", type=["xlsx", "xls", "csv"], key="admin_student_roster_upload")
                 if upload is not None:
