@@ -3632,6 +3632,13 @@ Grading calibration for this assessment:
 - A — Strong Placement Readiness (internal 81–100): exceptional, highly consistent and unusually strong performance; very rare.
 Do not let fluent English, confidence, speaking volume, or business buzzwords compensate for weak substance.
 
+IMPORTANT SPEAKER MAPPING RULES:
+- Return exactly one Participants entry for each input participant, unless there is genuinely no transcript evidence for that speaker.
+- For every Participants entry, copy the input participant's SpeakerID exactly as provided. Never invent, rename, or infer a SpeakerID.
+- Copy the participant's Name exactly as provided; do not replace it with a real person's name or a different label.
+- Do not omit or merge participants. If a speaker has little or no transcript evidence, still include that speaker with conservative scores and explicitly state that evidence is insufficient.
+- The SpeakerID is a required mapping key used by the portal; preserve it exactly.
+
 Return ONLY valid JSON in this exact structure:
 {{
   "GroupAssessment": {{
@@ -3646,6 +3653,7 @@ Return ONLY valid JSON in this exact structure:
   }},
   "Participants": [
     {{
+      "SpeakerID": "",
       "Name": "",
       "ParticipationScore": 0,
       "CommunicationScore": 0,
@@ -8107,8 +8115,12 @@ elif selected_nav == "Group Discussion Hub":
                         raw_id = str(participant.get("SpeakerID") or "")
                         if raw_id not in speaker_map:
                             # Older model output may not include SpeakerID; match its current label.
-                            current_name = str(participant.get("Name") or "")
-                            raw_id = next((sid for sid, label in speaker_map.items() if label == current_name), "")
+                            current_name = str(participant.get("Name") or "").strip()
+                            raw_id = next(
+                                (sid for sid, label in speaker_map.items()
+                                 if str(label).strip().casefold() == current_name.casefold()),
+                                "",
+                            )
                         if raw_id in speaker_map:
                             participant["Name"] = speaker_map[raw_id]
                             participant["SpeakerID"] = raw_id
@@ -8116,8 +8128,12 @@ elif selected_nav == "Group Discussion Hub":
                     # omit or reorder participants. Keep unmatched records visibly unresolved.
                     for participant in participants:
                         if not participant.get("SpeakerID"):
-                            current_name = str(participant.get("Name") or "")
-                            matched_id = next((sid for sid, label in speaker_map.items() if label == current_name), "")
+                            current_name = str(participant.get("Name") or "").strip()
+                            matched_id = next(
+                                (sid for sid, label in speaker_map.items()
+                                 if str(label).strip().casefold() == current_name.casefold()),
+                                "",
+                            )
                             if matched_id:
                                 participant["SpeakerID"] = matched_id
                                 participant["Name"] = speaker_map[matched_id]
