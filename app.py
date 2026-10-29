@@ -280,20 +280,10 @@ st.markdown("""
 # ------------------------------------------------------------------------------
 # 3. HELPER FUNCTIONS & API INTEGRATION
 # ------------------------------------------------------------------------------
-@st.cache_resource(show_spinner="Loading speech-recognition model…")
-def load_speech_model():
-    """Load Whisper only when a feature first requests transcription."""
-    import whisper
-    return whisper.load_model("base")
-
-@st.cache_resource(show_spinner="Loading live discussion speech model…")
-def load_live_gd_speech_model():
-    """Load the lightweight live-GD model only if that workflow uses it."""
-    import whisper
-    return whisper.load_model("tiny")
-
-# IMPORTANT: Do not load either Whisper/Torch model at app startup.
-# They are loaded and cached only when transcription is actually requested.
+# Speech transcription is handled remotely by Groq to avoid loading local Whisper/Torch
+# models in the Streamlit process. Keep this API call lazy: no audio is sent until
+# the student explicitly starts a transcription workflow.
+GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3-turbo"
 
 GROQ_MODEL = "openai/gpt-oss-120b"
 LIVE_GD_GROQ_MODEL = "openai/gpt-oss-20b"
@@ -474,63 +464,65 @@ def _extract_speech_only_wav(audio_path):
 
 
 def transcribe_indian_english_audio(audio_path):
-    """Transcribe interview audio, with a safe fallback if speech filtering loses words."""
+    """Transcribe interview audio through Groq, with optional local VAD cleanup."""
+    if not client:
+        return "GROQ API Key is missing. Please add 'GROQ_API_KEY' in Streamlit App Settings -> Secrets.", 0.0
+
     prompt = (
         "Official MBA placement interview response in Indian English. "
         "Transcribe clearly audible human speech. Do not invent words from music, "
         "singing, background conversation, or noise."
     )
     speech_path, speech_duration = _extract_speech_only_wav(audio_path)
-    model = load_speech_model()
+    path_to_send = speech_path or audio_path
 
     def run_transcription(path):
-        return model.transcribe(
-            path,
-            language="en",
-            initial_prompt=prompt,
-            temperature=0.0,
-            condition_on_previous_text=False,
-            no_speech_threshold=0.72,
-            logprob_threshold=-0.8,
-            compression_ratio_threshold=2.2,
-            fp16=False,
-        )
+        with open(path, "rb") as audio_file:
+            return client.audio.transcriptions.create(
+                file=(os.path.basename(path), audio_file.read()),
+                model=GROQ_TRANSCRIPTION_MODEL,
+                prompt=prompt,
+                language="en",
+                response_format="verbose_json",
+                temperature=0.0,
+            )
 
     def clean_result(result):
+        segments = getattr(result, "segments", None) or []
         accepted = []
-        for seg in result.get("segments", []):
-            segment_text = (seg.get("text") or "").strip()
-            # Do not use `value or default`: a legitimate numeric 0.0 must stay 0.0.
-            no_speech_value = seg.get("no_speech_prob")
-            avg_logprob_value = seg.get("avg_logprob")
-            no_speech = float(1.0 if no_speech_value is None else no_speech_value)
-            avg_logprob = float(-99.0 if avg_logprob_value is None else avg_logprob_value)
-            if segment_text and no_speech < 0.80 and avg_logprob > -1.35:
+        for seg in segments:
+            if isinstance(seg, dict):
+                segment_text = (seg.get("text") or "").strip()
+                no_speech_value = seg.get("no_speech_prob")
+                avg_logprob_value = seg.get("avg_logprob")
+            else:
+                segment_text = (getattr(seg, "text", "") or "").strip()
+                no_speech_value = getattr(seg, "no_speech_prob", None)
+                avg_logprob_value = getattr(seg, "avg_logprob", None)
+            # Groq verbose_json may not provide Whisper's confidence fields; only
+            # apply these filters when the fields are actually returned.
+            no_speech = None if no_speech_value is None else float(no_speech_value)
+            avg_logprob = None if avg_logprob_value is None else float(avg_logprob_value)
+            if segment_text and (no_speech is None or no_speech < 0.80) and (avg_logprob is None or avg_logprob > -1.35):
                 accepted.append(segment_text)
-
         transcript = " ".join(accepted).strip()
-        # Guard against common Whisper hallucination loops.
+        if not transcript:
+            transcript = (getattr(result, "text", "") or "").strip()
         if transcript:
-            words = re.findall(r"\\b[\\w']+\\b", transcript.lower())
-            if len(words) >= 8:
-                unique_ratio = len(set(words)) / len(words)
-                if unique_ratio < 0.25:
-                    transcript = ""
+            words = re.findall(r"\b[\w']+\b", transcript.lower())
+            if len(words) >= 8 and len(set(words)) / len(words) < 0.25:
+                transcript = ""
         return transcript
 
     try:
-        result = run_transcription(speech_path or audio_path)
+        result = run_transcription(path_to_send)
         transcript = clean_result(result)
-
-        # A strict voice-activity filter can occasionally remove quiet/soft-spoken words.
-        # If it produced an empty transcript, retry the original recording once.
-        # Keep the segment-level speech checks on the fallback to avoid accepting
-        # unfiltered Whisper hallucinations from music or noise.
+        # If VAD removed too much quiet speech, retry the original recording once.
         if not transcript and speech_path:
-            fallback_result = run_transcription(audio_path)
-            transcript = clean_result(fallback_result)
-
+            transcript = clean_result(run_transcription(audio_path))
         return transcript, speech_duration
+    except Exception as e:
+        raise RuntimeError(f"Groq speech-to-text failed: {type(e).__name__}: {e}") from e
     finally:
         if speech_path and os.path.exists(speech_path):
             try:
@@ -6018,13 +6010,8 @@ def _speak_text_in_browser(text):
 
 
 def _transcribe_live_audio_bytes(audio_bytes, sample_rate, channels):
-    """Transcribe a completed GD viewpoint with accuracy-first Whisper settings.
-
-    The live turn detector remains lightweight, but the completed viewpoint is
-    transcribed with the stronger base model so non-native / Indian English
-    pronunciation has a better chance of being decoded into the intended word.
-    """
-    if not audio_bytes:
+    """Transcribe a completed live-GD speaking turn using Groq speech-to-text."""
+    if not audio_bytes or not client:
         return ""
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
     tmp.close()
@@ -6034,39 +6021,33 @@ def _transcribe_live_audio_bytes(audio_bytes, sample_rate, channels):
             wf.setsampwidth(2)
             wf.setframerate(int(sample_rate or 48000))
             wf.writeframes(audio_bytes)
-        # Accuracy matters more than the tiny speed gain here because this
-        # transcript drives the student's final GD feedback. Use the existing
-        # base model for the completed viewpoint rather than the tiny live model.
         transcription_prompt = (
             "Indian English MBA group discussion. Business, management, marketing, "
             "finance, HR, economics, technology, jobs, education, society, India. "
-            "The speaker may have a strong regional Indian accent or mispronounce "
-            "English words. Infer the intended English word from the audio and "
-            "sentence context when the pronunciation is unclear, but do not invent "
-            "words that are not supported by the speech. Transcribe all meaningful "
-            "human speech."
+            "The speaker may have a strong regional Indian accent. Transcribe all "
+            "meaningful human speech accurately; do not invent unsupported words."
         )
-        result = load_speech_model().transcribe(
-            tmp.name,
-            language="en",
-            initial_prompt=transcription_prompt,
-            temperature=(0.0, 0.2, 0.4),
-            condition_on_previous_text=False,
-            no_speech_threshold=0.60,
-            logprob_threshold=-1.0,
-            compression_ratio_threshold=2.6,
-            fp16=False,
-            beam_size=5,
-            best_of=5,
-        )
-        accepted = []
-        for seg in result.get("segments", []):
-            text = (seg.get("text") or "").strip()
-            no_speech = float(seg.get("no_speech_prob", 1.0) or 1.0)
-            if text and no_speech < 0.82:
-                accepted.append(text)
-        return re.sub(r"\s+", " ", " ".join(accepted)).strip()
-    except Exception:
+        with open(tmp.name, "rb") as audio_file:
+            result = client.audio.transcriptions.create(
+                file=(os.path.basename(tmp.name), audio_file.read()),
+                model=GROQ_TRANSCRIPTION_MODEL,
+                prompt=transcription_prompt,
+                language="en",
+                response_format="verbose_json",
+                temperature=0.0,
+            )
+        transcript = (getattr(result, "text", "") or "").strip()
+        if not transcript:
+            segments = getattr(result, "segments", None) or []
+            transcript = " ".join(
+                (seg.get("text", "") if isinstance(seg, dict) else getattr(seg, "text", ""))
+                for seg in segments
+            ).strip()
+        return re.sub(r"\s+", " ", transcript).strip()
+    except Exception as e:
+        # Keep the live-GD caller's existing safe empty-transcript behaviour while
+        # logging a concise diagnostic for deployment logs.
+        print(f"Groq live-GD transcription failed: {type(e).__name__}: {e}")
         return ""
     finally:
         try:
@@ -7394,7 +7375,7 @@ CANDIDATE CONTEXT:
             audio_data = st.audio_input("Click to record your voice:", key=f"pi_audio_input_q_{st.session_state.get('practice_question_index', 0)}")
             if audio_data is not None:
                 st.audio(audio_data)
-                with st.spinner("Converting audio to text via Whisper..."):
+                with st.spinner("Transcribing audio via Groq..."):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
                         tmp_file.write(audio_data.getvalue())
                         tmp_path = tmp_file.name
@@ -7453,7 +7434,7 @@ CANDIDATE CONTEXT:
                     st.session_state["communication_duration"] = get_media_duration_seconds(saved_video_path)
                     st.video(saved_video_path)
                     st.success(f"Interview video saved as MP4: `{os.path.basename(saved_video_path)}`")
-                    with st.spinner("Transcribing video audio track via Whisper..."):
+                    with st.spinner("Transcribing video audio via Groq..."):
                         extracted_transcript, detected_speech_duration = transcribe_indian_english_audio(saved_video_path)
                         if detected_speech_duration > 0:
                             st.session_state["communication_duration"] = detected_speech_duration
