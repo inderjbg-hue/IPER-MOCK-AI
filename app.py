@@ -8305,7 +8305,115 @@ elif selected_nav == "Group Discussion Hub":
                     except Exception as save_exc:
                         st.error(f"Could not save the GD report to your account: {save_exc}")
 
-                st.caption("Enter a registered student's Scholar ID to share this group assessment with them. The report will appear in their progress history. No mentor mapping is required.")
+                # Restore per-speaker Scholar ID mapping. This is separate from the
+                # optional one-at-a-time sharing control below: each detected voice
+                # can be explicitly linked to a participant before the group report
+                # is saved to all participants' progress histories.
+                st.markdown("**Match each detected speaker to a participant**")
+                st.caption(
+                    "Enter the exact Scholar ID for every speaker. Speaker labels remain provisional; "
+                    "please verify each match against the recording. The portal checks IDs against "
+                    "registered student accounts or the active student roster."
+                )
+                final_speaker_map = st.session_state.get("uploaded_gd_final_speaker_map", {}) or {}
+                final_speaker_ids = list(final_speaker_map.keys())
+                mapping_already_saved = st.session_state.get("uploaded_gd_mapped_save_token") == share_token
+                if mapping_already_saved:
+                    st.info("Speaker-to-student mapping has already been saved for this assessment.")
+                with st.form("uploaded_gd_participant_scholar_mapping_form"):
+                    submitted_scholar_ids = {}
+                    for map_idx, sid in enumerate(final_speaker_ids):
+                        speaker_display = final_speaker_map.get(sid, f"Speaker {map_idx + 1}")
+                        submitted_scholar_ids[sid] = st.text_input(
+                            f"{speaker_display} — Scholar ID",
+                            key=f"uploaded_gd_scholar_{map_idx}_{sid}",
+                            placeholder="Enter exact Scholar ID",
+                        ).strip().upper()
+                    save_all_participants = st.form_submit_button(
+                        "Save Complete GD Feedback to Participants",
+                        use_container_width=True,
+                        disabled=(not bool(final_speaker_ids)) or mapping_already_saved,
+                    )
+
+                if save_all_participants:
+                    normalized_ids = [submitted_scholar_ids.get(sid, "") for sid in final_speaker_ids]
+                    if any(not value for value in normalized_ids):
+                        st.error("Please enter a Scholar ID for every detected speaker before saving.")
+                    elif len(set(normalized_ids)) != len(normalized_ids):
+                        st.error("The same Scholar ID has been entered for multiple speakers. Please check the entries.")
+                    else:
+                        validation_conn = None
+                        valid_ids = set()
+                        try:
+                            validation_conn = get_db_connection()
+                            for scholar in normalized_ids:
+                                student_row = validation_conn.execute(
+                                    "SELECT scholar_id FROM students WHERE UPPER(TRIM(scholar_id))=? LIMIT 1",
+                                    (scholar,),
+                                ).fetchone()
+                                roster_row = validation_conn.execute(
+                                    "SELECT scholar_id FROM student_roster WHERE active=1 AND UPPER(TRIM(scholar_id))=? LIMIT 1",
+                                    (scholar,),
+                                ).fetchone()
+                                if student_row or roster_row:
+                                    valid_ids.add(scholar)
+                        except Exception as validation_exc:
+                            st.error(f"Could not validate the participant Scholar IDs: {validation_exc}")
+                        finally:
+                            if validation_conn is not None:
+                                validation_conn.close()
+
+                        invalid_ids = [scholar for scholar in normalized_ids if scholar not in valid_ids]
+                        if not invalid_ids and len(valid_ids) == len(normalized_ids):
+                            try:
+                                mapping_by_speaker = {
+                                    sid: submitted_scholar_ids[sid] for sid in final_speaker_ids
+                                }
+                                report_for_save = dict(saved_report)
+                                report_for_save["ParticipantScholarIDs"] = mapping_by_speaker
+                                for person in report_for_save.get("Participants", []) or []:
+                                    person_sid = str(person.get("SpeakerID") or "")
+                                    if person_sid in mapping_by_speaker:
+                                        person["ScholarID"] = mapping_by_speaker[person_sid]
+                                participants_for_save = [
+                                    {
+                                        "SpeakerID": sid,
+                                        "Name": final_speaker_map.get(sid, sid),
+                                        "ScholarID": mapping_by_speaker[sid],
+                                    }
+                                    for sid in final_speaker_ids
+                                ]
+                                saved_count = 0
+                                for scholar in normalized_ids:
+                                    # The uploader's own report is already saved above.
+                                    if scholar == current_scholar_id and st.session_state.get("uploaded_gd_self_saved_token") == share_token:
+                                        continue
+                                    save_gd_video_assessment(
+                                        scholar,
+                                        topic_for_save,
+                                        participants_for_save,
+                                        all_segments,
+                                        report_for_save,
+                                        video_filename_for_save,
+                                        source_type="Video GD",
+                                    )
+                                    saved_count += 1
+                                st.session_state["uploaded_gd_report"] = report_for_save
+                                st.session_state["uploaded_gd_manual_saved_map"] = mapping_by_speaker
+                                st.session_state["uploaded_gd_mapped_save_token"] = share_token
+                                st.success(
+                                    f"Complete GD feedback saved for {saved_count} additional participant(s). "
+                                    "The uploader's own report remains saved in their progress history."
+                                )
+                            except Exception as save_exc:
+                                st.error(f"Feedback could not be saved for all participants: {save_exc}")
+                        elif invalid_ids:
+                            st.error(
+                                "These Scholar IDs were not found in registered student accounts or the active roster: "
+                                + ", ".join(invalid_ids)
+                            )
+
+                st.caption("You can also share the group assessment with another registered student individually below.")
                 share_col, action_col = st.columns([3, 1])
                 with share_col:
                     recipient_scholar_id = st.text_input(
