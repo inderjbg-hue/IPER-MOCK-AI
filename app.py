@@ -8159,13 +8159,72 @@ elif selected_nav == "Group Discussion Hub":
                     # Bind every individual report strictly to the model-returned
                     # diarisation ID. Never repair missing IDs by participant order/name.
                     participants = report.get("Participants", []) or []
+                    # Enforce one report row per diarized speaker ID. The LLM can
+                    # occasionally omit quieter/brief speakers or repeat an ID;
+                    # never silently lose a detected voice or assign by array order.
+                    expected_speaker_ids = list(raw_speakers)
+                    participant_by_id = {}
+                    unexpected_participants = []
                     for participant in participants:
-                        raw_id = str(participant.get("SpeakerID") or "")
-                        if raw_id in speaker_map:
+                        raw_id = str(participant.get("SpeakerID") or "").strip()
+                        if raw_id in speaker_map and raw_id not in participant_by_id:
                             participant["Name"] = speaker_map[raw_id]
-                        else:
+                            participant_by_id[raw_id] = participant
+                        elif raw_id and raw_id not in speaker_map:
                             participant["Name"] = "Unattributed speaker — individual identity uncertain"
-                            participant["SpeakerID"] = ""
+                            participant["AssessmentStatus"] = "unmatched_speaker_id"
+                            unexpected_participants.append(participant)
+                        # Duplicate model rows for the same diarization ID are
+                        # ignored rather than creating duplicate student records.
+                    missing_speaker_ids = [sid for sid in expected_speaker_ids if sid not in participant_by_id]
+                    # Make one targeted completion request for omitted speakers.
+                    # This is a retry, not an identity guess: it uses the exact
+                    # diarization IDs, original transcript and measured statistics.
+                    if missing_speaker_ids:
+                        missing_context = [
+                            {"SpeakerID": sid, "Name": speaker_map[sid], "ScholarID": ""}
+                            for sid in missing_speaker_ids
+                        ]
+                        try:
+                            completion_report, completion_error = generate_gd_video_assessment(
+                                st.session_state.get("uploaded_gd_topic_processed", video_topic.strip()),
+                                missing_context,
+                                readable_transcript,
+                                speaker_stats,
+                            )
+                            if completion_report and not completion_error:
+                                for completion_item in completion_report.get("Participants", []) or []:
+                                    completion_sid = str(completion_item.get("SpeakerID") or "").strip()
+                                    if completion_sid in missing_speaker_ids and completion_sid not in participant_by_id:
+                                        completion_item["Name"] = speaker_map[completion_sid]
+                                        participant_by_id[completion_sid] = completion_item
+                        except Exception as completion_exc:
+                            st.warning(f"A targeted retry for omitted speaker assessments could not be completed: {completion_exc}")
+                    missing_speaker_ids = [sid for sid in expected_speaker_ids if sid not in participant_by_id]
+                    for missing_sid in missing_speaker_ids:
+                        participant_by_id[missing_sid] = {
+                            "SpeakerID": missing_sid,
+                            "Name": speaker_map[missing_sid],
+                            "AssessmentStatus": "incomplete_missing_from_ai_response",
+                            "AssessmentNote": (
+                                "This speaker was detected in the diarized transcript, but the AI "
+                                "did not return an individual assessment. No score has been invented."
+                            ),
+                            "Strengths": [],
+                            "AreasToImprove": [],
+                            "Evidence": [],
+                            "NextGDActionPlan": [],
+                        }
+                    # Keep the report in diarization order so Speaker A–F stay
+                    # consistent across transcript, feedback and Scholar ID mapping.
+                    report["Participants"] = [participant_by_id[sid] for sid in expected_speaker_ids] + unexpected_participants
+                    if missing_speaker_ids:
+                        st.warning(
+                            f"Diarization detected {len(expected_speaker_ids)} speakers, but the AI returned individual assessments for only "
+                            f"{len(expected_speaker_ids) - len(missing_speaker_ids)}. The missing speaker(s) are retained below without fabricated scores: "
+                            + ", ".join(speaker_map[sid] for sid in missing_speaker_ids)
+                            + ". You can retry the assessment after checking the transcript."
+                        )
                     # Reuse the already-extracted audio file; avoid another full
                     # in-memory copy and another temporary-file write.
                     audio_path_for_tone = st.session_state.get("uploaded_gd_audio_path")
@@ -8247,9 +8306,14 @@ elif selected_nav == "Group Discussion Hub":
                     tone_by_speaker = report.get("VocalToneAssessment", {}) or {}
                     for participant in report.get("Participants", []) or []:
                         pname = participant.get("Name") or "Unlabelled speaker"
-                        with st.expander(f"{pname} — {grade_from_score(participant.get('OverallScore', 0))}", expanded=True):
-                            for label, key in (("Participation", "ParticipationScore"), ("Communication", "CommunicationScore"), ("Knowledge", "KnowledgeScore"), ("Analytical Thinking", "AnalyticalThinkingScore"), ("Listening & Teamwork", "ListeningTeamworkScore"), ("Leadership", "LeadershipScore")):
-                                st.write(f"**{label}:** {grade_from_score(participant.get(key, 0))}")
+                        assessment_incomplete = participant.get("AssessmentStatus") == "incomplete_missing_from_ai_response"
+                        participant_heading = f"{pname} — Assessment incomplete" if assessment_incomplete else f"{pname} — {grade_from_score(participant.get('OverallScore', 0))}"
+                        with st.expander(participant_heading, expanded=True):
+                            if assessment_incomplete:
+                                st.warning(participant.get("AssessmentNote") or "Individual assessment was not returned. No score has been generated.")
+                            else:
+                                for label, key in (("Participation", "ParticipationScore"), ("Communication", "CommunicationScore"), ("Knowledge", "KnowledgeScore"), ("Analytical Thinking", "AnalyticalThinkingScore"), ("Listening & Teamwork", "ListeningTeamworkScore"), ("Leadership", "LeadershipScore")):
+                                    st.write(f"**{label}:** {grade_from_score(participant.get(key, 0))}")
                             tone_item = tone_by_speaker.get(participant.get("SpeakerID"), {}) if isinstance(tone_by_speaker, dict) else {}
                             if not tone_item and isinstance(tone_by_speaker, dict):
                                 tone_item = next((v for k, v in tone_by_speaker.items() if speaker_map.get(k, k) == pname), {})
