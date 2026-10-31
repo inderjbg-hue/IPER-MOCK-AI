@@ -7990,6 +7990,7 @@ elif selected_nav == "Group Discussion Hub":
                         "uploaded_gd_topic_processed", "uploaded_gd_filename_processed",
                         "uploaded_gd_processing_timings", "uploaded_gd_final_speaker_records",
                         "uploaded_gd_final_speaker_map", "uploaded_gd_final_stats",
+                        "uploaded_gd_manual_saved_map",
                     ):
                         st.session_state.pop(stale_key, None)
                     suffix = Path(gd_video_file.name).suffix or ".mp4"
@@ -8025,6 +8026,7 @@ elif selected_nav == "Group Discussion Hub":
                     "uploaded_gd_speaker_map", "uploaded_gd_video_widget_file_id", "uploaded_gd_visual_frames", "uploaded_gd_audio_bytes", "uploaded_gd_audio_path",
                     "uploaded_gd_processing_timings", "uploaded_gd_final_speaker_records", "uploaded_gd_final_speaker_map", "uploaded_gd_final_stats",
                     "uploaded_gd_split_notes", "uploaded_gd_report", "uploaded_gd_upload_error",
+                    "uploaded_gd_manual_saved_map",
                 ]
                 for reset_key in reset_keys:
                     st.session_state.pop(reset_key, None)
@@ -8094,41 +8096,22 @@ elif selected_nav == "Group Discussion Hub":
 
         uploaded_segments = st.session_state.get("uploaded_gd_segments") or []
         if uploaded_segments:
-            # Keep diarisation IDs intact. Natural overlap is allowed; identity is
-            # attached only when a speaker's own spoken introduction uniquely matches
-            # one active student/roster record. No mentor mapping or positional guess.
+            # Keep every diarisation ID as a provisional voice label. Do not use
+            # accent, fluency, spoken-name matching, or participant order to decide
+            # which student owns a voice. A mentor confirms Scholar IDs after feedback.
             split_notes = []
             st.markdown("#### Step 2 — Review speaker-labelled transcript")
             raw_speakers = list(dict.fromkeys(str(seg.get("speaker") or "speaker_0") for seg in uploaded_segments))
             speaker_labels = {sid: f"Speaker {chr(65 + idx)}" for idx, sid in enumerate(raw_speakers[:26])}
             speaker_map = {sid: speaker_labels.get(sid, f"Speaker {sid}") for sid in raw_speakers}
             identity_conflicts = detect_gd_speaker_identity_conflicts(uploaded_segments)
-            auto_identity_map = auto_match_gd_speakers_to_roster(uploaded_segments, identity_conflicts.keys())
-            for sid, identity in auto_identity_map.items():
-                speaker_map[sid] = identity["name"]
-            speaker_records = {
-                sid: {"name": speaker_map[sid], "scholar_id": auto_identity_map.get(sid, {}).get("scholar_id", "")}
-                for sid in raw_speakers
-            }
+            auto_identity_map = {}
+            speaker_records = {sid: {"name": speaker_map[sid], "scholar_id": ""} for sid in raw_speakers}
             if len(raw_speakers) > 7:
                 st.warning(f"{len(raw_speakers)} distinct voices were detected. More than seven voices may indicate a moderator or an unintended participant; all detected labels are retained.")
-            st.caption("Automatic identity matching uses only a clear spoken self-introduction that exactly matches one active student record. Uncertain identities remain labelled as speakers and are never guessed. Ask all seven students to introduce themselves one at a time at the start of the recording.")
-            if split_notes:
-                st.warning(
-                    "The transcript contained a repeated diarisation ID with a later, different self-introduction. "
-                    "The portal created a separate speaker ID at that introduction. This is an AI-assisted transcript split, "
-                    "not acoustic certainty; please review the transcript against the recording before relying on individual grades.\n\n"
-                    + "\n".join(split_notes)
-                )
+            st.caption("Speaker labels are provisional voice labels, not judgments about English fluency or accent. The assessment proceeds even when a voice or identity is uncertain. After reviewing the feedback, the mentor can confirm each participant using their Scholar ID.")
             if identity_conflicts:
-                conflict_lines = []
-                for conflict_sid, names_found in identity_conflicts.items():
-                    label = speaker_labels.get(conflict_sid, f"Speaker {conflict_sid}")
-                    conflict_lines.append(f"{label}: {', '.join(names_found)}")
-                st.warning(
-                    "Some speaker identities are ambiguous. The group assessment will continue, but these speakers will not be automatically linked to student accounts or saved as individual student records. "
-                    "No identity will be guessed.\n\n" + "\n".join(conflict_lines)
-                )
+                st.info("Some spoken introductions appear ambiguous or repeated. This will not block the group assessment; confirm the correct student against the recording before saving individual progress.")
             readable_transcript = _format_gd_transcript(uploaded_segments, speaker_map)
             with st.expander("Preview diarised transcript", expanded=True):
                 st.text_area("Speaker-labelled transcript", value=readable_transcript, height=260, key="uploaded_gd_transcript_preview")
@@ -8148,7 +8131,7 @@ elif selected_nav == "Group Discussion Hub":
                 use_container_width=True,
                 key="generate_uploaded_gd_feedback",
                 disabled=False,
-                help="The assessment continues even when some identities are uncertain; only uniquely matched students receive automatic individual progress records.",
+                help="The assessment continues when identities are uncertain; a mentor confirms Scholar IDs before individual progress records are saved.",
             ):
                 with st.spinner("Assessing the discussion, speaker delivery and sampled body language..."):
                     report, report_error = generate_gd_video_assessment(
@@ -8218,7 +8201,7 @@ elif selected_nav == "Group Discussion Hub":
                     st.session_state["uploaded_gd_report"] = report
                     st.session_state["uploaded_gd_final_speaker_map"] = speaker_map
                     st.session_state["uploaded_gd_final_speaker_records"] = speaker_records
-                    st.session_state["uploaded_gd_auto_identity_map"] = auto_identity_map
+                    st.session_state["uploaded_gd_auto_identity_map"] = {}
                     st.session_state["uploaded_gd_final_stats"] = speaker_stats
                     st.success("GD assessment generated. Download the feedback report below.")
                     group_report = report.get("GroupAssessment", {}) or {}
@@ -8277,54 +8260,119 @@ elif selected_nav == "Group Discussion Hub":
                                 else:
                                     st.write("No specific points returned.")
 
-            # Save automatically only for speakers whose spoken introduction uniquely
-            # matched an active student/roster record. No mentor input is required.
+            # Identity confirmation is deliberately separate from diarisation and
+            # assessment. A mentor chooses a registered Scholar ID for each detected
+            # voice only after reviewing the report and recording.
             saved_report = st.session_state.get("uploaded_gd_report")
             if saved_report:
-                st.markdown("#### Step 4 — Automatic student feedback saving")
+                st.markdown("#### Step 4 — Confirm participants and save individual feedback")
                 final_speaker_map = st.session_state.get("uploaded_gd_final_speaker_map", {}) or {}
-                final_identity_map = st.session_state.get("uploaded_gd_auto_identity_map", {}) or {}
-                matched_ids = {sid: item for sid, item in final_identity_map.items() if item.get("scholar_id")}
-                unresolved = [sid for sid in final_speaker_map if sid not in matched_ids]
-                st.caption("PEPTECH links a student only when their spoken self-introduction uniquely matches the active student roster. No mentor mapping is needed; ambiguous identities are left unlinked rather than guessed.")
-                report_save_key = "|".join([
-                    str(st.session_state.get("uploaded_gd_filename_processed", "")),
-                    str(st.session_state.get("uploaded_gd_topic_processed", video_topic.strip())),
-                    ",".join(sorted(f"{sid}:{item['scholar_id']}" for sid, item in matched_ids.items())),
-                ])
-                already_saved_key = st.session_state.get("uploaded_gd_auto_saved_key", "")
-                if matched_ids and report_save_key and already_saved_key != report_save_key:
+                report_participants = saved_report.get("Participants", []) or []
+                participant_by_sid = {
+                    str(p.get("SpeakerID") or ""): p for p in report_participants
+                    if isinstance(p, dict) and str(p.get("SpeakerID") or "")
+                }
+                # Read the active student roster for explicit mentor confirmation.
+                roster_rows = []
+                try:
+                    roster_conn = get_db_connection()
                     try:
-                        report_for_save = dict(saved_report)
-                        mapping_by_speaker = {sid: item["scholar_id"] for sid, item in matched_ids.items()}
-                        report_for_save["ParticipantScholarIDs"] = mapping_by_speaker
-                        for person in report_for_save.get("Participants", []) or []:
-                            person_sid = str(person.get("SpeakerID") or "")
-                            if person_sid in mapping_by_speaker:
-                                person["ScholarID"] = mapping_by_speaker[person_sid]
-                        participants_for_save = [
-                            {"SpeakerID": sid, "Name": matched_ids[sid]["name"], "ScholarID": matched_ids[sid]["scholar_id"]}
-                            for sid in matched_ids
-                        ]
-                        video_filename_for_save = st.session_state.get("uploaded_gd_filename_processed", "Uploaded GD video")
-                        topic_for_save = st.session_state.get("uploaded_gd_topic_processed", video_topic.strip())
-                        for scholar in sorted(set(mapping_by_speaker.values())):
-                            save_gd_video_assessment(
-                                scholar, topic_for_save, participants_for_save,
-                                st.session_state.get("uploaded_gd_segments") or [],
-                                report_for_save, video_filename_for_save, source_type="Video GD",
-                            )
-                        st.session_state["uploaded_gd_auto_saved_key"] = report_save_key
-                        st.success(f"Automatically saved the complete GD feedback to {len(set(mapping_by_speaker.values()))} matched student account(s).")
-                    except Exception as save_exc:
-                        st.error(f"Automatic feedback saving failed: {save_exc}")
-                elif not matched_ids:
-                    st.warning("No student accounts were matched confidently. The assessment is available to download, but PEPTECH has not attached it to any student's progress history. Ensure each participant clearly says their full registered name at the start of the recording.")
-                elif already_saved_key == report_save_key:
-                    st.success(f"Automatic feedback has already been saved to {len(matched_ids)} matched student account(s).")
+                        roster_rows = [dict(r) for r in roster_conn.execute(
+                            "SELECT scholar_id, full_name FROM student_roster WHERE active=1 ORDER BY full_name"
+                        ).fetchall()]
+                    finally:
+                        roster_conn.close()
+                except Exception as roster_exc:
+                    st.error(f"Could not load the active student roster: {roster_exc}")
+                roster_by_id = {
+                    str(r.get("scholar_id") or "").strip().upper(): str(r.get("full_name") or "").strip()
+                    for r in roster_rows if str(r.get("scholar_id") or "").strip()
+                }
+                roster_ids = list(roster_by_id)
+                saved_map = st.session_state.get("uploaded_gd_manual_saved_map", {}) or {}
+                selected_map = {}
+                if not roster_ids:
+                    st.warning("No active students were found in the roster. The group report remains available, but individual progress cannot be linked until the roster is available.")
+                else:
+                    st.caption("Match each Speaker label to the correct student by checking the recording. Leave a speaker unassigned if you are unsure. No identity is inferred from accent, fluency, order, or name recognition.")
+                    for sid, label in final_speaker_map.items():
+                        if sid not in participant_by_sid:
+                            st.warning(f"{label}: the assessment did not return a reliable participant record for this speaker, so individual progress cannot be saved for this label.")
+                            continue
+                        already_linked = saved_map.get(sid)
+                        if already_linked:
+                            st.success(f"{label} has already been saved to {already_linked} — {roster_by_id.get(already_linked, 'student record')}.")
+                            continue
+                        reserved_ids = {value for other_sid, value in saved_map.items() if other_sid != sid and value}
+                        available_roster_ids = [rid for rid in roster_ids if rid not in reserved_ids]
+                        choice = st.selectbox(
+                            f"{label} — select the correct student (Scholar ID)",
+                            options=[""] + available_roster_ids,
+                            format_func=lambda value, names=roster_by_id: ("Not confirmed" if not value else f"{value} — {names.get(value, '')}"),
+                            key=f"uploaded_gd_confirm_scholar_{sid}",
+                        )
+                        if choice:
+                            selected_map[sid] = choice
+                    duplicate_ids = sorted({value for value in selected_map.values() if list(selected_map.values()).count(value) > 1})
+                    if duplicate_ids:
+                        st.error("The same Scholar ID has been selected for more than one speaker: " + ", ".join(duplicate_ids) + ". Please verify the mapping before saving.")
+                    elif selected_map:
+                        if st.button("Save confirmed individual feedback", key="save_confirmed_uploaded_gd_feedback", use_container_width=True):
+                            saved_now = []
+                            save_errors = []
+                            video_filename_for_save = st.session_state.get("uploaded_gd_filename_processed", "Uploaded GD video")
+                            topic_for_save = st.session_state.get("uploaded_gd_topic_processed", video_topic.strip())
+                            all_segments = st.session_state.get("uploaded_gd_segments") or []
+                            for sid, scholar_id in selected_map.items():
+                                person = participant_by_sid.get(sid)
+                                if not person:
+                                    continue
+                                individual_report = dict(saved_report)
+                                individual_person = dict(person)
+                                individual_person["Name"] = roster_by_id.get(scholar_id) or final_speaker_map.get(sid, "Participant")
+                                individual_person["ScholarID"] = scholar_id
+                                individual_report["Participants"] = [individual_person]
+                                individual_report["ParticipantScholarIDs"] = {sid: scholar_id}
+                                # Keep group-level observations, but retain only the
+                                # matching speaker's individual tone/visual feedback.
+                                tone_section = saved_report.get("VocalToneAssessment") or {}
+                                if isinstance(tone_section, dict):
+                                    filtered_tone = {sid: tone_section[sid]} if isinstance(tone_section.get(sid), dict) else {}
+                                    if tone_section.get("AvailabilityNote"):
+                                        filtered_tone["AvailabilityNote"] = tone_section["AvailabilityNote"]
+                                    individual_report["VocalToneAssessment"] = filtered_tone
+                                visual_section = dict(saved_report.get("NonVerbalAssessment") or {})
+                                visual_people = visual_section.get("Participants") or []
+                                visual_section["Participants"] = [
+                                    dict(item) for item in visual_people
+                                    if str(item.get("Name") or "").strip() == str(final_speaker_map.get(sid, "")).strip()
+                                ]
+                                individual_report["NonVerbalAssessment"] = visual_section
+                                try:
+                                    save_gd_video_assessment(
+                                        scholar_id, topic_for_save,
+                                        [{"SpeakerID": sid, "Name": individual_person["Name"], "ScholarID": scholar_id}],
+                                        all_segments, individual_report, video_filename_for_save,
+                                        source_type="Video GD",
+                                    )
+                                    saved_map[sid] = scholar_id
+                                    saved_now.append(f"{final_speaker_map.get(sid, sid)} → {scholar_id}")
+                                except Exception as save_exc:
+                                    save_errors.append(f"{final_speaker_map.get(sid, sid)} ({scholar_id}): {save_exc}")
+                            st.session_state["uploaded_gd_manual_saved_map"] = saved_map
+                            if saved_now:
+                                st.success("Individual feedback saved: " + "; ".join(saved_now))
+                            if save_errors:
+                                for error in save_errors:
+                                    st.error("Could not save " + error)
+                            if not saved_now and not save_errors:
+                                st.info("No new confirmed speaker-to-student links were available to save.")
+                    else:
+                        st.info("Choose a Scholar ID only when you can confidently match the speaker to the student. Unassigned speakers will remain in the downloadable group report and will not be linked to an individual account.")
+                unresolved = [sid for sid in final_speaker_map if sid not in (st.session_state.get("uploaded_gd_manual_saved_map", {}) or {})]
                 if unresolved:
                     unresolved_labels = ", ".join(final_speaker_map.get(sid, sid) for sid in unresolved)
-                    st.warning("These speakers could not be linked safely and were not saved to an individual student account: " + unresolved_labels + ". The group report remains available; no student identity was guessed.")
+                    st.caption("Still awaiting confirmed identity: " + unresolved_labels + ". The group report remains available; no identity has been guessed.")
                 readable_feedback = [
                     "IPER PEPTECH — GROUP DISCUSSION FEEDBACK",
                     f"Topic: {st.session_state.get('uploaded_gd_topic_processed', video_topic.strip())}",
