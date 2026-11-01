@@ -7661,50 +7661,104 @@ Return ONLY valid JSON matching this exact structure:
 }}
 """
                     try:
-                        response = client.chat.completions.create(
-                            model=GROQ_MODEL,
-                            messages=[
-                                {"role": "system", "content": "You are an exceptionally strict, evidence-based MBA interview assessor for an English-medium placement assessment. Technical marks must be earned from demonstrated correctness; when in doubt, award less technical credit. Communication must be assessed strictly for professional English usage. Hindi/Hinglish code-switching is a communication weakness in this English assessment and should reduce the communication score; never penalize accent alone. Return only the requested JSON."},
-                                {"role": "user", "content": eval_prompt},
-                            ],
-                            temperature=0.15,
-                            response_format={
-                                "type": "json_schema",
-                                "json_schema": {
-                                    "name": "iper_interview_assessment",
-                                    "strict": True,
-                                    "schema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "CandidateName": {"type": "string"},
-                                            "CommunicationScore": {"type": "integer", "minimum": 0, "maximum": 100},
-                                            "TechnicalKnowledgeScore": {"type": "integer", "minimum": 0, "maximum": 100},
-                                            "FinalScore": {"type": "integer", "minimum": 0, "maximum": 100},
-                                            "CommunicationAssessment": {"type": "string"},
-                                            "TechnicalKnowledgeAssessment": {"type": "string"},
-                                            "TechnicalCorrectness": {"type": "string"},
-                                            "CorrectPoints": {"type": "array", "items": {"type": "string"}},
-                                            "TechnicalErrorsOrGaps": {"type": "array", "items": {"type": "string"}},
-                                            "GrammarIssues": {"type": "array", "items": {"type": "string"}},
-                                            "FillerWordsUsed": {"type": "array", "items": {"type": "object", "properties": {"word": {"type": "string"}, "count": {"type": "integer", "minimum": 0}}, "required": ["word", "count"], "additionalProperties": False}},
-                                            "RateOfSpeechAssessment": {"type": "string"},
-                                            "ToneAssessment": {"type": "string"},
-                                            "ClarityAssessment": {"type": "string"},
-                                            "CommunicationStrengths": {"type": "array", "items": {"type": "string"}},
-                                            "CommunicationImprovements": {"type": "array", "items": {"type": "string"}},
-                                            "TechnicalStrengths": {"type": "array", "items": {"type": "string"}},
-                                            "TechnicalImprovements": {"type": "array", "items": {"type": "string"}},
-                                            "KeyCorrections": {"type": "array", "items": {"type": "string"}},
-                                            "BenchmarkAnswer": {"type": "string"},
-                                            "NextPracticeFocus": {"type": "string"}
-                                        },
-                                        "required": ["CandidateName", "CommunicationScore", "TechnicalKnowledgeScore", "FinalScore", "CommunicationAssessment", "TechnicalKnowledgeAssessment", "TechnicalCorrectness", "CorrectPoints", "TechnicalErrorsOrGaps", "GrammarIssues", "FillerWordsUsed", "RateOfSpeechAssessment", "ToneAssessment", "ClarityAssessment", "CommunicationStrengths", "CommunicationImprovements", "TechnicalStrengths", "TechnicalImprovements", "KeyCorrections", "BenchmarkAnswer", "NextPracticeFocus"],
-                                        "additionalProperties": False
-                                    }
+                        # Retry only the assessment-generation step. The transcript and
+                        # deterministic metrics are retained, and scoring/persistence run once
+                        # only after a valid JSON response has been obtained.
+                        assessment_response_format = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "iper_interview_assessment",
+                                "strict": True,
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "CandidateName": {"type": "string"},
+                                        "CommunicationScore": {"type": "integer", "minimum": 0, "maximum": 100},
+                                        "TechnicalKnowledgeScore": {"type": "integer", "minimum": 0, "maximum": 100},
+                                        "FinalScore": {"type": "integer", "minimum": 0, "maximum": 100},
+                                        "CommunicationAssessment": {"type": "string"},
+                                        "TechnicalKnowledgeAssessment": {"type": "string"},
+                                        "TechnicalCorrectness": {"type": "string"},
+                                        "CorrectPoints": {"type": "array", "items": {"type": "string"}},
+                                        "TechnicalErrorsOrGaps": {"type": "array", "items": {"type": "string"}},
+                                        "GrammarIssues": {"type": "array", "items": {"type": "string"}},
+                                        "FillerWordsUsed": {"type": "array", "items": {"type": "object", "properties": {"word": {"type": "string"}, "count": {"type": "integer", "minimum": 0}}, "required": ["word", "count"], "additionalProperties": False}},
+                                        "RateOfSpeechAssessment": {"type": "string"},
+                                        "ToneAssessment": {"type": "string"},
+                                        "ClarityAssessment": {"type": "string"},
+                                        "CommunicationStrengths": {"type": "array", "items": {"type": "string"}},
+                                        "CommunicationImprovements": {"type": "array", "items": {"type": "string"}},
+                                        "TechnicalStrengths": {"type": "array", "items": {"type": "string"}},
+                                        "TechnicalImprovements": {"type": "array", "items": {"type": "string"}},
+                                        "KeyCorrections": {"type": "array", "items": {"type": "string"}},
+                                        "BenchmarkAnswer": {"type": "string"},
+                                        "NextPracticeFocus": {"type": "string"}
+                                    },
+                                    "required": ["CandidateName", "CommunicationScore", "TechnicalKnowledgeScore", "FinalScore", "CommunicationAssessment", "TechnicalKnowledgeAssessment", "TechnicalCorrectness", "CorrectPoints", "TechnicalErrorsOrGaps", "GrammarIssues", "FillerWordsUsed", "RateOfSpeechAssessment", "ToneAssessment", "ClarityAssessment", "CommunicationStrengths", "CommunicationImprovements", "TechnicalStrengths", "TechnicalImprovements", "KeyCorrections", "BenchmarkAnswer", "NextPracticeFocus"],
+                                    "additionalProperties": False
                                 }
                             }
-                        )
-                        eval_result = json.loads(response.choices[0].message.content or "{}")
+                        }
+
+                        assessment_messages = [
+                            {"role": "system", "content": "You are an exceptionally strict, evidence-based MBA interview assessor for an English-medium placement assessment. Technical marks must be earned from demonstrated correctness; when in doubt, award less technical credit. Communication must be assessed strictly for professional English usage. Hindi/Hinglish code-switching is a communication weakness in this English assessment and should reduce the communication score; never penalize accent alone. Return only the requested JSON."},
+                            {"role": "user", "content": eval_prompt},
+                        ]
+                        last_assessment_error = None
+                        eval_result = None
+                        for assessment_attempt in range(1, 4):
+                            try:
+                                response = client.chat.completions.create(
+                                    model=GROQ_MODEL,
+                                    messages=assessment_messages,
+                                    temperature=0.15,
+                                    response_format=assessment_response_format,
+                                )
+                                if not getattr(response, "choices", None):
+                                    raise ValueError("The assessment service returned no choices.")
+                                message = response.choices[0].message
+                                response_text = getattr(message, "content", None)
+                                if not response_text or not str(response_text).strip():
+                                    raise ValueError("The assessment service returned an empty response.")
+                                eval_result = json.loads(response_text)
+                                if not isinstance(eval_result, dict):
+                                    raise ValueError("The assessment response was not a JSON object.")
+                                required_assessment_keys = [
+                                    "CandidateName", "CommunicationScore", "TechnicalKnowledgeScore", "FinalScore",
+                                    "CommunicationAssessment", "TechnicalKnowledgeAssessment", "TechnicalCorrectness",
+                                    "CorrectPoints", "TechnicalErrorsOrGaps", "GrammarIssues", "FillerWordsUsed",
+                                    "RateOfSpeechAssessment", "ToneAssessment", "ClarityAssessment",
+                                    "CommunicationStrengths", "CommunicationImprovements", "TechnicalStrengths",
+                                    "TechnicalImprovements", "KeyCorrections", "BenchmarkAnswer", "NextPracticeFocus"
+                                ]
+                                missing_assessment_keys = [key for key in required_assessment_keys if key not in eval_result]
+                                if missing_assessment_keys:
+                                    raise ValueError("Assessment JSON is missing required fields: " + ", ".join(missing_assessment_keys))
+                                break
+                            except Exception as assessment_error:
+                                last_assessment_error = assessment_error
+                                error_text = str(assessment_error).lower()
+                                status_code = getattr(assessment_error, "status_code", None)
+                                retryable = (
+                                    isinstance(assessment_error, (ValueError, json.JSONDecodeError))
+                                    or "json_validate_failed" in error_text
+                                    or "failed to validate json" in error_text
+                                    or status_code == 429
+                                    or (isinstance(status_code, int) and status_code >= 500)
+                                    or "timeout" in error_text
+                                    or "temporarily unavailable" in error_text
+                                    or "connection" in error_text
+                                )
+                                if assessment_attempt >= 3 or not retryable:
+                                    raise
+                                st.warning(
+                                    f"Assessment response was not valid (attempt {assessment_attempt}/3). "
+                                    "Retrying automatically; your transcript is preserved."
+                                )
+                                time.sleep(1.0 * assessment_attempt)
+
+                        if eval_result is None:
+                            raise RuntimeError(f"Interview assessment could not be completed after 3 attempts: {last_assessment_error}")
 
                         comm_score = max(0, min(100, int(eval_result.get("CommunicationScore", 0))))
                         tech_score = max(0, min(100, int(eval_result.get("TechnicalKnowledgeScore", 0))))
