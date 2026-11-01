@@ -66,6 +66,30 @@ IPER_PEPTECH_LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABrUA
 VIDEO_STORAGE_DIR = "saved_videos"
 os.makedirs(VIDEO_STORAGE_DIR, exist_ok=True)
 
+
+def _cleanup_stale_saved_videos(max_age_seconds=24 * 60 * 60):
+    """Remove only this app's temporary video files after a 24-hour retention window."""
+    now = time.time()
+    try:
+        for filename in os.listdir(VIDEO_STORAGE_DIR):
+            if not (filename.startswith("video_") or filename.startswith("incoming_")):
+                continue
+            if not filename.lower().endswith((".mp4", ".webm")):
+                continue
+            path = os.path.join(VIDEO_STORAGE_DIR, filename)
+            try:
+                if os.path.isfile(path) and now - os.path.getmtime(path) > max_age_seconds:
+                    os.remove(path)
+            except OSError:
+                # A file may be in use or disappear between listing and cleanup.
+                pass
+    except OSError:
+        # Cleanup must never prevent the student portal from starting.
+        pass
+
+
+_cleanup_stale_saved_videos()
+
 # ------------------------------------------------------------------------------
 # 2. UI STYLING (NAVY BLUE & WHITE THEME)
 # ------------------------------------------------------------------------------
@@ -7471,9 +7495,11 @@ CANDIDATE CONTEXT:
             
             if uploaded_video is not None:
                 ts = time.strftime("%Y%m%d_%H%M%S")
+                # A timestamp alone can collide when multiple students upload in the same second.
+                upload_id = uuid.uuid4().hex[:12]
                 incoming_ext = "mp4" if uploaded_video.name.lower().endswith(".mp4") else "webm"
-                incoming_path = os.path.join(VIDEO_STORAGE_DIR, f"incoming_{ts}.{incoming_ext}")
-                saved_video_path = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}.mp4")
+                incoming_path = os.path.join(VIDEO_STORAGE_DIR, f"incoming_{ts}_{upload_id}.{incoming_ext}")
+                saved_video_path = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}_{upload_id}.mp4")
                 
                 with open(incoming_path, "wb") as f:
                     f.write(uploaded_video.getvalue())
@@ -7484,7 +7510,7 @@ CANDIDATE CONTEXT:
                             saved_video_path = convert_video_to_mp4(incoming_path)
                             if os.path.abspath(saved_video_path) != os.path.abspath(incoming_path):
                                 # convert_video_to_mp4 uses the input stem, so rename it to the final naming convention.
-                                target = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}.mp4")
+                                target = os.path.join(VIDEO_STORAGE_DIR, f"video_{ts}_{upload_id}.mp4")
                                 if os.path.abspath(saved_video_path) != os.path.abspath(target):
                                     os.replace(saved_video_path, target)
                                 saved_video_path = target
@@ -7513,11 +7539,17 @@ CANDIDATE CONTEXT:
                         try: os.remove(incoming_path)
                         except OSError: pass
 
+        transcript_widget_key = f"pi_answer_transcript_q_{st.session_state.get('practice_question_index', 0)}"
+        # Initialise the widget's session-state value before creating the widget.
+        # Supplying both `value=` and a pre-populated key triggers Streamlit's
+        # widget-state warning and can produce inconsistent transcript behaviour.
+        if extracted_transcript and extracted_transcript.strip() and transcript_widget_key not in st.session_state:
+            st.session_state[transcript_widget_key] = extracted_transcript.strip()
+
         final_response_text = st.text_area(
-            "Answer Transcript (Review or Edit Text Before Submitting):", 
-            value=extracted_transcript,
+            "Answer Transcript (Review or Edit Text Before Submitting):",
             height=140,
-            key=f"pi_answer_transcript_q_{st.session_state.get('practice_question_index', 0)}"
+            key=transcript_widget_key
         )
 
         if st.button("Submit Response for Feedback"):
