@@ -6,6 +6,7 @@ import tempfile
 import time
 import json
 import queue
+import threading
 import wave
 import re
 import unicodedata
@@ -952,9 +953,13 @@ except ImportError:
 try:
     import psycopg2
     from psycopg2 import IntegrityError as PostgresIntegrityError
+    from psycopg2.pool import ThreadedConnectionPool
+    from psycopg2.extensions import TRANSACTION_STATUS_IDLE
     POSTGRES_AVAILABLE = True
 except ImportError:
     psycopg2 = None
+    ThreadedConnectionPool = None
+    TRANSACTION_STATUS_IDLE = 0
     PostgresIntegrityError = Exception
     POSTGRES_AVAILABLE = False
 
@@ -1147,11 +1152,57 @@ class PostgresCursorWrapper:
         return [HybridRow(columns, row) for row in rows]
 
 
+class PostgresPoolState:
+    """Process-wide bounded PostgreSQL pool with a short wait for available slots."""
+    def __init__(self, url, minconn=1, maxconn=8):
+        self.pool = ThreadedConnectionPool(minconn, maxconn, url, connect_timeout=10)
+        self.semaphore = threading.BoundedSemaphore(maxconn)
+        self.acquire_timeout = 15
+
+    def acquire(self):
+        if not self.semaphore.acquire(timeout=self.acquire_timeout):
+            raise RuntimeError(
+                "The database is busy handling other requests. Please wait a few seconds and try again."
+            )
+        try:
+            conn = self.pool.getconn()
+            if conn.closed:
+                self.pool.putconn(conn, close=True)
+                conn = self.pool.getconn()
+            return conn
+        except Exception:
+            self.semaphore.release()
+            raise
+
+    def release(self, conn):
+        close_connection = False
+        try:
+            if conn is None or conn.closed:
+                close_connection = True
+            elif conn.get_transaction_status() != TRANSACTION_STATUS_IDLE:
+                # Never return a connection with an open or aborted transaction.
+                conn.rollback()
+        except Exception:
+            close_connection = True
+        finally:
+            try:
+                self.pool.putconn(conn, close=close_connection)
+            finally:
+                self.semaphore.release()
+
+
+@st.cache_resource(show_spinner=False)
+def get_postgres_pool(url, maxconn=8):
+    """Create one thread-safe pool per app process and database URL."""
+    maxconn = max(2, min(int(maxconn), 20))
+    return PostgresPoolState(url, minconn=1, maxconn=maxconn)
+
+
 class PostgresConnectionWrapper:
-    """Small compatibility layer so the existing SQLite-style SQL can run on PostgreSQL."""
-    def __init__(self, url):
-        self.conn = psycopg2.connect(url, connect_timeout=15)
-        self.conn.autocommit = False
+    """SQLite-compatible SQL wrapper backed by a pooled PostgreSQL connection."""
+    def __init__(self, pool_state, connection):
+        self._pool_state = pool_state
+        self.conn = connection
 
     @staticmethod
     def _translate_sql(sql):
@@ -1201,7 +1252,10 @@ class PostgresConnectionWrapper:
         self.conn.rollback()
 
     def close(self):
-        self.conn.close()
+        if self.conn is not None:
+            conn = self.conn
+            self.conn = None
+            self._pool_state.release(conn)
 
 
 def is_valid_iper_email(email):
@@ -1217,7 +1271,12 @@ def get_db_connection():
                 "DATABASE_URL is configured, but psycopg2-binary is not installed. "
                 "Add psycopg2-binary to requirements.txt and redeploy."
             )
-        return PostgresConnectionWrapper(DATABASE_URL)
+        try:
+            configured_pool_size = int(os.getenv("DB_POOL_MAXCONN", "8"))
+        except (TypeError, ValueError):
+            configured_pool_size = 8
+        pool_state = get_postgres_pool(DATABASE_URL, configured_pool_size)
+        return PostgresConnectionWrapper(pool_state, pool_state.acquire())
 
     conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -1940,6 +1999,11 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
 def init_database():
     conn = get_db_connection()
     try:
+        if USING_POSTGRES:
+            # Transaction-scoped lock serialises schema changes/backfills when
+            # multiple Streamlit app workers start against the same database.
+            conn.execute("SELECT pg_advisory_xact_lock(731942, 20261101)")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS students (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2188,6 +2252,11 @@ def init_database():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_mentor_mentees_mentor ON mentor_mentees (mentor_id, scholar_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_roster_section ON student_roster (section, active)")
+        # Additive indexes for frequent student-history and GD/mentor lookups.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_interview_attempts_student_id ON interview_attempts (student_id, id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_gd_assessments_scholar_id ON gd_assessments (scholar_id, id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_gd_participants_slot_active ON gd_participants (slot, active)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mentor_notes_mentor_student_date ON mentor_notes (mentor_id, scholar_id, created_at)")
 
         # Central, append-only activity history for mentor MIS integration. Existing
         # detailed assessment tables remain the source of truth; this table is a
@@ -2971,8 +3040,10 @@ def generate_gd_code():
     while True:
         code = "".join(secrets.choice(alphabet) for _ in range(6))
         conn = get_db_connection()
-        exists = conn.execute("SELECT 1 FROM gd_rooms WHERE code = ?", (code,)).fetchone()
-        conn.close()
+        try:
+            exists = conn.execute("SELECT 1 FROM gd_rooms WHERE code = ?", (code,)).fetchone()
+        finally:
+            conn.close()
         if not exists:
             return code
 
@@ -2981,15 +3052,17 @@ def reset_gd_slot(slot, topic):
     code = generate_gd_code()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_db_connection()
-    conn.execute("DELETE FROM gd_participants WHERE slot = ?", (slot,))
-    conn.execute("""
-        UPDATE gd_rooms
-        SET code=?, topic=?, status='Open', created_at=?, started_at=NULL, ended_at=NULL, recording_status='Not Started'
-        WHERE slot=?
-    """, (code, topic, now, slot))
-    conn.commit()
-    conn.close()
-    return code
+    try:
+        conn.execute("DELETE FROM gd_participants WHERE slot = ?", (slot,))
+        conn.execute("""
+            UPDATE gd_rooms
+            SET code=?, topic=?, status='Open', created_at=?, started_at=NULL, ended_at=NULL, recording_status='Not Started'
+            WHERE slot=?
+        """, (code, topic, now, slot))
+        conn.commit()
+        return code
+    finally:
+        conn.close()
 
 
 def create_student_gd_session(topic, host_student):
@@ -3063,21 +3136,25 @@ def end_student_gd_session(code, scholar_id):
 
 def get_gd_rooms():
     conn = get_db_connection()
-    rows = conn.execute("SELECT * FROM gd_rooms ORDER BY slot").fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("SELECT * FROM gd_rooms ORDER BY slot").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def get_gd_participants(slot):
     conn = get_db_connection()
-    rows = conn.execute("""
-        SELECT scholar_id, first_name, last_name, joined_at
-        FROM gd_participants
-        WHERE slot=? AND active=1
-        ORDER BY joined_at
-    """, (slot,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("""
+            SELECT scholar_id, first_name, last_name, joined_at
+            FROM gd_participants
+            WHERE slot=? AND active=1
+            ORDER BY joined_at
+        """, (slot,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def join_gd_room(slot, code, student):
@@ -3111,46 +3188,54 @@ def join_gd_room(slot, code, student):
 
 def leave_gd_room(slot, scholar_id):
     conn = get_db_connection()
-    conn.execute("UPDATE gd_participants SET active=0, left_at=? WHERE slot=? AND scholar_id=?",
-                 (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), slot, scholar_id))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("UPDATE gd_participants SET active=0, left_at=? WHERE slot=? AND scholar_id=?",
+                     (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), slot, scholar_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def set_gd_status(slot, status, recording_status=None):
     conn = get_db_connection()
-    if status == "Active":
-        conn.execute("UPDATE gd_rooms SET status='Active', started_at=? WHERE slot=?",
-                     (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), slot))
-    elif status == "Ended":
-        conn.execute("UPDATE gd_rooms SET status='Ended', ended_at=?, recording_status=COALESCE(?, recording_status) WHERE slot=?",
-                     (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), recording_status, slot))
-    else:
-        conn.execute("UPDATE gd_rooms SET status=?, recording_status=COALESCE(?, recording_status) WHERE slot=?",
-                     (status, recording_status, slot))
-    conn.commit()
-    conn.close()
+    try:
+        if status == "Active":
+            conn.execute("UPDATE gd_rooms SET status='Active', started_at=? WHERE slot=?",
+                         (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), slot))
+        elif status == "Ended":
+            conn.execute("UPDATE gd_rooms SET status='Ended', ended_at=?, recording_status=COALESCE(?, recording_status) WHERE slot=?",
+                         (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), recording_status, slot))
+        else:
+            conn.execute("UPDATE gd_rooms SET status=?, recording_status=COALESCE(?, recording_status) WHERE slot=?",
+                         (status, recording_status, slot))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def save_gd_feedback(slot, student, voice, perspective, participation, camera, strengths, improvements):
     conn = get_db_connection()
-    conn.execute("""
-        INSERT INTO gd_feedback
-        (slot, scholar_id, voice_score, perspective_score, participation_score, camera_clarity_score, strengths, improvements, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (slot, student["scholar_id"], voice, perspective, participation, camera,
-          strengths.strip(), improvements.strip(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("""
+            INSERT INTO gd_feedback
+            (slot, scholar_id, voice_score, perspective_score, participation_score, camera_clarity_score, strengths, improvements, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (slot, student["scholar_id"], voice, perspective, participation, camera,
+              strengths.strip(), improvements.strip(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_student_gd_feedback(scholar_id):
     conn = get_db_connection()
-    rows = conn.execute("""
-        SELECT * FROM gd_feedback WHERE scholar_id=? ORDER BY id DESC
-    """, (scholar_id,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        rows = conn.execute("""
+            SELECT * FROM gd_feedback WHERE scholar_id=? ORDER BY id DESC
+        """, (scholar_id,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 
@@ -3806,64 +3891,68 @@ ATTEMPTED RESPONSE:
 
 def save_gd_video_assessment(scholar_id, topic, participants, segments, report, video_filename, source_type="Video GD"):
     conn = get_db_connection()
-    duration_seconds = 0.0
     try:
-        ends = [float(seg.get("end", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
-        starts = [float(seg.get("start", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
-        if source_type == "AI Voice GD":
-            # AI Voice GD stores measured speaking duration per student turn.
-            # Sum those values so Progress and the GD room show real practice time.
-            duration_seconds = sum(float(seg.get("duration_sec", 0) or 0) for seg in (segments or []) if isinstance(seg, dict))
-        elif ends:
-            duration_seconds = max(0.0, max(ends) - (min(starts) if starts else 0.0))
-    except Exception:
         duration_seconds = 0.0
-    stored_report = dict(report or {})
-    stored_report.setdefault("SourceType", source_type)
+        try:
+            ends = [float(seg.get("end", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
+            starts = [float(seg.get("start", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
+            if source_type == "AI Voice GD":
+                # AI Voice GD stores measured speaking duration per student turn.
+                # Sum those values so Progress and the GD room show real practice time.
+                duration_seconds = sum(float(seg.get("duration_sec", 0) or 0) for seg in (segments or []) if isinstance(seg, dict))
+            elif ends:
+                duration_seconds = max(0.0, max(ends) - (min(starts) if starts else 0.0))
+        except Exception:
+            duration_seconds = 0.0
+        stored_report = dict(report or {})
+        stored_report.setdefault("SourceType", source_type)
 
-    created_at = activity_timestamp_now()
-    conn.execute("""
-        INSERT INTO gd_assessments
-        (scholar_id, topic, participant_names, transcript_json, report_json, video_filename, duration_seconds, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        scholar_id, topic,
-        json.dumps(participants, ensure_ascii=False),
-        json.dumps(segments, ensure_ascii=False),
-        json.dumps(stored_report, ensure_ascii=False),
-        video_filename, duration_seconds, created_at
-    ))
-    saved_row = conn.execute("SELECT id FROM gd_assessments WHERE scholar_id=? AND created_at=? ORDER BY id DESC LIMIT 1", (scholar_id, created_at)).fetchone()
-    gd_grade, gd_summary, gd_feedback = _gd_report_score_and_feedback(stored_report)
-    _insert_student_activity(
-        conn, scholar_id=scholar_id, activity_type="Group Discussion",
-        activity_timestamp=created_at, grade=gd_grade,
-        summary=f"{topic or 'Group Discussion'} — {gd_summary}",
-        duration_seconds=duration_seconds, feedback={"SourceType": source_type, **gd_feedback},
-        source_table="gd_assessments", source_record_id=(saved_row["id"] if saved_row else uuid.uuid4().hex),
-    )
-    conn.commit()
-    conn.close()
+        created_at = activity_timestamp_now()
+        conn.execute("""
+            INSERT INTO gd_assessments
+            (scholar_id, topic, participant_names, transcript_json, report_json, video_filename, duration_seconds, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            scholar_id, topic,
+            json.dumps(participants, ensure_ascii=False),
+            json.dumps(segments, ensure_ascii=False),
+            json.dumps(stored_report, ensure_ascii=False),
+            video_filename, duration_seconds, created_at
+        ))
+        saved_row = conn.execute("SELECT id FROM gd_assessments WHERE scholar_id=? AND created_at=? ORDER BY id DESC LIMIT 1", (scholar_id, created_at)).fetchone()
+        gd_grade, gd_summary, gd_feedback = _gd_report_score_and_feedback(stored_report)
+        _insert_student_activity(
+            conn, scholar_id=scholar_id, activity_type="Group Discussion",
+            activity_timestamp=created_at, grade=gd_grade,
+            summary=f"{topic or 'Group Discussion'} — {gd_summary}",
+            duration_seconds=duration_seconds, feedback={"SourceType": source_type, **gd_feedback},
+            source_table="gd_assessments", source_record_id=(saved_row["id"] if saved_row else uuid.uuid4().hex),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_gd_video_assessments(scholar_id):
     conn = get_db_connection()
-    rows = conn.execute("""
-        SELECT * FROM gd_assessments
-        WHERE scholar_id=?
-        ORDER BY id DESC
-    """, (scholar_id,)).fetchall()
-    conn.close()
-    result = []
-    for row in rows:
-        item = dict(row)
-        for key in ("participant_names", "transcript_json", "report_json"):
-            try:
-                item[key] = json.loads(item.get(key) or "[]")
-            except Exception:
-                item[key] = [] if key != "report_json" else {}
-        result.append(item)
-    return result
+    try:
+        rows = conn.execute("""
+            SELECT * FROM gd_assessments
+            WHERE scholar_id=?
+            ORDER BY id DESC
+        """, (scholar_id,)).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            for key in ("participant_names", "transcript_json", "report_json"):
+                try:
+                    item[key] = json.loads(item.get(key) or "[]")
+                except Exception:
+                    item[key] = [] if key != "report_json" else {}
+            result.append(item)
+        return result
+    finally:
+        conn.close()
 
 
 def get_ai_voice_gd_assessments(scholar_id):
