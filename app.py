@@ -56,8 +56,8 @@ ssl._create_default_https_context = ssl._create_unverified_context
 st.set_page_config(page_title="IPER PEPTECH", layout="wide")
 
 # Temporarily disabled options (set to True to re-enable without removing their implementation).
-ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY = True
-ENABLE_VIDEO_INTERVIEW_MODE = True
+ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY = False
+ENABLE_VIDEO_INTERVIEW_MODE = False
 ENABLE_GD_AUTO_NAME_IDENTIFICATION = False
 
 # Official IPER logo reused across login and authenticated portal branding.
@@ -4344,6 +4344,36 @@ def get_roster_identity_ids(roster_scholar_id):
         conn.close()
 
 
+def get_roster_identity_ids_bulk(roster_scholar_ids):
+    """Return canonical roster IDs and alternate login IDs with one database query."""
+    canonical_ids = sorted({
+        str(value or "").strip().upper()
+        for value in (roster_scholar_ids or [])
+        if str(value or "").strip()
+    })
+    if not canonical_ids:
+        return {}
+
+    identities = {scholar_id: {scholar_id} for scholar_id in canonical_ids}
+    conn = get_db_connection()
+    try:
+        placeholders = ", ".join(["?"] * len(canonical_ids))
+        rows = conn.execute(
+            f"""SELECT roster_scholar_id, login_scholar_id
+                FROM student_roster_aliases
+                WHERE UPPER(roster_scholar_id) IN ({placeholders})""",
+            tuple(canonical_ids),
+        ).fetchall()
+        for row in rows:
+            canonical = str(row["roster_scholar_id"] or "").strip().upper()
+            login_id = str(row["login_scholar_id"] or "").strip().upper()
+            if canonical in identities and login_id:
+                identities[canonical].add(login_id)
+        return {key: sorted(value) for key, value in identities.items()}
+    finally:
+        conn.close()
+
+
 def get_roster_canonical_id(login_scholar_id):
     """Resolve a student's login ID to the official roster ID when an alias exists."""
     login_id = str(login_scholar_id or "").strip().upper()
@@ -4646,7 +4676,9 @@ def render_mentor_portal():
 
         mentees = get_mentor_mentees(mentor_id)
         assigned_ids = [str(row["scholar_id"]).upper() for row in mentees]
-        identity_ids_by_roster = {sid: get_roster_identity_ids(sid) for sid in assigned_ids}
+        # Fetch all alternate login IDs in one query instead of opening one
+        # database connection per mentee.
+        identity_ids_by_roster = get_roster_identity_ids_bulk(assigned_ids)
         all_activity_ids = sorted({identity for ids in identity_ids_by_roster.values() for identity in ids})
         activity_rows = []
         if all_activity_ids:
