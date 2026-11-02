@@ -1164,13 +1164,37 @@ class PostgresPoolState:
             raise RuntimeError(
                 "The database is busy handling other requests. Please wait a few seconds and try again."
             )
+
+        conn = None
         try:
-            conn = self.pool.getconn()
-            if conn.closed:
-                self.pool.putconn(conn, close=True)
+            # A pooled connection can look open (conn.closed == 0) even after
+            # PostgreSQL or the network has dropped it. Validate it before
+            # handing it to a request, and discard stale connections safely.
+            for attempt in range(2):
                 conn = self.pool.getconn()
-            return conn
+                if conn.closed:
+                    self.pool.putconn(conn, close=True)
+                    conn = None
+                    continue
+
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT 1")
+                        cur.fetchone()
+                    return conn
+                except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                    self.pool.putconn(conn, close=True)
+                    conn = None
+                    if attempt == 1:
+                        raise
+
+            raise RuntimeError("Could not obtain a healthy PostgreSQL connection.")
         except Exception:
+            if conn is not None:
+                try:
+                    self.pool.putconn(conn, close=True)
+                except Exception:
+                    pass
             self.semaphore.release()
             raise
 
