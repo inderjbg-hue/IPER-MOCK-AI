@@ -2541,14 +2541,31 @@ def create_student(full_name, scholar_id, email, password):
 
 
 def authenticate_student(email, password):
+    """Authenticate with one safe retry if PostgreSQL drops the read connection."""
     email = email.strip().lower()
-    conn = get_db_connection()
-    try:
-        row = conn.execute(
-            "SELECT * FROM students WHERE email = ?", (email,)
-        ).fetchone()
-    finally:
-        conn.close()
+    row = None
+
+    # The lookup is read-only and idempotent, so it is safe to retry once on a
+    # dropped PostgreSQL connection. Never retry password/account mutations here.
+    for attempt in range(2):
+        conn = get_db_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM students WHERE email = ?", (email,)
+            ).fetchone()
+            break
+        except Exception as exc:
+            is_connection_error = (
+                POSTGRES_AVAILABLE
+                and isinstance(exc, (psycopg2.OperationalError, psycopg2.InterfaceError))
+            )
+            if not is_connection_error or attempt == 1:
+                raise
+            # Closing this wrapper returns the failed connection to the pool as
+            # discarded (the pool's release() checks transaction/connection state).
+            # The next iteration acquires a fresh database connection.
+        finally:
+            conn.close()
 
     if row and verify_password(password, row["password_hash"], row["password_salt"]):
         return dict(row)
