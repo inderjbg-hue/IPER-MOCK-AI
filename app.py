@@ -4530,8 +4530,58 @@ def render_peptech_usage_dashboard():
 def render_mentor_portal():
     mentor_id = int(st.session_state.get("mentor_id", 0) or 0)
     mentor_name = str(st.session_state.get("mentor_name", "Mentor") or "Mentor").strip()
-    st.title("Mentor Dashboard")
-    st.caption("IPER PEPTECH · Mentee performance and mentor feedback")
+    # Mentor-only visual layer: scoped to this page and independent of data/auth logic.
+    st.markdown("""
+    <style>
+      [data-testid="stSidebar"] {display:none !important;}
+      [data-testid="stAppViewContainer"] .main .block-container {
+        max-width: 1320px; padding-top: 1.8rem; padding-bottom: 3rem;
+      }
+      .mentor-hero {
+        background: linear-gradient(120deg,#24104f 0%,#4c258b 55%,#7250b5 100%);
+        border-radius: 20px; padding: 26px 30px; margin: 0 0 22px 0;
+        color: #fff; box-shadow: 0 10px 28px rgba(55,29,103,.16);
+      }
+      .mentor-hero .eyebrow {font-size:12px;letter-spacing:1.5px;text-transform:uppercase;
+        color:#d9cafa;font-weight:700;margin-bottom:8px;}
+      .mentor-hero h1 {color:#fff !important;font-size:32px !important;margin:0 0 6px 0;
+        letter-spacing:-.8px !important;}
+      .mentor-hero p {color:#eee7fb !important;margin:0;font-size:14px;}
+      div[data-testid="stMetric"] {
+        background:#fff;border:1px solid #e9e2f4;border-radius:15px;
+        padding:17px 18px;box-shadow:0 3px 12px rgba(38,20,70,.045);
+      }
+      div[data-testid="stMetricLabel"] p {color:#65577c !important;font-weight:600;}
+      div[data-testid="stMetricValue"] {color:#321b61 !important;font-weight:750;}
+      div[data-testid="stTabs"] button {font-weight:650;padding:13px 18px;}
+      div[data-testid="stTabs"] button[aria-selected="true"] {
+        color:#542b91 !important;border-bottom-color:#7046b5 !important;
+      }
+      div[data-testid="stExpander"] {
+        border:1px solid #e7e0f0;border-radius:13px;background:#fff;
+        overflow:hidden;margin-bottom:9px;
+      }
+      div[data-testid="stExpander"] summary {font-weight:600;}
+      div[data-testid="stForm"] {border:1px solid #e9e2f4;border-radius:15px;padding:18px;background:#fcfaff;}
+      .stButton button[kind="primary"],button[kind="primaryFormSubmit"] {
+        background:linear-gradient(110deg,#4b2588,#7048b5);border:0;border-radius:10px;
+        font-weight:650;min-height:42px;
+      }
+      div[data-baseweb="select"] > div, .stTextInput input, .stTextArea textarea {
+        border-radius:10px !important;border-color:#dcd2eb !important;
+      }
+      div[data-testid="stAlert"] {border-radius:12px;}
+      @media(max-width:700px) {
+        .mentor-hero {padding:20px;border-radius:15px;}
+        .mentor-hero h1 {font-size:25px !important;}
+      }
+    </style>
+    <section class="mentor-hero">
+      <div class="eyebrow">IPER PEPTECH · Student Development</div>
+      <h1>Mentor Workspace</h1>
+      <p>Track mentee progress, review practice performance and provide meaningful guidance.</p>
+    </section>
+    """, unsafe_allow_html=True)
 
     # The authenticated mentor identity is the security boundary. The dropdown
     # confirms the mentor's roster mapping; mentors cannot switch into another account.
@@ -4769,8 +4819,6 @@ def render_mentor_portal():
             elif entered:
                 st.error("Invalid administrator access key.")
 
-    st.sidebar.markdown("---")
-    st.sidebar.caption(f"Mentor: {mentor_name} · {st.session_state.get('mentor_email','')}")
 
 def render_authentication_panel():
     # Compact, unified authentication card. Authentication/database logic is preserved;
