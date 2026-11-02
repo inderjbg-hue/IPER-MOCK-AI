@@ -57,7 +57,7 @@ st.set_page_config(page_title="IPER PEPTECH", layout="wide")
 
 # Temporarily disabled options (set to True to re-enable without removing their implementation).
 ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY = False
-ENABLE_VIDEO_INTERVIEW_MODE = False
+ENABLE_VIDEO_INTERVIEW_MODE = True
 ENABLE_GD_AUTO_NAME_IDENTIFICATION = False
 
 # Official IPER logo reused across login and authenticated portal branding.
