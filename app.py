@@ -3883,47 +3883,95 @@ ATTEMPTED RESPONSE:
 
 
 def save_gd_video_assessment(scholar_id, topic, participants, segments, report, video_filename, source_type="Video GD"):
-    conn = get_db_connection()
-    try:
-        duration_seconds = 0.0
-        try:
-            ends = [float(seg.get("end", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
-            starts = [float(seg.get("start", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
-            if source_type == "AI Voice GD":
-                # AI Voice GD stores measured speaking duration per student turn.
-                # Sum those values so Progress and the GD room show real practice time.
-                duration_seconds = sum(float(seg.get("duration_sec", 0) or 0) for seg in (segments or []) if isinstance(seg, dict))
-            elif ends:
-                duration_seconds = max(0.0, max(ends) - (min(starts) if starts else 0.0))
-        except Exception:
-            duration_seconds = 0.0
-        stored_report = dict(report or {})
-        stored_report.setdefault("SourceType", source_type)
+    """Persist a GD report, retrying once if PostgreSQL drops the SSL connection.
 
-        created_at = activity_timestamp_now()
-        conn.execute("""
-            INSERT INTO gd_assessments
-            (scholar_id, topic, participant_names, transcript_json, report_json, video_filename, duration_seconds, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            scholar_id, topic,
-            json.dumps(participants, ensure_ascii=False),
-            json.dumps(segments, ensure_ascii=False),
-            json.dumps(stored_report, ensure_ascii=False),
-            video_filename, duration_seconds, created_at
-        ))
-        saved_row = conn.execute("SELECT id FROM gd_assessments WHERE scholar_id=? AND created_at=? ORDER BY id DESC LIMIT 1", (scholar_id, created_at)).fetchone()
-        gd_grade, gd_summary, gd_feedback = _gd_report_score_and_feedback(stored_report)
-        _insert_student_activity(
-            conn, scholar_id=scholar_id, activity_type="Group Discussion",
-            activity_timestamp=created_at, grade=gd_grade,
-            summary=f"{topic or 'Group Discussion'} — {gd_summary}",
-            duration_seconds=duration_seconds, feedback={"SourceType": source_type, **gd_feedback},
-            source_table="gd_assessments", source_record_id=(saved_row["id"] if saved_row else uuid.uuid4().hex),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    The timestamp is generated once and reused as a lightweight idempotency key.
+    If the connection drops during COMMIT, the next connection checks whether the
+    report was already committed before attempting another INSERT.
+    """
+    duration_seconds = 0.0
+    try:
+        ends = [float(seg.get("end", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
+        starts = [float(seg.get("start", 0) or 0) for seg in (segments or []) if isinstance(seg, dict)]
+        if source_type == "AI Voice GD":
+            duration_seconds = sum(float(seg.get("duration_sec", 0) or 0) for seg in (segments or []) if isinstance(seg, dict))
+        elif ends:
+            duration_seconds = max(0.0, max(ends) - (min(starts) if starts else 0.0))
+    except Exception:
+        duration_seconds = 0.0
+
+    stored_report = dict(report or {})
+    stored_report.setdefault("SourceType", source_type)
+    created_at = activity_timestamp_now()
+    scholar_id = str(scholar_id or "").strip().upper()
+    payload = (
+        scholar_id, topic,
+        json.dumps(participants, ensure_ascii=False),
+        json.dumps(segments, ensure_ascii=False),
+        json.dumps(stored_report, ensure_ascii=False),
+        video_filename, duration_seconds, created_at,
+    )
+
+    last_error = None
+    max_attempts = 2 if DATABASE_URL else 1
+    for attempt in range(max_attempts):
+        conn = None
+        try:
+            conn = get_db_connection()
+
+            # A previous COMMIT may have succeeded even if its SSL response was lost.
+            existing_row = conn.execute(
+                "SELECT id FROM gd_assessments WHERE scholar_id=? AND created_at=? AND video_filename=? ORDER BY id DESC LIMIT 1",
+                (scholar_id, created_at, video_filename),
+            ).fetchone()
+            if existing_row:
+                conn.close()
+                return existing_row["id"]
+
+            conn.execute("""
+                INSERT INTO gd_assessments
+                (scholar_id, topic, participant_names, transcript_json, report_json, video_filename, duration_seconds, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, payload)
+            saved_row = conn.execute(
+                "SELECT id FROM gd_assessments WHERE scholar_id=? AND created_at=? AND video_filename=? ORDER BY id DESC LIMIT 1",
+                (scholar_id, created_at, video_filename),
+            ).fetchone()
+            gd_grade, gd_summary, gd_feedback = _gd_report_score_and_feedback(stored_report)
+            _insert_student_activity(
+                conn, scholar_id=scholar_id, activity_type="Group Discussion",
+                activity_timestamp=created_at, grade=gd_grade,
+                summary=f"{topic or 'Group Discussion'} — {gd_summary}",
+                duration_seconds=duration_seconds, feedback={"SourceType": source_type, **gd_feedback},
+                source_table="gd_assessments", source_record_id=(saved_row["id"] if saved_row else uuid.uuid4().hex),
+            )
+            conn.commit()
+            result_id = saved_row["id"] if saved_row else None
+            conn.close()
+            return result_id
+        except Exception as save_error:
+            last_error = save_error
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+            transient_pg_error = DATABASE_URL and POSTGRES_AVAILABLE and isinstance(
+                save_error, (psycopg2.OperationalError, psycopg2.InterfaceError)
+            )
+            if not transient_pg_error or attempt + 1 >= max_attempts:
+                raise
+            # Re-open a fresh pooled connection on the next iteration. No AI work
+            # is repeated; only the short database persistence transaction retries.
+            time.sleep(0.25)
+
+    if last_error:
+        raise last_error
 
 
 def get_gd_video_assessments(scholar_id):
