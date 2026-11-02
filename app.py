@@ -56,7 +56,7 @@ ssl._create_default_https_context = ssl._create_unverified_context
 st.set_page_config(page_title="IPER PEPTECH", layout="wide")
 
 # Temporarily disabled options (set to True to re-enable without removing their implementation).
-ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY = False
+ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY = True
 ENABLE_VIDEO_INTERVIEW_MODE = True
 ENABLE_GD_AUTO_NAME_IDENTIFICATION = False
 
