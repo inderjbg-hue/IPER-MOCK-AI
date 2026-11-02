@@ -1633,6 +1633,7 @@ def clear_generated_resume_files():
     """Invalidate previously generated files whenever the editable resume changes."""
     st.session_state.pop("generated_resume_docx_bytes", None)
     st.session_state.pop("generated_resume_pdf_bytes", None)
+    st.session_state.pop("generated_resume_png_pages", None)
 
 
 def on_resume_editor_change():
@@ -1769,12 +1770,12 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
         "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
         "INTERNSHIP": "INTERNSHIP", "INTERNSHIPS": "INTERNSHIP",
         "PROJECTS": "SCHOLASTIC ACTIVITIES", "KEY PROJECTS": "SCHOLASTIC ACTIVITIES", "ACADEMIC PROJECTS": "SCHOLASTIC ACTIVITIES", "PROJECTS & ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES",
-        "CERTIFICATIONS": "SCHOLASTIC ACTIVITIES", "CERTIFICATES": "SCHOLASTIC ACTIVITIES", "COURSES": "SCHOLASTIC ACTIVITIES", "COURSEWORK": "SCHOLASTIC ACTIVITIES",
-        "ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES", "AWARDS": "SCHOLASTIC ACTIVITIES", "HONOURS": "SCHOLASTIC ACTIVITIES", "SCHOLASTIC ACTIVITIES": "SCHOLASTIC ACTIVITIES",
+        "CERTIFICATIONS": "CERTIFICATIONS", "CERTIFICATES": "CERTIFICATIONS", "COURSES": "CERTIFICATIONS", "COURSEWORK": "CERTIFICATIONS",
+        "ACHIEVEMENTS": "ACHIEVEMENTS", "AWARDS": "ACHIEVEMENTS", "HONOURS": "ACHIEVEMENTS", "SCHOLASTIC ACTIVITIES": "SCHOLASTIC ACTIVITIES",
         "POSITIONS OF RESPONSIBILITY": "EXTRACURRICULAR ACTIVITIES", "LEADERSHIP": "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "VOLUNTEERING": "EXTRACURRICULAR ACTIVITIES",
         "INTEREST": "INTEREST", "INTERESTS": "INTEREST", "PROFESSIONAL INTERESTS": "INTEREST", "ADDITIONAL INFORMATION": "INTEREST", "PUBLICATIONS": "SCHOLASTIC ACTIVITIES", "RESEARCH": "SCHOLASTIC ACTIVITIES", "LANGUAGES": "INTEREST", "PROFESSIONAL AFFILIATIONS": "EXTRACURRICULAR ACTIVITIES", "PERSONAL DETAILS": "INTEREST", "REFERENCES": "INTEREST"
     }
-    order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY", "EXPERIENCE"]
+    order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS", "SCHOLASTIC ACTIVITIES", "CERTIFICATIONS", "ACHIEVEMENTS", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY", "EXPERIENCE"]
     sections = {key: [] for key in order}
     current = "CAREER OBJECTIVE"
     candidate_name_norm = re.sub(r"\s+", " ", str(candidate_name or "").strip()).casefold()
@@ -1884,6 +1885,142 @@ def build_professional_resume_docx(resume_text, candidate_name, email="", phone=
     return out.getvalue()
 
 
+def build_professional_resume_pngs(resume_text, candidate_name, email="", phone="", linkedin=""):
+    """Render matching high-resolution A4 PNG page(s) without an image-generation API."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError as exc:
+        raise RuntimeError("PNG export requires Pillow, which is normally included with Streamlit.") from exc
+
+    width, height = 1240, 1754  # A4 portrait at approximately 150 DPI
+    margin = 105
+    body_width = width - (2 * margin)
+    font_root = "/usr/share/fonts/truetype/dejavu"
+    def load_font(filename, size):
+        path = os.path.join(font_root, filename)
+        try:
+            return ImageFont.truetype(path, size=size)
+        except Exception:
+            return ImageFont.load_default()
+
+    name_font = load_font("DejaVuSans-Bold.ttf", 43)
+    heading_font = load_font("DejaVuSans-Bold.ttf", 22)
+    body_font = load_font("DejaVuSans.ttf", 19)
+    bold_font = load_font("DejaVuSans-Bold.ttf", 19)
+    small_font = load_font("DejaVuSans.ttf", 16)
+
+    aliases = {
+        "CAREER OBJECTIVE": "CAREER OBJECTIVE", "OBJECTIVE": "CAREER OBJECTIVE",
+        "PROFESSIONAL SUMMARY": "PROFESSIONAL SUMMARY", "SUMMARY": "PROFESSIONAL SUMMARY", "PROFILE": "PROFESSIONAL SUMMARY",
+        "EDUCATION": "EDUCATION", "EDUCATIONAL QUALIFICATIONS": "EDUCATION", "ACADEMIC QUALIFICATIONS": "EDUCATION",
+        "INTERNSHIP": "INTERNSHIP", "INTERNSHIPS": "INTERNSHIP",
+        "SKILLS": "SKILLS", "KEY SKILLS": "SKILLS", "TECHNICAL SKILLS": "SKILLS", "CORE SKILLS": "SKILLS", "CORE COMPETENCIES": "SKILLS",
+        "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE",
+        "SCHOLASTIC ACTIVITIES": "SCHOLASTIC ACTIVITIES", "PROJECTS": "SCHOLASTIC ACTIVITIES", "ACADEMIC PROJECTS": "SCHOLASTIC ACTIVITIES", "CERTIFICATIONS": "CERTIFICATIONS", "CERTIFICATES": "CERTIFICATIONS", "ACHIEVEMENTS": "ACHIEVEMENTS",
+        "EXTRACURRICULAR ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "POSITIONS OF RESPONSIBILITY": "EXTRACURRICULAR ACTIVITIES",
+        "INTEREST": "INTERESTS", "INTERESTS": "INTERESTS", "PROFESSIONAL INTERESTS": "INTERESTS",
+    }
+    order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "EXPERIENCE", "SKILLS", "SCHOLASTIC ACTIVITIES", "CERTIFICATIONS", "ACHIEVEMENTS", "EXTRACURRICULAR ACTIVITIES", "INTERESTS"]
+    sections = {key: [] for key in order}
+    current = "CAREER OBJECTIVE"
+    candidate_name_norm = re.sub(r"\s+", " ", str(candidate_name or "").strip()).casefold()
+    for raw in str(resume_text or "").splitlines():
+        line = unicodedata.normalize("NFKC", raw).strip()
+        if not line:
+            continue
+        if re.sub(r"\s+", " ", line).casefold() == candidate_name_norm:
+            continue
+        if re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", line, re.I):
+            continue
+        if re.match(r"^\s*(?:email|e-mail|contact(?: number)?|phone|mobile|telephone|linkedin|website|portfolio)\s*[:：-]", line, re.I):
+            continue
+        line = re.sub(r"^\s{0,3}#{1,6}\s*", "", line)
+        line = re.sub(r"\*{1,3}|__|`", "", line).strip()
+        normalized = re.sub(r"[^A-Z& ]", "", line.upper()).strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        if normalized in aliases:
+            current = aliases[normalized]
+            if current not in sections:
+                sections[current] = []
+                if current not in order:
+                    order.append(current)
+            continue
+        if normalized in {"NAME", "CANDIDATE NAME", "CONTACT", "CONTACT DETAILS"}:
+            continue
+        if re.search(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", line, re.I):
+            continue
+        sections.setdefault(current, []).append(line)
+
+    pages = []
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    y = 92
+    def new_page():
+        nonlocal image, draw, y
+        pages.append(image)
+        image = Image.new("RGB", (width, height), "white")
+        draw = ImageDraw.Draw(image)
+        y = 92
+    def wrap(text, font):
+        words = str(text).split()
+        lines, current_line = [], ""
+        for word in words:
+            candidate = (current_line + " " + word).strip()
+            if draw.textlength(candidate, font=font) <= body_width - 35 or not current_line:
+                current_line = candidate
+            else:
+                lines.append(current_line)
+                current_line = word
+        if current_line:
+            lines.append(current_line)
+        return lines
+    draw.text((margin, y), str(candidate_name or "CANDIDATE").strip().upper(), font=name_font, fill="#111111")
+    y += 66
+    contact = "  |  ".join(str(v).strip() for v in (email, phone, linkedin) if v and str(v).strip())
+    if contact:
+        for line in wrap(contact, small_font):
+            draw.text((margin, y), line, font=small_font, fill="#333333")
+            y += 25
+    y += 14
+    draw.line((margin, y, width-margin, y), fill="#222222", width=2)
+    y += 28
+    bullet_sections = {"SKILLS", "SCHOLASTIC ACTIVITIES", "CERTIFICATIONS", "ACHIEVEMENTS", "EXTRACURRICULAR ACTIVITIES", "INTERESTS"}
+    for heading in order:
+        content = sections.get(heading, [])
+        if not content:
+            continue
+        if y > height - 145:
+            new_page()
+        y += 10
+        draw.text((margin, y), heading, font=heading_font, fill="#111111")
+        y += 34
+        draw.line((margin, y, width-margin, y), fill="#777777", width=1)
+        y += 12
+        for item in content:
+            is_bullet = heading in bullet_sections or item.startswith(("-", "•", "*"))
+            item = re.sub(r"^[*•?)+\-\s]+", "", item).strip()
+            if not item:
+                continue
+            font = bold_font if re.match(r"^(Post|Position|Role)\s*:", item, re.I) else body_font
+            lines = wrap(item, font)
+            line_height = 29
+            required = len(lines) * line_height + 8
+            if y + required > height - 100:
+                new_page()
+            for idx, line in enumerate(lines):
+                prefix = "•  " if is_bullet and idx == 0 else ("   " if is_bullet else "")
+                draw.text((margin + (22 if is_bullet else 0), y), prefix + line, font=font, fill="#222222")
+                y += line_height
+            y += 5
+    pages.append(image)
+    output = []
+    for page in pages:
+        buf = BytesIO()
+        page.save(buf, format="PNG", optimize=True)
+        output.append(buf.getvalue())
+    return output
+
+
 def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="", linkedin=""):
     """Render a monochrome, single-column ATS-friendly PDF matching the Word resume structure."""
     if not REPORTLAB_AVAILABLE:
@@ -1929,12 +2066,12 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
         "EXPERIENCE": "EXPERIENCE", "WORK EXPERIENCE": "EXPERIENCE", "PROFESSIONAL EXPERIENCE": "EXPERIENCE", "EMPLOYMENT HISTORY": "EXPERIENCE",
         "INTERNSHIP": "INTERNSHIP", "INTERNSHIPS": "INTERNSHIP",
         "PROJECTS": "SCHOLASTIC ACTIVITIES", "KEY PROJECTS": "SCHOLASTIC ACTIVITIES", "ACADEMIC PROJECTS": "SCHOLASTIC ACTIVITIES", "PROJECTS & ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES",
-        "CERTIFICATIONS": "SCHOLASTIC ACTIVITIES", "CERTIFICATES": "SCHOLASTIC ACTIVITIES", "COURSES": "SCHOLASTIC ACTIVITIES", "COURSEWORK": "SCHOLASTIC ACTIVITIES",
-        "ACHIEVEMENTS": "SCHOLASTIC ACTIVITIES", "AWARDS": "SCHOLASTIC ACTIVITIES", "HONOURS": "SCHOLASTIC ACTIVITIES", "SCHOLASTIC ACTIVITIES": "SCHOLASTIC ACTIVITIES",
+        "CERTIFICATIONS": "CERTIFICATIONS", "CERTIFICATES": "CERTIFICATIONS", "COURSES": "CERTIFICATIONS", "COURSEWORK": "CERTIFICATIONS",
+        "ACHIEVEMENTS": "ACHIEVEMENTS", "AWARDS": "ACHIEVEMENTS", "HONOURS": "ACHIEVEMENTS", "SCHOLASTIC ACTIVITIES": "SCHOLASTIC ACTIVITIES",
         "POSITIONS OF RESPONSIBILITY": "EXTRACURRICULAR ACTIVITIES", "LEADERSHIP": "EXTRACURRICULAR ACTIVITIES", "ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "EXTRACURRICULAR ACTIVITIES": "EXTRACURRICULAR ACTIVITIES", "VOLUNTEERING": "EXTRACURRICULAR ACTIVITIES",
         "INTEREST": "INTEREST", "INTERESTS": "INTEREST", "PROFESSIONAL INTERESTS": "INTEREST", "ADDITIONAL INFORMATION": "INTEREST", "PUBLICATIONS": "SCHOLASTIC ACTIVITIES", "RESEARCH": "SCHOLASTIC ACTIVITIES", "LANGUAGES": "INTEREST", "PROFESSIONAL AFFILIATIONS": "EXTRACURRICULAR ACTIVITIES", "PERSONAL DETAILS": "INTEREST", "REFERENCES": "INTEREST"
     }
-    order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS", "SCHOLASTIC ACTIVITIES", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY", "EXPERIENCE"]
+    order = ["CAREER OBJECTIVE", "EDUCATION", "INTERNSHIP", "SKILLS", "SCHOLASTIC ACTIVITIES", "CERTIFICATIONS", "ACHIEVEMENTS", "EXTRACURRICULAR ACTIVITIES", "INTEREST", "PROFESSIONAL SUMMARY", "EXPERIENCE"]
     sections = {key: [] for key in order}
     current = "CAREER OBJECTIVE"
     candidate_name_norm = re.sub(r"\s+", " ", str(candidate_name or "").strip()).casefold()
@@ -7384,7 +7521,45 @@ Resume text:
             st.caption("Saved job description loaded. Use Reset JD for a different job opportunity.")
 
     st.markdown("---")
-    with st.expander("Optional: Edit or build your resume", expanded=False):
+    st.subheader("Build a Professional Resume")
+    st.caption("Create a first draft from your saved About Myself profile, then review and edit every statement before downloading.")
+    if st.button("Build My Resume from My Profile", key="build_resume_from_profile", use_container_width=True):
+        profile_keys = ["post_graduation", "mba_why_objectives", "institute_about", "mba_value_added", "specialization_why", "undergraduation", "school", "tenth_percentage", "twelfth_percentage", "skills_learned", "internship", "certification_courses", "activities_participated", "scholastic_activities", "achievements", "professional_interest", "about_yourself"]
+        profile_context = {key: str(profile.get(key, "") or "").strip() for key in profile_keys if str(profile.get(key, "") or "").strip()}
+        uploaded_context = st.session_state.get("resume_details") or {}
+        if not profile_context and not uploaded_context:
+            st.warning("Please complete About Myself or upload an existing resume first. The builder needs real student information to create an accurate resume.")
+        else:
+            build_prompt = f"""You are IPER PEPTECH's expert MBA/BBA placement resume writer. Create a polished, concise, one-column ATS-friendly resume for the student below. Write strong, professional, achievement-oriented sentences using precise action verbs. Improve grammar and phrasing substantially, but preserve the exact truth of every claim.
+
+Use this section order, omitting only sections with no supporting information: CAREER OBJECTIVE, EDUCATION, INTERNSHIP, SKILLS, SCHOLASTIC ACTIVITIES, ACHIEVEMENTS, EXTRACURRICULAR ACTIVITIES, INTERESTS.
+
+Writing rules:
+- Start with the student's name: {account_name}.
+- Education must come before Skills; list MBA/postgraduate, undergraduate, Class XII, then Class X when supplied.
+- Write a specific 1-2 sentence career objective based on the student's actual education, specialisation and interests. Do not use generic filler.
+- Convert rough notes into strong action-led sentences. Use verbs such as coordinated, analysed, executed, facilitated, researched, initiated, delivered, led, or achieved only when the evidence supports that level of contribution.
+- For achievements, state the action and verified outcome. Distinguish participation, contribution, coordination, leadership, winning and awards accurately.
+- Never convert participation into leadership or a win. Never invent numbers, percentages, dates, employers, roles, outcomes, skills, certifications or responsibilities.
+- Use metrics only when explicitly supplied. Do not keyword-stuff. Do not add personal details such as father's name, date of birth, marital status or full residential address.
+- Use clean plain text, simple headings and concise bullets. No tables, columns, icons, emojis, Markdown decoration, or commentary.
+- Return only the resume text.
+
+Student profile: {json.dumps(profile_context, ensure_ascii=False)}
+Existing verified resume data: {json.dumps(uploaded_context, ensure_ascii=False)}
+Existing editable resume text: {str(st.session_state.get('resume_editor_text', '') or '')[:7000]}"""
+            with st.spinner("Building a professional resume from your verified profile..."):
+                generated = get_groq_response(build_prompt)
+            if generated and not str(generated).strip().lower().startswith("error"):
+                draft = clean_resume_draft(generated)
+                st.session_state["resume_editor_text"] = draft
+                clear_generated_resume_files()
+                save_resume_workspace(student_id, uploaded_context, draft, st.session_state.get("resume_workspace_jd", ""), st.session_state.get("resume_source_filename", ""))
+                st.success("Your first resume draft is ready. Review and correct every detail before downloading.")
+            else:
+                st.error("The resume could not be generated right now. Your saved profile and existing draft have not been changed.")
+
+    with st.expander("Edit and refine your resume", expanded=True):
         st.caption("Most students can skip this and go straight to Analyse My Match. Edit or build a resume only if you need to.")
         st.info(
             "**Skills You Have Actually Learned**\n\n"
@@ -7565,7 +7740,7 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
             st.session_state["pending_reset_resume_workspace"] = True
             st.rerun()
     with create_col:
-        if st.button("Create PDF + Word Resumes", key="create_resume_both_formats", use_container_width=True):
+        if st.button("Create PDF + Word + PNG Resume", key="create_resume_both_formats", use_container_width=True):
             if not resume_editor_text.strip():
                 st.warning("Please add or edit your resume content first.")
             else:
@@ -7582,7 +7757,10 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
                     st.session_state["generated_resume_pdf_bytes"] = build_professional_resume_pdf(
                         resume_clean, account_name, email=docx_email, phone=docx_phone
                     )
-                    st.success("Your polished resume is ready in both PDF and editable Word formats.")
+                    st.session_state["generated_resume_png_pages"] = build_professional_resume_pngs(
+                        resume_clean, account_name, email=docx_email, phone=docx_phone
+                    )
+                    st.success("Your resume is ready in PDF, editable Word and PNG image format(s).")
                 except Exception as exc:
                     st.error(f"Could not create the resume files: {exc}")
     safe_resume_filename = re.sub(r"[^A-Za-z0-9_-]+", "_", account_name).strip("_") or "Student"
@@ -7603,6 +7781,25 @@ ATSScore must be an integer 0-100. Category must be exactly High Match, Good Mat
                 data=st.session_state["generated_resume_pdf_bytes"],
                 file_name=f"{safe_resume_filename}_Resume.pdf",
                 mime="application/pdf",
+                use_container_width=True,
+            )
+    png_pages = st.session_state.get("generated_resume_png_pages") or []
+    if png_pages:
+        if len(png_pages) == 1:
+            st.download_button(
+                "Download Resume Image (.png)", data=png_pages[0],
+                file_name=f"{safe_resume_filename}_Resume.png", mime="image/png",
+                use_container_width=True,
+            )
+        else:
+            import zipfile
+            png_zip = BytesIO()
+            with zipfile.ZipFile(png_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for page_number, page_bytes in enumerate(png_pages, start=1):
+                    archive.writestr(f"{safe_resume_filename}_Resume_Page_{page_number}.png", page_bytes)
+            st.download_button(
+                f"Download Resume Images ({len(png_pages)} PNG pages)", data=png_zip.getvalue(),
+                file_name=f"{safe_resume_filename}_Resume_PNG_Pages.zip", mime="application/zip",
                 use_container_width=True,
             )
 
