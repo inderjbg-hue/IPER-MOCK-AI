@@ -4533,46 +4533,58 @@ def render_mentor_portal():
     # Mentor-only visual layer: scoped to this page and independent of data/auth logic.
     st.markdown("""
     <style>
-      [data-testid="stSidebar"] {display:none !important;}
+      /* Mentor workspace only: IPER logo blue #433B86 */
       [data-testid="stAppViewContainer"] .main .block-container {
-        max-width: 1320px; padding-top: 1.8rem; padding-bottom: 3rem;
+        max-width: 1440px !important; padding: 1.35rem 2rem 3rem !important;
       }
       .mentor-hero {
-        background: linear-gradient(120deg,#24104f 0%,#4c258b 55%,#7250b5 100%);
-        border-radius: 20px; padding: 26px 30px; margin: 0 0 22px 0;
-        color: #fff; box-shadow: 0 10px 28px rgba(55,29,103,.16);
+        background: linear-gradient(118deg,#29245F 0%,#433B86 58%,#625AA5 100%);
+        border-radius: 18px; padding: 28px 32px; margin: 0 0 22px 0;
+        color: #fff; box-shadow: 0 12px 30px rgba(45,39,105,.18);
       }
-      .mentor-hero .eyebrow {font-size:12px;letter-spacing:1.5px;text-transform:uppercase;
-        color:#d9cafa;font-weight:700;margin-bottom:8px;}
-      .mentor-hero h1 {color:#fff !important;font-size:32px !important;margin:0 0 6px 0;
-        letter-spacing:-.8px !important;}
-      .mentor-hero p {color:#eee7fb !important;margin:0;font-size:14px;}
+      .mentor-highlight {background:linear-gradient(135deg,#F4F6FC,#FFFFFF);border:1px solid #DCE2F3;border-radius:15px;padding:18px 20px;min-height:132px;box-shadow:0 4px 14px rgba(42,61,125,.06);}
+      .mentor-highlight-label {font-size:10px;letter-spacing:1.1px;font-weight:800;color:#53658F;margin-bottom:9px;}
+      .mentor-highlight-name {font-size:20px;font-weight:800;color:#1D2B50;line-height:1.25;}
+      .mentor-highlight-value {font-size:16px;font-weight:750;color:#3657A7;margin-top:7px;}
+      .mentor-highlight-note {font-size:12px;color:#667085;margin-top:4px;}
+      .mentor-hero .eyebrow {font-size:12px;letter-spacing:1.45px;text-transform:uppercase;
+        color:#E5E3F5;font-weight:750;margin-bottom:8px;}
+      .mentor-hero h1 {color:#fff !important;font-size:32px !important;margin:0 0 7px 0;
+        letter-spacing:-.7px !important;line-height:1.15;}
+      .mentor-hero p {color:#F2F1FA !important;margin:0;font-size:14px;}
       div[data-testid="stMetric"] {
-        background:#fff;border:1px solid #e9e2f4;border-radius:15px;
-        padding:17px 18px;box-shadow:0 3px 12px rgba(38,20,70,.045);
+        background:#fff;border:1px solid #E3E2F0;border-radius:15px;
+        padding:17px 18px;box-shadow:0 4px 14px rgba(45,39,105,.055);
       }
-      div[data-testid="stMetricLabel"] p {color:#65577c !important;font-weight:600;}
-      div[data-testid="stMetricValue"] {color:#321b61 !important;font-weight:750;}
-      div[data-testid="stTabs"] button {font-weight:650;padding:13px 18px;}
+      div[data-testid="stMetricLabel"] p {color:#55536F !important;font-weight:650;}
+      div[data-testid="stMetricValue"] {color:#302A69 !important;font-weight:780;}
+      div[data-testid="stTabs"] {border-bottom:1px solid #E5E4EF;}
+      div[data-testid="stTabs"] button {font-weight:700;padding:13px 18px;color:#4C4A62;}
       div[data-testid="stTabs"] button[aria-selected="true"] {
-        color:#542b91 !important;border-bottom-color:#7046b5 !important;
+        color:#433B86 !important;border-bottom-color:#433B86 !important;
       }
       div[data-testid="stExpander"] {
-        border:1px solid #e7e0f0;border-radius:13px;background:#fff;
-        overflow:hidden;margin-bottom:9px;
+        border:1px solid #E2E1EF;border-radius:13px;background:#fff;
+        overflow:hidden;margin-bottom:10px;
       }
-      div[data-testid="stExpander"] summary {font-weight:600;}
-      div[data-testid="stForm"] {border:1px solid #e9e2f4;border-radius:15px;padding:18px;background:#fcfaff;}
+      div[data-testid="stExpander"] summary {font-weight:650;color:#24233A;}
+      div[data-testid="stForm"] {border:1px solid #E2E1EF;border-radius:15px;
+        padding:20px;background:#FAFAFD;}
       .stButton button[kind="primary"],button[kind="primaryFormSubmit"] {
-        background:linear-gradient(110deg,#4b2588,#7048b5);border:0;border-radius:10px;
-        font-weight:650;min-height:42px;
+        background:#433B86 !important;color:#fff !important;border:1px solid #433B86 !important;
+        border-radius:10px;font-weight:700;min-height:43px;
+      }
+      .stButton button[kind="primary"]:hover,button[kind="primaryFormSubmit"]:hover {
+        background:#302A69 !important;border-color:#302A69 !important;
       }
       div[data-baseweb="select"] > div, .stTextInput input, .stTextArea textarea {
-        border-radius:10px !important;border-color:#dcd2eb !important;
+        border-radius:10px !important;border-color:#D5D3E8 !important;
       }
+      .stTextArea textarea {background:#fff !important;color:#202033 !important;line-height:1.55;}
       div[data-testid="stAlert"] {border-radius:12px;}
-      @media(max-width:700px) {
-        .mentor-hero {padding:20px;border-radius:15px;}
+      @media(max-width:800px) {
+        [data-testid="stAppViewContainer"] .main .block-container {padding:1rem .8rem 2rem !important;}
+        .mentor-hero {padding:21px 19px;border-radius:15px;}
         .mentor-hero h1 {font-size:25px !important;}
       }
     </style>
@@ -4670,12 +4682,92 @@ def render_mentor_portal():
             for activity in activity_rows:
                 rows_by_scholar.setdefault(str(activity["scholar_id"]).upper(), []).append(activity)
 
+            # Build one consolidated performance record per official mentee identity.
+            mentee_stats = []
+            grade_points = {"A": 5, "B": 4, "C": 3, "D": 2, "E": 1}
             for mentee in mentees:
                 sid = str(mentee["scholar_id"]).upper()
-                history = [
-                    item for linked_id in identity_ids_by_roster.get(sid, [sid])
-                    for item in rows_by_scholar.get(linked_id, [])
-                ]
+                linked_ids = identity_ids_by_roster.get(sid, [sid])
+                history = [item for linked_id in linked_ids for item in rows_by_scholar.get(linked_id, [])]
+                history.sort(key=lambda item: (str(item.get("activity_timestamp") or ""), int(item.get("id") or 0)))
+                grades = [str(item.get("grade") or "").strip().upper() for item in history]
+                numeric_grades = [grade_points[g] for g in grades if g in grade_points]
+                mentee_stats.append({
+                    "name": mentee.get("full_name") or sid,
+                    "sid": sid,
+                    "gd": sum(1 for item in history if item.get("activity_type") == "Group Discussion"),
+                    "pi": sum(1 for item in history if item.get("activity_type") == "Personal Interview"),
+                    "attempts": len(history),
+                    "grade_points": numeric_grades,
+                    "grade_average": (sum(numeric_grades) / len(numeric_grades)) if numeric_grades else 0,
+                    "latest_grade": next((g for g in reversed(grades) if g in grade_points), "—"),
+                    "history": history,
+                })
+
+            st.markdown("### Performance analytics")
+            chart_left, chart_right = st.columns([1.35, 1])
+            with chart_left:
+                st.markdown("**GD and PI activity over time**")
+                dated = []
+                for item in activity_rows:
+                    raw_date = str(item.get("activity_timestamp") or "")[:10]
+                    parsed_date = pd.to_datetime(raw_date, errors="coerce")
+                    if pd.notna(parsed_date):
+                        dated.append({"Date": parsed_date.normalize(), "Activity": "GD" if item.get("activity_type") == "Group Discussion" else "PI"})
+                if dated:
+                    trend_df = pd.DataFrame(dated).groupby(["Date", "Activity"]).size().unstack(fill_value=0).sort_index()
+                    for col in ("GD", "PI"):
+                        if col not in trend_df.columns:
+                            trend_df[col] = 0
+                    st.line_chart(trend_df[["GD", "PI"]], use_container_width=True)
+                    st.caption("Daily completed attempts across your assigned mentees.")
+                else:
+                    st.info("The activity trend will appear after your mentees complete GD or PI attempts.")
+            with chart_right:
+                st.markdown("**Assessment mix**")
+                mix_values = [{"Type": "Group Discussion", "Count": total_gd}, {"Type": "Personal Interview", "Count": total_pi}]
+                if total_gd + total_pi:
+                    st.vega_lite_chart(
+                        {"$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                         "data": {"values": mix_values},
+                         "mark": {"type": "arc", "innerRadius": 58, "outerRadius": 115},
+                         "encoding": {
+                             "theta": {"field": "Count", "type": "quantitative"},
+                             "color": {"field": "Type", "type": "nominal", "scale": {"domain": ["Group Discussion", "Personal Interview"], "range": ["#433B86", "#7C8CCB"]}, "legend": {"orient": "bottom"}},
+                             "tooltip": [{"field": "Type"}, {"field": "Count"}]
+                         }, "view": {"stroke": None}},
+                        use_container_width=True,
+                    )
+                    st.caption(f"GD: {total_gd} · PI: {total_pi}")
+                else:
+                    st.info("The GD/PI mix will appear when attempts are recorded.")
+
+            # Showcase engagement and academic performance separately; attempt volume
+            # is not treated as a grade or as proof of learning.
+            st.markdown("### Mentee highlights")
+            active_stats = [row for row in mentee_stats if row["attempts"] > 0]
+            if active_stats:
+                most_attempts = max(active_stats, key=lambda row: (row["attempts"], row["grade_average"], row["name"].lower()))
+                graded_stats = [row for row in active_stats if row["grade_average"] > 0]
+                best_grade = max(graded_stats, key=lambda row: (row["grade_average"], row["attempts"], row["name"].lower())) if graded_stats else None
+                h1, h2 = st.columns(2)
+                with h1:
+                    st.markdown("<div class='mentor-highlight'><div class='mentor-highlight-label'>MOST PRACTICE ATTEMPTS</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='mentor-highlight-name'>{most_attempts['name']}</div><div class='mentor-highlight-value'>{most_attempts['attempts']} attempts</div><div class='mentor-highlight-note'>GD {most_attempts['gd']} · PI {most_attempts['pi']}</div></div>", unsafe_allow_html=True)
+                with h2:
+                    if best_grade:
+                        grade_text = f"{best_grade['grade_average']:.1f}/5 · latest grade {best_grade['latest_grade']}"
+                        st.markdown("<div class='mentor-highlight'><div class='mentor-highlight-label'>STRONGEST GRADE PERFORMANCE</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='mentor-highlight-name'>{best_grade['name']}</div><div class='mentor-highlight-value'>{grade_text}</div><div class='mentor-highlight-note'>Average of recorded A–E grades</div></div>", unsafe_allow_html=True)
+                    else:
+                        st.info("Grade-based highlight will appear when graded GD/PI attempts are recorded.")
+            else:
+                st.info("Mentee highlights will appear after the first GD or PI attempt.")
+
+            for mentee in mentees:
+                sid = str(mentee["scholar_id"]).upper()
+                stat_row = next((row for row in mentee_stats if row["sid"] == sid), None)
+                history = list(stat_row["history"]) if stat_row else []
                 history.sort(key=lambda item: (str(item.get("activity_timestamp") or ""), int(item.get("id") or 0)), reverse=True)
                 gd_count = sum(1 for item in history if item["activity_type"] == "Group Discussion")
                 pi_count = sum(1 for item in history if item["activity_type"] == "Personal Interview")
@@ -4700,8 +4792,51 @@ def render_mentor_portal():
                                 if raw_feedback:
                                     try:
                                         parsed_feedback = json.loads(raw_feedback) if isinstance(raw_feedback, str) else raw_feedback
-                                        if isinstance(parsed_feedback, (dict, list)):
-                                            st.json(parsed_feedback)
+                                        if isinstance(parsed_feedback, dict):
+                                            pretty_labels = {
+                                                "CommunicationAssessment": "Communication assessment",
+                                                "TechnicalKnowledgeAssessment": "Technical knowledge assessment",
+                                                "TechnicalAssessment": "Technical assessment",
+                                                "TechnicalCorrectness": "Technical correctness",
+                                                "CommunicationStrengths": "Communication strengths",
+                                                "CommunicationImprovements": "Communication improvements",
+                                                "TechnicalStrengths": "Technical strengths",
+                                                "TechnicalImprovements": "Technical improvements",
+                                                "ExecutiveSummary": "Overall feedback",
+                                                "OverallFeedback": "Overall feedback",
+                                                "Summary": "Summary",
+                                                "NextPracticeFocus": "Next practice focus",
+                                                "BenchmarkAnswer": "Suggested answer",
+                                                "CorrectPoints": "Correct points",
+                                                "TechnicalErrorsOrGaps": "Technical errors or gaps",
+                                                "GrammarIssues": "Grammar issues",
+                                                "FillerWordsUsed": "Filler words",
+                                                "RateOfSpeechAssessment": "Rate of speech",
+                                                "ToneAssessment": "Tone",
+                                                "ClarityAssessment": "Clarity",
+                                            }
+                                            def _mentor_render_value(value):
+                                                if value is None or value == "" or value == [] or value == {}:
+                                                    st.caption("Not recorded")
+                                                elif isinstance(value, dict):
+                                                    for child_key, child_value in value.items():
+                                                        st.markdown(f"**{pretty_labels.get(str(child_key), str(child_key).replace('_', ' '))}**")
+                                                        _mentor_render_value(child_value)
+                                                elif isinstance(value, (list, tuple)):
+                                                    for entry in value:
+                                                        if isinstance(entry, (dict, list, tuple)):
+                                                            _mentor_render_value(entry)
+                                                        else:
+                                                            st.markdown(f"- {entry}")
+                                                else:
+                                                    st.write(str(value))
+                                            for feedback_key, feedback_value in parsed_feedback.items():
+                                                if feedback_value not in (None, "", [], {}):
+                                                    st.markdown(f"**{pretty_labels.get(str(feedback_key), str(feedback_key).replace('_', ' '))}**")
+                                                    _mentor_render_value(feedback_value)
+                                        elif isinstance(parsed_feedback, list):
+                                            for entry in parsed_feedback:
+                                                st.write(entry)
                                         else:
                                             st.write(str(parsed_feedback))
                                     except Exception:
