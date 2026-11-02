@@ -3415,52 +3415,132 @@ def _extract_gd_self_introductions(text):
     return found
 
 
+def _is_gd_greeting_boundary(text):
+    """Detect a greeting only when it opens a new diarised contribution."""
+    value = re.sub(r"\s+", " ", str(text or "").strip())
+    # Permit brief discourse fillers before a greeting, but never match greetings
+    # buried later in a sentence (which may be casual conversation).
+    value = re.sub(r"^(?:(?:okay|ok|so|well|uh|um|right)[,.\s-]+){1,3}", "", value, flags=re.I)
+    return bool(re.match(
+        r"^(?:good\s+(?:morning|afternoon|evening)(?:\s+(?:everyone|all|guys|friends))?"
+        r"|hello(?:\s+(?:everyone|all|guys|friends))?"
+        r"|hi(?:\s+(?:everyone|all|guys|friends))?"
+        r"|hey(?:\s+(?:everyone|all|guys|friends))?"
+        r"|greetings(?:\s+(?:everyone|all))?)"
+        r"(?=$|[\s,!.?])",
+        value,
+        flags=re.I,
+    ))
+
+
 def split_gd_segments_on_conflicting_introductions(segments):
-    """Split a diarisation ID at a later, conflicting explicit self-introduction.
+    """Create provisional speaker boundaries from conflicting introductions or greetings.
 
-    This is a transcript-guided repair, not acoustic proof. It creates a new stable ID
-    at the later introduction and assigns subsequent turns carrying that original ID to
-    the new ID. The UI explains that the split is inferred and should be checked against
-    the recording; ambiguous conflicts remain blocked from grading.
+    Explicit self-introductions are the primary identity anchor. A greeting at the
+    beginning of a contribution is a fallback boundary when no self-introduction
+    occurs within 30 seconds. This is transcript-guided repair, not acoustic proof.
+    Original wording and timestamps are preserved; only display speaker IDs change.
     """
-    by_speaker = {}
-    for seg in segments or []:
+    segments = [dict(seg) for seg in (segments or [])]
+    events_by_speaker = {}
+    for position, seg in enumerate(segments):
         sid = str(seg.get("speaker") or "speaker_0")
-        for name in _extract_gd_self_introductions(seg.get("text", "")):
-            by_speaker.setdefault(sid, []).append((float(seg.get("start") or 0), name.casefold(), name))
-    split_at = {}
-    for sid, intros in by_speaker.items():
-        seen = set()
-        for start, norm, name in sorted(intros, key=lambda x: x[0]):
-            if seen and norm not in seen:
-                split_at.setdefault(sid, []).append((start, name))
-            seen.add(norm)
-    if not split_at:
-        return [dict(seg) for seg in segments or []], []
+        start = float(seg.get("start") or 0)
+        text = str(seg.get("text") or "")
+        for name in _extract_gd_self_introductions(text):
+            events_by_speaker.setdefault(sid, []).append(
+                {"start": start, "position": position, "kind": "intro",
+                 "name": name, "norm": name.casefold()}
+            )
+        if _is_gd_greeting_boundary(text):
+            events_by_speaker.setdefault(sid, []).append(
+                {"start": start, "position": position, "kind": "greeting",
+                 "name": "", "norm": ""}
+            )
 
-    counters = {sid: 0 for sid in split_at}
-    active_split = {}
-    result = []
+    split_events = {}
     notes = []
-    for sid, splits in split_at.items():
-        for idx, (start, name) in enumerate(splits, 1):
-            notes.append(f"{sid} was split at {start:.1f}s for the self-introduction '{name}'.")
-    for original in segments or []:
+    for sid, events in events_by_speaker.items():
+        events.sort(key=lambda event: (event["start"], event["position"]))
+        intros = [event for event in events if event["kind"] == "intro"]
+        greetings = [event for event in events if event["kind"] == "greeting"]
+
+        # Preserve the original conflicting-introduction rule.
+        seen_names = set()
+        for event in intros:
+            norm = event["norm"]
+            if seen_names and norm not in seen_names:
+                split_events.setdefault(sid, []).append(
+                    (event["start"], event["position"], "self-introduction", event["name"])
+                )
+            seen_names.add(norm)
+
+        # A greeting is a fallback only when no explicit introduction is close
+        # enough to belong to the same opening contribution. The earliest marker
+        # (greeting or introduction) establishes the initial identity; later
+        # greeting-led contributions can create provisional boundaries.
+        identity_markers = sorted(
+            events, key=lambda event: (event["start"], event["position"])
+        )
+        first_marker = (
+            (identity_markers[0]["start"], identity_markers[0]["position"])
+            if identity_markers else None
+        )
+        for greeting in greetings:
+            nearby_intro = any(
+                abs(intro["start"] - greeting["start"]) <= 30.0
+                for intro in intros
+            )
+            marker = (greeting["start"], greeting["position"])
+            if nearby_intro or first_marker is None or marker <= first_marker:
+                continue
+            split_events.setdefault(sid, []).append(
+                (greeting["start"], greeting["position"], "greeting", "")
+            )
+
+    if not split_events:
+        for seg in segments:
+            sid = str(seg.get("speaker") or "speaker_0")
+            seg.setdefault("original_speaker", sid)
+        return segments, []
+
+    # Deduplicate boundaries at the same segment/timestamp (e.g. a greeting and
+    # an introduction spoken in the same opening turn).
+    for sid, events in list(split_events.items()):
+        unique = {}
+        for start, position, kind, name in sorted(events, key=lambda item: (item[0], item[1])):
+            key = (round(start, 2), position)
+            if key not in unique:
+                unique[key] = (start, position, kind, name)
+            elif kind == "self-introduction":
+                unique[key] = (start, position, kind, name)
+        split_events[sid] = sorted(unique.values(), key=lambda item: (item[0], item[1]))
+
+    counters = {sid: len(events) for sid, events in split_events.items()}
+    active_index = {}
+    result = []
+    for position, original in enumerate(segments):
         seg = dict(original)
         sid = str(seg.get("speaker") or "speaker_0")
-        # Preserve the diarization model's original label for audit/debugging.
-        # Only the display speaker ID may change; text and timestamps stay intact.
         seg.setdefault("original_speaker", sid)
-        start = float(seg.get("start") or 0)
-        if sid in split_at:
-            for split_start, name in split_at[sid]:
-                if start >= split_start:
-                    active_split[sid] = (split_start, name)
-            if sid in active_split:
-                split_start, _name = active_split[sid]
-                idx = next(i for i, item in enumerate(split_at[sid], 1) if item[0] == split_start)
-                seg["speaker"] = f"{sid}_split_{idx}"
+        if sid in split_events:
+            for idx, (split_start, split_position, kind, name) in enumerate(split_events[sid], 1):
+                if (float(seg.get("start") or 0), position) >= (split_start, split_position):
+                    active_index[sid] = idx
+            if sid in active_index:
+                seg["speaker"] = f"{sid}_split_{active_index[sid]}"
         result.append(seg)
+
+    for sid, events in split_events.items():
+        for idx, (start, position, kind, name) in enumerate(events, 1):
+            if kind == "greeting":
+                notes.append(
+                    f"{sid} was split at {start:.1f}s using a greeting as a fallback identity boundary."
+                )
+            else:
+                notes.append(
+                    f"{sid} was split at {start:.1f}s for the self-introduction '{name}'."
+                )
     return result, notes
 
 
@@ -8537,10 +8617,9 @@ elif selected_nav == "Group Discussion Hub":
                     if diarization_error:
                         st.error(diarization_error)
                     else:
-                        # If a later explicit self-introduction is assigned the same
-                        # diarization ID as an earlier participant, create a new
-                        # provisional ID from that introduction timestamp onward.
-                        # Segment text, start and end values are never rewritten.
+                        # Split a merged diarisation ID at a conflicting later
+                        # self-introduction, or at a later greeting when no nearby
+                        # self-introduction is available. Text and timestamps stay intact.
                         segments, split_notes = split_gd_segments_on_conflicting_introductions(segments)
                         st.session_state["uploaded_gd_split_notes"] = split_notes
                         st.session_state["uploaded_gd_segments"] = segments
@@ -8571,9 +8650,9 @@ elif selected_nav == "Group Discussion Hub":
 
         uploaded_segments = st.session_state.get("uploaded_gd_segments") or []
         if uploaded_segments:
-            # Keep diarization IDs provisional. A conflicting explicit self-introduction
-            # can start a new provisional speaker ID; no identity is guessed from accent,
-            # fluency, or participant order.
+            # Keep diarization IDs provisional. Conflicting introductions and
+            # qualifying greeting boundaries can start a new provisional speaker ID;
+            # no identity is guessed from accent, fluency, or participant order.
             split_notes = []
             st.markdown("#### Step 2 — Review speaker-labelled transcript")
             raw_speakers = list(dict.fromkeys(str(seg.get("speaker") or "speaker_0") for seg in uploaded_segments))
@@ -8587,7 +8666,7 @@ elif selected_nav == "Group Discussion Hub":
             st.caption("Speaker labels are provisional voice labels, not judgments about English fluency or accent. The assessment proceeds even when a voice or identity is uncertain.")
             split_notes = st.session_state.get("uploaded_gd_split_notes") or []
             if split_notes:
-                st.info("A new provisional speaker ID was created at an explicit later self-introduction: " + " ".join(split_notes) + " Original transcript wording and timestamps have been preserved; please review the split against the recording.")
+                st.info("Provisional speaker boundaries were inferred from later self-introductions or fallback greetings: " + " ".join(split_notes) + " Original transcript wording and timestamps have been preserved; please review the splits against the recording.")
             if identity_conflicts:
                 st.caption("Some speaker introductions remain ambiguous. The group assessment can still proceed; no student identity is inferred from an uncertain match.")
             readable_transcript = _format_gd_transcript(uploaded_segments, speaker_map)
