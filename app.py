@@ -2575,7 +2575,6 @@ def build_feedback_report_docx(student_name, scholar_id, current_feedback, histo
         ("Technical Knowledge Assessment", current_feedback.get("TechnicalKnowledgeAssessment", "—")),
         ("Technical Correctness", current_feedback.get("TechnicalCorrectness", "—")),
         ("Rate of Speech", current_feedback.get("RateOfSpeechAssessment", "—")),
-        ("Tone", current_feedback.get("ToneAssessment", "—")),
         ("Clarity", current_feedback.get("ClarityAssessment", "—")),
     ]
     t = document.add_table(rows=0, cols=2)
@@ -2679,7 +2678,7 @@ def build_feedback_report_pdf(student_name, scholar_id, current_feedback, histor
         ("Communication Grade", current_feedback.get("CommunicationGrade", "—")), ("Technical Knowledge Grade", current_feedback.get("TechnicalGrade", "—")),
         ("Final Grade", current_feedback.get("FinalGrade", "—")), ("Communication Assessment", current_feedback.get("CommunicationAssessment", "—")),
         ("Technical Knowledge Assessment", current_feedback.get("TechnicalKnowledgeAssessment", "—")), ("Technical Correctness", current_feedback.get("TechnicalCorrectness", "—")),
-        ("Rate of Speech", current_feedback.get("RateOfSpeechAssessment", "—")), ("Tone", current_feedback.get("ToneAssessment", "—")), ("Clarity", current_feedback.get("ClarityAssessment", "—")),
+        ("Rate of Speech", current_feedback.get("RateOfSpeechAssessment", "—")), ("Clarity", current_feedback.get("ClarityAssessment", "—")),
     ]:
         rows.append([Paragraph(f"<b>{label}</b>", styles["Small"]), Paragraph(str(value or "—").replace("&", "&amp;").replace("<", "&lt;"), styles["Small"])])
     ft = Table(rows, colWidths=[47*mm, 116*mm])
@@ -3647,129 +3646,6 @@ def _gd_speaker_stats(segments, speaker_map=None):
         minutes = v["speaking_seconds"] / 60
         v["wpm"] = round(v["words"] / minutes, 1) if minutes else 0
     return stats
-
-
-def _extract_gd_visual_samples(video_path, max_frames=3):
-    """Extract a small, low-resolution set of frames spread across the whole recording."""
-    if not shutil.which("ffmpeg"):
-        return [], "FFmpeg is unavailable; visual feedback could not be generated."
-    temp_dir = tempfile.mkdtemp(prefix="iper_gd_frames_")
-    try:
-        duration_seconds = 0.0
-        safe_env = _safe_subprocess_env()
-        ffprobe = shutil.which("ffprobe", path=safe_env.get("PATH", ""))
-        ffmpeg = shutil.which("ffmpeg", path=safe_env.get("PATH", ""))
-        if ffprobe:
-            probe = subprocess.run(
-                [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30, env=safe_env,
-            )
-            if probe.returncode == 0:
-                try: duration_seconds = max(0.0, float(probe.stdout.strip()))
-                except ValueError: duration_seconds = 0.0
-        # If ffprobe is unavailable, sample the beginning as a conservative fallback.
-        if duration_seconds > 0:
-            sample_times = [max(0.0, duration_seconds * fraction) for fraction in (0.03, 0.25, 0.50, 0.75, 0.95)][:max_frames]
-        else:
-            sample_times = [0.0, 20.0, 40.0, 60.0, 80.0][:max_frames]
-        encoded = []
-        for index, sample_time in enumerate(sample_times):
-            frame_path = os.path.join(temp_dir, f"frame_{index:02d}.jpg")
-            if not ffmpeg:
-                return [], "FFmpeg is unavailable; visual feedback could not be generated."
-            cmd = [ffmpeg, "-hide_banner", "-nostdin", "-y", "-ss", str(sample_time), "-i", video_path, "-frames:v", "1", "-vf", "scale=640:-1", "-q:v", "5", frame_path]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30, env=safe_env)
-            if result.returncode == 0 and os.path.exists(frame_path) and os.path.getsize(frame_path) > 1000:
-                with open(frame_path, "rb") as image_file:
-                    encoded.append(base64.b64encode(image_file.read()).decode("ascii"))
-        if not encoded:
-            return [], "No usable video frames could be extracted for body-language feedback."
-        return encoded, None
-    except Exception as exc:
-        return [], f"Video frame sampling failed: {exc}"
-    finally:
-        try:
-            import shutil as _shutil
-            _shutil.rmtree(temp_dir, ignore_errors=True)
-        except Exception:
-            pass
-
-
-def analyze_gd_body_language(frames, participants):
-    """Use pre-sampled video frames; return only observable, cautious feedback."""
-    if not openai_client:
-        return None, "OPENAI_API_KEY is not configured; body-language analysis is unavailable."
-    if not frames:
-        return None, "No usable sampled video frames are available for body-language feedback."
-    participant_context = [{"Name": p.get("Name", "Participant")} for p in participants]
-    prompt = f"""You are evaluating visible non-verbal communication in a recorded student group discussion.
-Review only the supplied sampled video frames, not assumptions about personality or emotion.
-Participants to consider: {json.dumps(participant_context, ensure_ascii=False)}
-The supplied frames are sparse samples, not continuous video. Do not assume that a visible person can be linked to an audio speaker unless the frames clearly support that match. If an individual cannot be reliably identified, provide group-level observations and explicitly mark individual feedback as unavailable rather than guessing.
-Return valid JSON only with this shape:
-{{"GroupBodyLanguage": {{"Observations": [], "Suggestions": []}}, "Participants": [{{"Name":"", "BodyLanguageObservations": [], "BodyLanguageSuggestions": [], "EvidenceLimitations": []}}]}}
-Focus on observable posture, orientation toward the group, visible engagement, turn-taking signals, and distracting movements only when clearly evidenced. Do not infer intelligence, honesty, confidence, personality, or emotions from appearance. Do not penalize disability, cultural differences, clothing, or physical characteristics. State limitations caused by sparse frames. Provide practical, respectful suggestions."""
-    content = [{"type": "text", "text": prompt}]
-    content.extend([{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + image_data, "detail": "low"}} for image_data in frames])
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": content}],
-            temperature=0.2,
-        )
-        raw = response.choices[0].message.content or ""
-        clean = raw.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean), None
-    except Exception as exc:
-        return None, f"Body-language analysis failed: {exc}"
-
-
-def analyze_gd_vocal_tone(audio_path, segments, speaker_map):
-    """Assess a short representative utterance per speaker with the current GPT Audio model; avoid processing the entire recording again."""
-    if not openai_client:
-        return {}, "OPENAI_API_KEY is not configured; vocal-tone analysis is unavailable."
-    results = {}
-    errors = []
-    speakers = sorted({str(seg.get("speaker", "speaker_0")) for seg in segments})
-    for speaker_id in speakers[:8]:
-        candidate_segments = [seg for seg in segments if str(seg.get("speaker", "speaker_0")) == speaker_id]
-        if not candidate_segments:
-            continue
-        longest = max(candidate_segments, key=lambda seg: max(0, float(seg.get("end", 0)) - float(seg.get("start", 0))))
-        start = max(0.0, float(longest.get("start", 0)))
-        duration = min(15.0, max(3.0, float(longest.get("end", start + 5)) - start))
-        clip_path = None
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix="_tone.wav") as tmp:
-                clip_path = tmp.name
-            cmd = ["ffmpeg", "-y", "-ss", str(start), "-i", audio_path, "-t", str(duration), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", clip_path]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
-            if result.returncode != 0 or not os.path.exists(clip_path) or os.path.getsize(clip_path) < 1000:
-                errors.append(f"Could not sample audio for {speaker_map.get(speaker_id, speaker_id)}.")
-                continue
-            with open(clip_path, "rb") as audio_file:
-                audio_b64 = base64.b64encode(audio_file.read()).decode("ascii")
-            response = openai_client.chat.completions.create(
-                model="gpt-audio-1.5",
-                modalities=["text"],
-                messages=[{"role": "user", "content": [
-                    {"type": "text", "text": "Assess only audible vocal delivery in this short speech sample for a student GD. Return valid JSON with keys ToneSummary (string), WhatWentWell (array of strings), ToImprove (array of strings), and EvidenceLimitations (array of strings). Comment on audibility, steadiness, pace, variation, projection and pauses where supported. Do not infer emotions, personality or competence; do not judge accent as wrong. If sample is too short/noisy, state that."},
-                    {"type": "input_audio", "input_audio": {"data": audio_b64, "format": "wav"}}
-                ]}]
-            )
-            raw = response.choices[0].message.content or ""
-            clean = raw.replace("```json", "").replace("```", "").strip()
-            try:
-                results[speaker_id] = json.loads(clean)
-            except Exception:
-                results[speaker_id] = {"ToneSummary": clean, "WhatWentWell": [], "ToImprove": [], "EvidenceLimitations": ["The model returned unstructured feedback."]}
-        except Exception as exc:
-            errors.append(f"Tone analysis for {speaker_map.get(speaker_id, speaker_id)} failed: {exc}")
-        finally:
-            if clip_path:
-                try: os.remove(clip_path)
-                except OSError: pass
-    return results, (" ".join(errors) if errors else None)
 
 
 def generate_gd_video_assessment(topic, participants, transcript_text, stats):
@@ -4844,8 +4720,7 @@ def render_mentor_portal():
                                                 "GrammarIssues": "Grammar issues",
                                                 "FillerWordsUsed": "Filler words",
                                                 "RateOfSpeechAssessment": "Rate of speech",
-                                                "ToneAssessment": "Tone",
-                                                "ClarityAssessment": "Clarity",
+                                                                                    "ClarityAssessment": "Clarity",
                                             }
                                             def _mentor_render_value(value):
                                                 if value is None or value == "" or value == [] or value == {}:
@@ -6656,11 +6531,10 @@ TURN-BY-TURN AUDIO/SPEAKING DATA:
 RECENT GD FLOW (student + AI participant):
 {json.dumps(discussion_log[-30:], ensure_ascii=False)}
 
-Assess these EXACT FIVE areas:
+Assess these EXACT FOUR areas:
 1. Participation — Did the student enter the discussion naturally, speak enough, stay relevant, and add useful points?
 2. Knowledge — Did the student show understanding of the topic, give reasons/examples, use practical or Indian context, and avoid unsupported claims?
 3. Voice Clarity — Was the speech understandable from the available audio/transcription evidence? Consider speaking pace, volume consistency and clarity of words. Do not judge accent as wrong.
-4. Tone — Assess the available vocal evidence such as steadiness, energy and variation. Do not claim to detect emotions that the audio cannot support.
 5. Counter Response — Did the student respond to, challenge, build on, or connect with another participant's point? Do not require disagreement; a useful agreement with a new point also counts.
 
 IMPORTANT:
@@ -6677,7 +6551,6 @@ Return ONLY valid JSON with this structure:
   "Participation": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
   "Knowledge": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
   "VoiceClarity": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
-  "Tone": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
   "CounterResponse": {{"Score": 0, "WhatWentWell": ["...", "..."], "WhatToImprove": ["...", "..."], "Evidence": ["...", "..."]}},
   "OverallStrengths": ["...", "...", "..."],
   "PriorityImprovements": ["...", "...", "..."],
@@ -6747,7 +6620,6 @@ def _live_gd_report_for_student(assessment, student_name):
                 "Participation": {"Score": _score100(person.get("ParticipationScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
                 "Knowledge": {"Score": _score100(person.get("KnowledgeScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
                 "VoiceClarity": {"Score": _score100(person.get("CommunicationScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
-                "Tone": {"Score": _score100(person.get("CommunicationScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
                 "CounterResponse": {"Score": _score100(person.get("ListeningTeamworkScore", 0)), "WhatWentWell": person.get("Strengths", []), "WhatToImprove": person.get("AreasToImprove", []), "Evidence": person.get("Evidence", [])},
                 "OverallStrengths": person.get("Strengths", []),
                 "PriorityImprovements": person.get("AreasToImprove", []),
@@ -6773,7 +6645,6 @@ def _render_live_gd_feedback_summary(assessment, student_name, heading="### Late
         ("Participation", "Participation", "How naturally and usefully you entered and continued the GD."),
         ("Knowledge", "Knowledge", "How well you understood the topic and supported your points."),
         ("Voice Clarity", "VoiceClarity", "How clearly and steadily your speech could be understood."),
-        ("Tone", "Tone", "How steady, active and varied your speaking delivery sounded."),
         ("Counter Response", "CounterResponse", "How well you responded to, built on or challenged other points."),
     ]
     for title, key, help_text in dimensions:
@@ -7101,8 +6972,7 @@ def _render_live_gd_voice_room(topic, student_name):
                 ("Participation", "Participation", "How naturally and usefully you entered and continued the GD."),
                 ("Knowledge", "Knowledge", "How well you understood the topic and supported your points."),
                 ("Voice Clarity", "VoiceClarity", "How clearly and steadily your speech could be understood."),
-                ("Tone", "Tone", "How steady, active and varied your speaking delivery sounded."),
-                ("Counter Response", "CounterResponse", "How well you responded to, built on or challenged other points."),
+                        ("Counter Response", "CounterResponse", "How well you responded to, built on or challenged other points."),
             ]
             for title, key, help_text in dimensions:
                 section = feedback.get(key, {}) or {}
@@ -8092,7 +7962,6 @@ COMMUNICATION ASSESSMENT RULES:
 - Clarity: assess structure, coherence, relevance and ease of understanding.
 - Filler words: use the supplied counts; do not invent additional counts.
 - Rate of speech: use WPM only when duration is available.
-- Tone: if only transcript/audio transcript is available, do not claim to hear vocal tone. For video/audio, tone can only be assessed if the available evidence supports it.
 - Communication score must reflect communication quality, not subject knowledge.
 
 TECHNICAL KNOWLEDGE ASSESSMENT RULES:
@@ -8167,7 +8036,6 @@ Return ONLY valid JSON matching this exact structure:
   "GrammarIssues": [],
   "FillerWordsUsed": [],
   "RateOfSpeechAssessment": "",
-  "ToneAssessment": "",
   "ClarityAssessment": "",
   "CommunicationStrengths": [],
   "CommunicationImprovements": [],
@@ -8202,7 +8070,6 @@ Return ONLY valid JSON matching this exact structure:
                                         "GrammarIssues": {"type": "array", "items": {"type": "string"}},
                                         "FillerWordsUsed": {"type": "array", "items": {"type": "object", "properties": {"word": {"type": "string"}, "count": {"type": "integer", "minimum": 0}}, "required": ["word", "count"], "additionalProperties": False}},
                                         "RateOfSpeechAssessment": {"type": "string"},
-                                        "ToneAssessment": {"type": "string"},
                                         "ClarityAssessment": {"type": "string"},
                                         "CommunicationStrengths": {"type": "array", "items": {"type": "string"}},
                                         "CommunicationImprovements": {"type": "array", "items": {"type": "string"}},
@@ -8212,7 +8079,7 @@ Return ONLY valid JSON matching this exact structure:
                                         "BenchmarkAnswer": {"type": "string"},
                                         "NextPracticeFocus": {"type": "string"}
                                     },
-                                    "required": ["CandidateName", "CommunicationScore", "TechnicalKnowledgeScore", "FinalScore", "CommunicationAssessment", "TechnicalKnowledgeAssessment", "TechnicalCorrectness", "CorrectPoints", "TechnicalErrorsOrGaps", "GrammarIssues", "FillerWordsUsed", "RateOfSpeechAssessment", "ToneAssessment", "ClarityAssessment", "CommunicationStrengths", "CommunicationImprovements", "TechnicalStrengths", "TechnicalImprovements", "KeyCorrections", "BenchmarkAnswer", "NextPracticeFocus"],
+                                    "required": ["CandidateName", "CommunicationScore", "TechnicalKnowledgeScore", "FinalScore", "CommunicationAssessment", "TechnicalKnowledgeAssessment", "TechnicalCorrectness", "CorrectPoints", "TechnicalErrorsOrGaps", "GrammarIssues", "FillerWordsUsed", "RateOfSpeechAssessment", "ClarityAssessment", "CommunicationStrengths", "CommunicationImprovements", "TechnicalStrengths", "TechnicalImprovements", "KeyCorrections", "BenchmarkAnswer", "NextPracticeFocus"],
                                     "additionalProperties": False
                                 }
                             }
@@ -8245,7 +8112,7 @@ Return ONLY valid JSON matching this exact structure:
                                     "CandidateName", "CommunicationScore", "TechnicalKnowledgeScore", "FinalScore",
                                     "CommunicationAssessment", "TechnicalKnowledgeAssessment", "TechnicalCorrectness",
                                     "CorrectPoints", "TechnicalErrorsOrGaps", "GrammarIssues", "FillerWordsUsed",
-                                    "RateOfSpeechAssessment", "ToneAssessment", "ClarityAssessment",
+                                    "RateOfSpeechAssessment", "ClarityAssessment",
                                     "CommunicationStrengths", "CommunicationImprovements", "TechnicalStrengths",
                                     "TechnicalImprovements", "KeyCorrections", "BenchmarkAnswer", "NextPracticeFocus"
                                 ]
@@ -8359,8 +8226,6 @@ Return ONLY valid JSON matching this exact structure:
                         st.write(filler if filler else "No common filler words detected.")
                         st.markdown("**Rate of Speech**")
                         st.write(eval_result.get("RateOfSpeechAssessment", ""))
-                        st.markdown("**Tone**")
-                        st.write(eval_result.get("ToneAssessment", ""))
                         st.markdown("**Clarity**")
                         st.write(eval_result.get("ClarityAssessment", ""))
                         st.markdown("**Communication Strengths**")
@@ -8682,24 +8547,17 @@ elif selected_nav == "Group Discussion Hub":
                         st.session_state["uploaded_gd_topic_processed"] = video_topic.strip()
                         st.session_state["uploaded_gd_filename_processed"] = st.session_state.get("uploaded_gd_video_original_name", "Uploaded GD video")
                         st.session_state["uploaded_gd_speaker_map"] = {}
-                        stage_started = time.perf_counter()
-                        with st.spinner("Step 3/3: Sampling a few frames for optional visual feedback..."):
-                            sampled_frames, frame_sample_error = _extract_gd_visual_samples(video_temp_path)
-                        frame_seconds = time.perf_counter() - stage_started
-                        st.session_state["uploaded_gd_visual_frames"] = sampled_frames
-                        # The audio file is already on disk; store only its path for
-                        # this session rather than loading another full copy into RAM.
+                        # Keep the extracted audio path for transcription only.
+                        # GD tone/delivery and visual/body-language analysis are excluded.
+                        st.session_state["uploaded_gd_visual_frames"] = []
                         st.session_state["uploaded_gd_audio_path"] = audio_temp_path
                         st.session_state["uploaded_gd_processing_timings"] = {
                             "audio_extraction_seconds": round(extraction_seconds, 1),
                             "transcription_seconds": round(transcription_seconds, 1),
-                            "frame_sampling_seconds": round(frame_seconds, 1),
                         }
-                        if frame_sample_error:
-                            st.info(f"Body-language feedback may be unavailable: {frame_sample_error}")
                         st.success(
                             f"Transcript ready: {len(segments)} speech segments identified. "
-                            f"Audio extraction {extraction_seconds:.0f}s · transcription {transcription_seconds:.0f}s · frame sampling {frame_seconds:.0f}s."
+                            f"Audio extraction {extraction_seconds:.0f}s · transcription {transcription_seconds:.0f}s."
                         )
                 except Exception as exc:
                     st.error(f"Could not process this GD video: {exc}")
@@ -8745,7 +8603,7 @@ elif selected_nav == "Group Discussion Hub":
 
             speaker_stats = _gd_speaker_stats(uploaded_segments, speaker_map)
             st.markdown("#### Step 3 — Generate GD assessment")
-            st.caption("Every assessment attempts transcript-based evaluation, vocal tone and delivery analysis, and sampled body-language analysis. Tone/body-language feedback may be marked unavailable if the required audio/video evidence or API service is unavailable.")
+            st.caption("Assessment is based on the diarised transcript and speaker statistics. Vocal-tone and body-language analysis are not run.")
             assessment_already_generated = bool(st.session_state.get("uploaded_gd_report"))
             if assessment_already_generated:
                 st.info("A GD assessment already exists for this recording. It is being retained to avoid accidental repeat API charges.")
@@ -8753,7 +8611,7 @@ elif selected_nav == "Group Discussion Hub":
                     "Regenerate GD Assessment (uses AI credits)",
                     use_container_width=True,
                     key="regenerate_uploaded_gd_feedback_confirm",
-                    help="Explicitly clear the existing report and run a fresh transcript-based assessment. Cached body-language and vocal-tone analyses will be reused when the recording and transcript are unchanged.",
+                    help="Explicitly clear the existing report and run a fresh transcript-based assessment. The assessment will be regenerated from the transcript and speaker statistics.",
                 ):
                     for _key in (
                         "uploaded_gd_report", "uploaded_gd_report_share_token",
@@ -8770,7 +8628,7 @@ elif selected_nav == "Group Discussion Hub":
                 disabled=assessment_already_generated,
                 help="The assessment continues when identities are uncertain. Students can share the completed group report using another registered student's Scholar ID.",
             ):
-                with st.spinner("Assessing the discussion, speaker delivery and sampled body language..."):
+                with st.spinner("Assessing the discussion from the diarised transcript..."):
                     report, report_error = generate_gd_video_assessment(
                         st.session_state.get("uploaded_gd_topic_processed", video_topic.strip()),
                         [{"SpeakerID": sid, "Name": speaker_map.get(sid, sid), "ScholarID": ""} for sid in raw_speakers],
@@ -8849,87 +8707,9 @@ elif selected_nav == "Group Discussion Hub":
                             + ", ".join(speaker_map[sid] for sid in missing_speaker_ids)
                             + ". You can retry the assessment after checking the transcript."
                         )
-                    # Reuse the already-extracted audio file; avoid another full
-                    # in-memory copy and another temporary-file write.
-                    audio_path_for_tone = st.session_state.get("uploaded_gd_audio_path")
-                    if not (audio_path_for_tone and os.path.isfile(audio_path_for_tone)):
-                        audio_path_for_tone = None
-
-                    visual_frames = st.session_state.get("uploaded_gd_visual_frames", [])
-                    if visual_frames:
-                        # Cache only within this student's Streamlit session. Do not use
-                        # a global cache for private video-derived feedback across users.
-                        visual_cache_material = (
-                            str(st.session_state.get("uploaded_gd_video_widget_file_id") or st.session_state.get("uploaded_gd_video_original_name") or "")
-                            + "|" + json.dumps(visual_frames, ensure_ascii=False, sort_keys=True)
-                            + "|" + json.dumps([speaker_map[sid] for sid in raw_speakers[:7]], ensure_ascii=False)
-                        )
-                        visual_cache_key = hashlib.sha256(visual_cache_material.encode("utf-8")).hexdigest()
-                        if (
-                            st.session_state.get("uploaded_gd_visual_cache_key") == visual_cache_key
-                            and st.session_state.get("uploaded_gd_visual_report_cache")
-                        ):
-                            visual_report = st.session_state.get("uploaded_gd_visual_report_cache")
-                            visual_error = None
-                            st.caption("Reusing the completed body-language analysis for this recording; no new vision API request was made.")
-                        else:
-                            with st.spinner("Reviewing sampled video frames for observable body-language feedback..."):
-                                visual_report, visual_error = analyze_gd_body_language(
-                                    visual_frames,
-                                    [{"Name": speaker_map[sid]} for sid in raw_speakers[:7]]
-                                )
-                            if visual_report:
-                                st.session_state["uploaded_gd_visual_cache_key"] = visual_cache_key
-                                st.session_state["uploaded_gd_visual_report_cache"] = visual_report
-                        if visual_report:
-                            # Keep group feedback and use stable speaker labels for any individual results.
-                            for vidx, item in enumerate(visual_report.get("Participants", []) or []):
-                                if vidx < min(len(raw_speakers), 7):
-                                    item["Name"] = speaker_map[raw_speakers[vidx]]
-                            report["NonVerbalAssessment"] = visual_report
-                        else:
-                            report["NonVerbalAssessment"] = {
-                                "GroupBodyLanguage": {"Observations": [], "Suggestions": []},
-                                "Participants": [],
-                                "AvailabilityNote": visual_error or "Body-language feedback could not be generated from the available video evidence."
-                            }
-                            st.warning("Body-language feedback could not be generated from the available video evidence.")
-                    else:
-                        report["NonVerbalAssessment"] = {
-                            "GroupBodyLanguage": {"Observations": [], "Suggestions": []},
-                            "Participants": [],
-                            "AvailabilityNote": "No usable video frames were available for body-language analysis."
-                        }
-                        st.warning("Body-language feedback is mandatory, but no usable video frames were available for this recording.")
-
-                    if audio_path_for_tone and os.path.exists(audio_path_for_tone):
-                        tone_cache_material = (
-                            str(st.session_state.get("uploaded_gd_video_widget_file_id") or st.session_state.get("uploaded_gd_video_original_name") or "")
-                            + "|" + json.dumps(uploaded_segments, ensure_ascii=False, sort_keys=True)
-                            + "|" + json.dumps(speaker_map, ensure_ascii=False, sort_keys=True)
-                        )
-                        tone_cache_key = hashlib.sha256(tone_cache_material.encode("utf-8")).hexdigest()
-                        if (
-                            st.session_state.get("uploaded_gd_tone_cache_key") == tone_cache_key
-                            and st.session_state.get("uploaded_gd_tone_report_cache")
-                        ):
-                            tone_report = st.session_state.get("uploaded_gd_tone_report_cache")
-                            tone_error = None
-                            st.caption("Reusing completed vocal-tone analysis for this recording; no new audio-analysis requests were made.")
-                        else:
-                            with st.spinner("Reviewing short audio samples for vocal-tone feedback..."):
-                                tone_report, tone_error = analyze_gd_vocal_tone(audio_path_for_tone, uploaded_segments, speaker_map)
-                            if tone_report and not tone_error:
-                                st.session_state["uploaded_gd_tone_cache_key"] = tone_cache_key
-                                st.session_state["uploaded_gd_tone_report_cache"] = tone_report
-                        if tone_report:
-                            report["VocalToneAssessment"] = tone_report
-                        else:
-                            report["VocalToneAssessment"] = {"AvailabilityNote": tone_error or "Vocal-tone feedback could not be generated."}
-                            st.warning("Vocal-tone feedback could not be generated from the available audio.")
-                    else:
-                        report["VocalToneAssessment"] = {"AvailabilityNote": "The audio sample was unavailable; rerun transcription or check the uploaded recording."}
-                        st.warning("Vocal-tone feedback is mandatory, but the audio sample was unavailable.")
+                    # No additional OpenAI vocal-tone or body-language analysis is run for GD.
+                    report.pop("VocalToneAssessment", None)
+                    report.pop("NonVerbalAssessment", None)
                     st.session_state["uploaded_gd_report"] = report
                     st.session_state["uploaded_gd_report_share_token"] = uuid.uuid4().hex
                     st.session_state["uploaded_gd_shared_scholar_ids"] = []
@@ -8950,20 +8730,7 @@ elif selected_nav == "Group Discussion Hub":
                                 st.write(f"• {value}")
                         else:
                             st.write("No specific points returned.")
-                    nonverbal_group = (report.get("NonVerbalAssessment") or {}).get("GroupBodyLanguage", {}) or {}
-                    if nonverbal_group:
-                        st.markdown("### Group Body Language")
-                        for visual_label, visual_key in (("Observations", "Observations"), ("Suggestions", "Suggestions")):
-                            visual_values = nonverbal_group.get(visual_key) or []
-                            st.markdown(f"**{visual_label}**")
-                            for visual_value in visual_values:
-                                st.write(f"• {visual_value}")
-                    nonverbal_note = (report.get("NonVerbalAssessment") or {}).get("AvailabilityNote")
-                    if nonverbal_note:
-                        st.info(nonverbal_note)
-
                     st.markdown("### Individual Feedback")
-                    tone_by_speaker = report.get("VocalToneAssessment", {}) or {}
                     for participant in report.get("Participants", []) or []:
                         pname = participant.get("Name") or "Unlabelled speaker"
                         assessment_incomplete = participant.get("AssessmentStatus") == "incomplete_missing_from_ai_response"
@@ -8974,23 +8741,6 @@ elif selected_nav == "Group Discussion Hub":
                             else:
                                 for label, key in (("Participation", "ParticipationScore"), ("Communication", "CommunicationScore"), ("Knowledge", "KnowledgeScore"), ("Analytical Thinking", "AnalyticalThinkingScore"), ("Listening & Teamwork", "ListeningTeamworkScore"), ("Leadership", "LeadershipScore")):
                                     st.write(f"**{label}:** {grade_from_score(participant.get(key, 0))}")
-                            tone_item = tone_by_speaker.get(participant.get("SpeakerID"), {}) if isinstance(tone_by_speaker, dict) else {}
-                            if not tone_item and isinstance(tone_by_speaker, dict):
-                                tone_item = next((v for k, v in tone_by_speaker.items() if speaker_map.get(k, k) == pname), {})
-                            st.markdown("**Vocal Tone & Delivery**")
-                            st.write(tone_item.get("ToneSummary") or tone_by_speaker.get("AvailabilityNote") or "No individual tone summary returned.")
-                            for tone_label, tone_key in (("What went well", "WhatWentWell"), ("To improve", "ToImprove"), ("Evidence limitations", "EvidenceLimitations")):
-                                for tone_value in tone_item.get(tone_key) or []:
-                                    st.write(f"• {tone_label}: {tone_value}")
-                            nonverbal_participants = ((report.get("NonVerbalAssessment") or {}).get("Participants") or [])
-                            matched_visual = next((item for item in nonverbal_participants if str(item.get("Name", "")).strip() == pname), None)
-                            st.markdown("**Body Language (sampled video frames)**")
-                            if matched_visual:
-                                for visual_label, visual_key in (("Observations", "BodyLanguageObservations"), ("Suggestions", "BodyLanguageSuggestions"), ("Limitations", "EvidenceLimitations")):
-                                    for visual_value in matched_visual.get(visual_key) or []:
-                                        st.write(f"• {visual_label}: {visual_value}")
-                            else:
-                                st.write((report.get("NonVerbalAssessment") or {}).get("AvailabilityNote") or "Individual body-language feedback could not be reliably assigned from sampled frames.")
                             for label, key in (("Evidence", "Evidence"), ("Strengths", "Strengths"), ("Areas to improve", "AreasToImprove"), ("Next action plan", "NextGDActionPlan")):
                                 values = participant.get(key) or []
                                 st.markdown(f"**{label}**")
@@ -9214,20 +8964,6 @@ elif selected_nav == "Group Discussion Hub":
                 for label, key in (("Strengths", "Strengths"), ("Improvements", "Improvements")):
                     readable_feedback.append(f"{label}:")
                     readable_feedback.extend([f"- {v}" for v in (saved_group.get(key) or [])] or ["- Not provided"])
-                for section_name, section in (("VOCAL TONE & DELIVERY", saved_report.get("VocalToneAssessment") or {}), ("BODY LANGUAGE", saved_report.get("NonVerbalAssessment") or {})):
-                    readable_feedback.extend(["", section_name])
-                    if section.get("AvailabilityNote"):
-                        readable_feedback.append(section["AvailabilityNote"])
-                    if section_name == "VOCAL TONE & DELIVERY":
-                        for speaker, item in section.items():
-                            if isinstance(item, dict):
-                                readable_feedback.extend(["", f"{speaker_map.get(speaker, speaker)}: {item.get('ToneSummary', '')}"])
-                                for key in ("WhatWentWell", "ToImprove", "EvidenceLimitations"):
-                                    readable_feedback.extend([f"- {v}" for v in (item.get(key) or [])])
-                    else:
-                        group_bl = section.get("GroupBodyLanguage") or {}
-                        for key in ("Observations", "Suggestions"):
-                            readable_feedback.extend([f"Group {key.lower()}:"] + [f"- {v}" for v in (group_bl.get(key) or [])])
                 readable_feedback.extend(["", "INDIVIDUAL FEEDBACK"])
                 for participant in saved_report.get("Participants", []) or []:
                     readable_feedback.extend([
@@ -9565,51 +9301,6 @@ elif selected_nav == "My Progress Dashboard":
                     else:
                         st.info("Individual participant details were not included in this saved report.")
 
-                    st.markdown("### Delivery & Non-verbal Feedback")
-                    tone = saved_gd_report.get("VocalToneAssessment") or {}
-                    with st.expander("Vocal Tone & Delivery", expanded=False):
-                        if tone.get("AvailabilityNote"):
-                            st.info(tone.get("AvailabilityNote"))
-                        tone_items = [(k, v) for k, v in tone.items() if isinstance(v, dict)]
-                        if tone_items:
-                            for speaker_id, item in tone_items:
-                                st.markdown(f"**{saved_gd_report.get('ParticipantScholarIDs', {}).get(speaker_id, '')} {speaker_id}**".strip())
-                                if item.get("ToneSummary"):
-                                    st.write(item.get("ToneSummary"))
-                                tone_left, tone_right = st.columns(2)
-                                with tone_left:
-                                    st.markdown("*What went well*")
-                                    _gd_render_items("What Went Well", item.get("WhatWentWell"), "Not recorded.")
-                                with tone_right:
-                                    st.markdown("*To improve*")
-                                    _gd_render_items("To Improve", item.get("ToImprove"), "Not recorded.")
-                                if item.get("EvidenceLimitations"):
-                                    st.caption("Evidence limitations")
-                                    _gd_render_items("Evidence Limitations", item.get("EvidenceLimitations"))
-                        else:
-                            st.caption("No speaker-specific vocal-tone details were saved.")
-
-                    body = saved_gd_report.get("NonVerbalAssessment") or {}
-                    with st.expander("Body Language Assessment", expanded=False):
-                        if body.get("AvailabilityNote"):
-                            st.info(body.get("AvailabilityNote"))
-                        group_body = body.get("GroupBodyLanguage") or {}
-                        body_left, body_right = st.columns(2)
-                        with body_left:
-                            st.markdown("**Group observations**")
-                            _gd_render_items("Observations", group_body.get("Observations"), "No observations recorded.")
-                        with body_right:
-                            st.markdown("**Suggestions**")
-                            _gd_render_items("Suggestions", group_body.get("Suggestions"), "No suggestions recorded.")
-                        body_participants = body.get("Participants") or []
-                        if body_participants:
-                            st.markdown("**Participant observations**")
-                            for item in body_participants:
-                                with st.container(border=True):
-                                    st.markdown(f"**{item.get('Name') or item.get('SpeakerID') or 'Participant'}**")
-                                    _gd_render_items("Observations", item.get("Observations") or item.get("BodyLanguageObservations"), "No individual observations recorded.")
-                                    _gd_render_items("Suggestions", item.get("Suggestions") or item.get("BodyLanguageSuggestions"), "No individual suggestions recorded.")
-
                     with st.expander("View raw assessment data (technical)", expanded=False):
                         st.json(saved_gd_report)
                 else:
@@ -9638,7 +9329,6 @@ elif selected_nav == "My Progress Dashboard":
             "GrammarIssues": "Grammar Issues",
             "FillerWordsUsed": "Filler Words Used",
             "RateOfSpeechAssessment": "Rate of Speech",
-            "ToneAssessment": "Tone",
             "ClarityAssessment": "Clarity",
             "CommunicationStrengths": "Communication Strengths",
             "CommunicationImprovements": "Communication Improvements",
