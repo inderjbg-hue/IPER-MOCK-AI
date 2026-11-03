@@ -1,3 +1,7 @@
+import time as _peptech_startup_clock
+_PEPTECH_PROCESS_BOOT_AT = _peptech_startup_clock.perf_counter()
+print("[PEPTECH startup] Python script execution started", flush=True)
+
 import os
 import sys
 import base64
@@ -32,6 +36,12 @@ except Exception:
     webrtc_streamer = None
     WebRtcMode = None
     STREAMLIT_WEBRTC_AVAILABLE = False
+
+print(
+    f"[PEPTECH startup] top-level imports completed: "
+    f"{_peptech_startup_clock.perf_counter() - _PEPTECH_PROCESS_BOOT_AT:.2f}s",
+    flush=True,
+)
 
 # ------------------------------------------------------------------------------
 # 1. ENVIRONMENT & STREAMLIT CONFIGURATION
@@ -1163,11 +1173,19 @@ class PostgresCursorWrapper:
 class PostgresPoolState:
     """Process-wide bounded PostgreSQL pool with a short wait for available slots."""
     def __init__(self, url, minconn=1, maxconn=8):
+        _pool_started_at = time.perf_counter()
+        print("[PEPTECH startup] PostgreSQL connection pool creation started", flush=True)
         self.pool = ThreadedConnectionPool(minconn, maxconn, url, connect_timeout=10)
         self.semaphore = threading.BoundedSemaphore(maxconn)
         self.acquire_timeout = 15
+        print(
+            f"[PEPTECH startup] PostgreSQL connection pool created: "
+            f"{time.perf_counter() - _pool_started_at:.2f}s",
+            flush=True,
+        )
 
     def acquire(self):
+        _acquire_started_at = time.perf_counter()
         if not self.semaphore.acquire(timeout=self.acquire_timeout):
             raise RuntimeError(
                 "The database is busy handling other requests. Please wait a few seconds and try again."
@@ -1189,6 +1207,11 @@ class PostgresPoolState:
                     with conn.cursor() as cur:
                         cur.execute("SELECT 1")
                         cur.fetchone()
+                    print(
+                        f"[PEPTECH startup] PostgreSQL connection acquired and checked: "
+                        f"{time.perf_counter() - _acquire_started_at:.2f}s",
+                        flush=True,
+                    )
                     return conn
                 except (psycopg2.OperationalError, psycopg2.InterfaceError):
                     self.pool.putconn(conn, close=True)
@@ -2172,12 +2195,26 @@ def build_professional_resume_pdf(resume_text, candidate_name, email="", phone="
 
 @st.cache_resource(show_spinner=False)
 def init_database():
+    _init_started_at = time.perf_counter()
+    print("[PEPTECH startup] init_database entered", flush=True)
+    _connection_started_at = time.perf_counter()
     conn = get_db_connection()
+    print(
+        f"[PEPTECH startup] init_database database connection ready: "
+        f"{time.perf_counter() - _connection_started_at:.2f}s",
+        flush=True,
+    )
     try:
         if USING_POSTGRES:
             # Transaction-scoped lock serialises schema changes/backfills when
             # multiple Streamlit app workers start against the same database.
+            _lock_started_at = time.perf_counter()
             conn.execute("SELECT pg_advisory_xact_lock(731942, 20261101)")
+            print(
+                f"[PEPTECH startup] PostgreSQL schema lock acquired: "
+                f"{time.perf_counter() - _lock_started_at:.2f}s",
+                flush=True,
+            )
 
         conn.execute("""
             CREATE TABLE IF NOT EXISTS students (
@@ -2522,13 +2559,25 @@ def init_database():
             (history_migration_key,),
         ).fetchone()
         if not history_migration:
+            _backfill_started_at = time.perf_counter()
+            print("[PEPTECH startup] historical activity backfill started", flush=True)
             if _backfill_student_activity_history(conn):
+                print(
+                    f"[PEPTECH startup] historical activity backfill completed: "
+                    f"{time.perf_counter() - _backfill_started_at:.2f}s",
+                    flush=True,
+                )
                 conn.execute(
                     "INSERT INTO app_migrations (migration_key, applied_at) VALUES (?, ?) "
                     "ON CONFLICT(migration_key) DO NOTHING",
                     (history_migration_key, activity_timestamp_now()),
                 )
         conn.commit()
+        print(
+            f"[PEPTECH startup] init_database completed: "
+            f"{time.perf_counter() - _init_started_at:.2f}s",
+            flush=True,
+        )
     except Exception:
         try:
             conn.rollback()
@@ -5679,6 +5728,7 @@ def render_authentication_panel():
             st.markdown('<div class="auth-footer">IPER PEPTECH • Placement & Career Readiness</div></div>', unsafe_allow_html=True)
 
 
+print("[PEPTECH startup] entering pre-login initialization", flush=True)
 _startup_db_started_at = time.perf_counter()
 init_database()
 print(f"[PEPTECH startup] database initialization: {time.perf_counter() - _startup_db_started_at:.2f}s")
@@ -5696,7 +5746,14 @@ if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
 if not st.session_state["authenticated"]:
+    _auth_render_started_at = time.perf_counter()
+    print("[PEPTECH startup] rendering login screen", flush=True)
     render_authentication_panel()
+    print(
+        f"[PEPTECH startup] login screen render completed: "
+        f"{time.perf_counter() - _auth_render_started_at:.2f}s",
+        flush=True,
+    )
     st.stop()
 
 # Legacy career-tip popup state is no longer used.
