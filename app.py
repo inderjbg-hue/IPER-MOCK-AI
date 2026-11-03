@@ -1413,7 +1413,9 @@ def _gd_report_score_and_feedback(report):
 
 
 def _backfill_student_activity_history(conn):
-    """Copy summaries from existing detailed tables; uniqueness makes this safe on reruns."""
+    """Copy summaries from existing detailed tables; return True only when all sources were read."""
+    backfill_complete = True
+
     # Existing PI/interview attempts.
     try:
         rows = conn.execute("""
@@ -1435,8 +1437,8 @@ def _backfill_student_activity_history(conn):
                 feedback=feedback, source_table="interview_attempts", source_record_id=row["id"],
             )
     except Exception:
-        # Preserve app availability if a legacy database has an unexpected shape.
-        pass
+        # Do not mark the one-time migration complete if any source could not be read.
+        backfill_complete = False
 
     # Existing AI Voice GD and uploaded-video GD records.
     try:
@@ -1453,7 +1455,8 @@ def _backfill_student_activity_history(conn):
                 source_table="gd_assessments", source_record_id=row["id"],
             )
     except Exception:
-        pass
+        # Keep the migration retryable; never claim a partial backfill is complete.
+        backfill_complete = False
 
     # Legacy in-room GD feedback stored in gd_feedback.
     try:
@@ -1473,7 +1476,10 @@ def _backfill_student_activity_history(conn):
                 feedback=feedback, source_table="gd_feedback", source_record_id=row["id"],
             )
     except Exception:
-        pass
+        # Keep the migration retryable; never claim a partial backfill is complete.
+        backfill_complete = False
+
+    return backfill_complete
 
 
 def save_resume_activity(student_id, scholar_id, ats_result, job_description=""):
@@ -2464,6 +2470,16 @@ def init_database():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_scholar_time ON student_activity_log (scholar_id, activity_timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_type_time ON student_activity_log (activity_type, activity_timestamp)")
 
+        # Persistent migration ledger: survives app restarts and prevents a
+        # completed history backfill from scanning every historical assessment
+        # on every new worker start.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS app_migrations (
+                migration_key TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            )
+        """)
+
         # Persistent cache for expensive GD speaker diarisation. Keyed by the
         # SHA-256 of the normalized extracted audio, so renamed/re-uploaded copies
         # reuse the same speaker-labelled transcript across student sessions.
@@ -2497,8 +2513,21 @@ def init_database():
                 (slot, 'Not allocated', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             )
 
-        # Idempotent historical backfill: reruns never duplicate an activity row.
-        _backfill_student_activity_history(conn)
+        # One-time historical backfill. The marker is committed in the same
+        # transaction as the inserted history rows, so an interrupted run can
+        # safely retry and a completed run is skipped across app restarts.
+        history_migration_key = "student_activity_history_backfill_v1"
+        history_migration = conn.execute(
+            "SELECT migration_key FROM app_migrations WHERE migration_key=? LIMIT 1",
+            (history_migration_key,),
+        ).fetchone()
+        if not history_migration:
+            if _backfill_student_activity_history(conn):
+                conn.execute(
+                    "INSERT INTO app_migrations (migration_key, applied_at) VALUES (?, ?) "
+                    "ON CONFLICT(migration_key) DO NOTHING",
+                    (history_migration_key, activity_timestamp_now()),
+                )
         conn.commit()
     except Exception:
         try:
@@ -5650,8 +5679,13 @@ def render_authentication_panel():
             st.markdown('<div class="auth-footer">IPER PEPTECH • Placement & Career Readiness</div></div>', unsafe_allow_html=True)
 
 
+_startup_db_started_at = time.perf_counter()
 init_database()
+print(f"[PEPTECH startup] database initialization: {time.perf_counter() - _startup_db_started_at:.2f}s")
+
+_startup_migration_started_at = time.perf_counter()
 migrate_local_sqlite_to_postgres()
+print(f"[PEPTECH startup] SQLite-to-PostgreSQL migration check: {time.perf_counter() - _startup_migration_started_at:.2f}s")
 
 if not DATABASE_URL:
     require_persistent_database_for_production()
