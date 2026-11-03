@@ -55,7 +55,15 @@ ssl._create_default_https_context = ssl._create_unverified_context
 
 st.set_page_config(page_title="IPER PEPTECH", layout="wide")
 
-# Temporarily disabled options (set to True to re-enable without removing their implementation).
+# ------------------------------------------------------------------------------
+# AI FEATURE CONFIGURATION — COST-CONTROLLED PEPTECH SETUP
+# ------------------------------------------------------------------------------
+# GD: retain OpenAI speaker-diarised transcription so speaker-wise participation
+#     analysis continues to work. This is the only OpenAI API call in the app.
+# PI: keep both audio and video response modes enabled. Audio extracted from PI
+#     recordings is transcribed through Groq (whisper-large-v3-turbo).
+# Tone/body-language: no tone, facial-expression, gesture, eye-contact, or visual
+#     body-language analysis is invoked in the PI or GD assessment workflows.
 ENABLE_UPLOADED_GD_TRANSCRIBE_IDENTIFY = True
 ENABLE_VIDEO_INTERVIEW_MODE = True
 ENABLE_GD_AUTO_NAME_IDENTIFICATION = False
@@ -324,8 +332,8 @@ if GROQ_API_KEY and GROQ_API_KEY != "YOUR_GROQ_API_KEY_HERE":
 else:
     client = None
 
-# OpenAI is optional at startup. It is required only for the uploaded-GD
-# speaker diarization/transcription workflow.
+# OpenAI is optional at startup and deliberately retained only for uploaded-GD
+# speaker diarization/transcription. PI audio and video transcription use Groq.
 try:
     OPENAI_API_KEY = str(st.secrets.get("OPENAI_API_KEY", "") or "").strip()
 except Exception:
