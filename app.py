@@ -2464,6 +2464,19 @@ def init_database():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_scholar_time ON student_activity_log (scholar_id, activity_timestamp)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_activity_type_time ON student_activity_log (activity_type, activity_timestamp)")
 
+        # Persistent cache for expensive GD speaker diarisation. Keyed by the
+        # SHA-256 of the normalized extracted audio, so renamed/re-uploaded copies
+        # reuse the same speaker-labelled transcript across student sessions.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS gd_diarization_cache (
+                audio_sha256 TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                segments_json TEXT NOT NULL,
+                split_notes_json TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+
         mis_view_sql = """
             SELECT a.id AS activity_id, a.student_id, a.scholar_id,
                    COALESCE(NULLIF(TRIM(COALESCE(s.first_name, '') || ' ' || COALESCE(s.last_name, '')), ''), r.full_name) AS student_name,
@@ -4042,6 +4055,86 @@ ATTEMPTED RESPONSE:
                 "Please retry once. If it repeats, share the timestamp with the administrator. "
                 f"(Parse: {type(first_parse_error).__name__}; repair: {type(repair_error).__name__})"
             )
+
+
+def _gd_audio_sha256(audio_path):
+    """Hash normalized extracted audio so identical recordings share one cache entry."""
+    digest = hashlib.sha256()
+    with open(audio_path, "rb") as audio_file:
+        for chunk in iter(lambda: audio_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _get_cached_gd_diarization(audio_sha256):
+    """Return previously saved diarisation segments and split notes, if available."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        row = conn.execute(
+            "SELECT segments_json, split_notes_json FROM gd_diarization_cache WHERE audio_sha256=?",
+            (audio_sha256,),
+        ).fetchone()
+        if not row:
+            return None
+        segments = json.loads(row["segments_json"] or "[]")
+        split_notes = json.loads(row["split_notes_json"] or "[]")
+        if not isinstance(segments, list) or not segments:
+            return None
+        return segments, split_notes if isinstance(split_notes, list) else []
+    except Exception as exc:
+        # A cache outage must never block the existing diarisation workflow.
+        st.warning(f"Saved GD transcript cache could not be checked; continuing with normal diarisation. ({type(exc).__name__})")
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _save_cached_gd_diarization(audio_sha256, segments, split_notes):
+    """Persist successful diarisation for reuse across sessions and duplicate uploads."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            """
+            INSERT INTO gd_diarization_cache
+                (audio_sha256, model, segments_json, split_notes_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(audio_sha256) DO UPDATE SET
+                model=excluded.model,
+                segments_json=excluded.segments_json,
+                split_notes_json=excluded.split_notes_json,
+                created_at=excluded.created_at
+            """,
+            (
+                audio_sha256,
+                "gpt-4o-transcribe-diarize",
+                json.dumps(segments, ensure_ascii=False),
+                json.dumps(split_notes or [], ensure_ascii=False),
+                activity_timestamp_now(),
+            ),
+        )
+        conn.commit()
+        return True
+    except Exception as exc:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        # Cache persistence is an optimization; don't discard a valid transcript.
+        st.warning(f"GD diarisation completed, but its reusable cache could not be saved. ({type(exc).__name__})")
+        return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def save_gd_video_assessment(scholar_id, topic, participants, segments, report, video_filename, source_type="Video GD"):
@@ -8862,6 +8955,8 @@ elif selected_nav == "Group Discussion Hub":
                 key="rerun_uploaded_gd_diarization_confirm",
                 help="Explicitly discard the current transcript and run diarisation again for this recording.",
             ):
+                # Explicit user-requested rerun bypasses the persistent cache once.
+                st.session_state["uploaded_gd_force_rediarize"] = True
                 old_audio_path = st.session_state.get("uploaded_gd_audio_path")
                 if old_audio_path and os.path.isfile(old_audio_path):
                     try:
@@ -8905,16 +9000,26 @@ elif selected_nav == "Group Discussion Hub":
                     extraction_seconds = time.perf_counter() - stage_started
 
                     stage_started = time.perf_counter()
-                    with st.spinner("Step 2/3: Transcribing English speech and identifying speaker turns..."):
-                        segments, diarization_error = transcribe_gd_with_diarization(audio_temp_path)
+                    audio_fingerprint = _gd_audio_sha256(audio_temp_path)
+                    force_rediarize = bool(st.session_state.pop("uploaded_gd_force_rediarize", False))
+                    cached_diarization = None if force_rediarize else _get_cached_gd_diarization(audio_fingerprint)
+                    if cached_diarization:
+                        segments, split_notes = cached_diarization
+                        st.info("This recording has already been diarised. Reusing its saved speaker-labelled transcript — no new OpenAI diarisation call.")
+                        diarization_error = None
+                    else:
+                        with st.spinner("Step 2/3: Transcribing English speech and identifying speaker turns..."):
+                            segments, diarization_error = transcribe_gd_with_diarization(audio_temp_path)
+                        if not diarization_error:
+                            # Split a merged diarisation ID at a conflicting later
+                            # self-introduction, or at a later greeting when no nearby
+                            # self-introduction is available. Text and timestamps stay intact.
+                            segments, split_notes = split_gd_segments_on_conflicting_introductions(segments)
+                            _save_cached_gd_diarization(audio_fingerprint, segments, split_notes)
                     transcription_seconds = time.perf_counter() - stage_started
                     if diarization_error:
                         st.error(diarization_error)
                     else:
-                        # Split a merged diarisation ID at a conflicting later
-                        # self-introduction, or at a later greeting when no nearby
-                        # self-introduction is available. Text and timestamps stay intact.
-                        segments, split_notes = split_gd_segments_on_conflicting_introductions(segments)
                         st.session_state["uploaded_gd_split_notes"] = split_notes
                         st.session_state["uploaded_gd_segments"] = segments
                         st.session_state["uploaded_gd_topic_processed"] = video_topic.strip()
@@ -9152,45 +9257,53 @@ elif selected_nav == "Group Discussion Hub":
                     except Exception as save_exc:
                         st.error(f"Could not save the GD report to your account: {save_exc}")
 
-                # Restore per-speaker Scholar ID mapping. This is separate from the
-                # optional one-at-a-time sharing control below: each detected voice
-                # can be explicitly linked to a participant before the group report
-                # is saved to all participants' progress histories.
-                st.markdown("**Match each detected speaker to a participant**")
+                # Scholar ID matching is optional because diarisation can detect
+                # background voices or split one participant into multiple labels.
+                # Only explicitly mapped speakers receive a saved participant copy.
+                st.markdown("**Optionally match detected speakers to participants**")
                 st.caption(
-                    "Enter the exact Scholar ID for every speaker. Speaker labels remain provisional; "
-                    "please verify each match against the recording. The portal checks IDs against "
-                    "registered student accounts or the active student roster."
+                    "Speaker detection may include background voices or split one participant into "
+                    "multiple labels. Enter Scholar IDs only for speakers you can confidently match. "
+                    "Leave uncertain or extra speakers blank; the uploader will still retain the group report."
                 )
                 final_speaker_map = st.session_state.get("uploaded_gd_final_speaker_map", {}) or {}
                 final_speaker_ids = list(final_speaker_map.keys())
                 mapping_already_saved = st.session_state.get("uploaded_gd_mapped_save_token") == share_token
                 if mapping_already_saved:
-                    st.info("Speaker-to-student mapping has already been saved for this assessment.")
+                    st.info("Participant feedback has already been saved for the Scholar IDs entered.")
                 with st.form("uploaded_gd_participant_scholar_mapping_form"):
                     submitted_scholar_ids = {}
                     for map_idx, sid in enumerate(final_speaker_ids):
                         speaker_display = final_speaker_map.get(sid, f"Speaker {map_idx + 1}")
                         submitted_scholar_ids[sid] = st.text_input(
-                            f"{speaker_display} — Scholar ID",
+                            f"{speaker_display} — Scholar ID (optional)",
                             key=f"uploaded_gd_scholar_{map_idx}_{sid}",
-                            placeholder="Enter exact Scholar ID",
+                            placeholder="Leave blank if unsure or not a participant",
                         ).strip().upper()
                     save_all_participants = st.form_submit_button(
-                        "Save Complete GD Feedback to Participants",
+                        "Save Feedback for Entered Participants",
                         use_container_width=True,
                         disabled=(not bool(final_speaker_ids)) or mapping_already_saved,
                     )
 
                 if save_all_participants:
-                    normalized_ids = [submitted_scholar_ids.get(sid, "") for sid in final_speaker_ids]
-                    if any(not value for value in normalized_ids):
-                        st.error("Please enter a Scholar ID for every detected speaker before saving.")
+                    mapping_by_speaker = {
+                        sid: submitted_scholar_ids.get(sid, "")
+                        for sid in final_speaker_ids
+                        if submitted_scholar_ids.get(sid, "").strip()
+                    }
+                    normalized_ids = list(mapping_by_speaker.values())
+                    if not normalized_ids:
+                        st.info(
+                            "No participant Scholar IDs were entered. The group report remains saved "
+                            "for the uploader; unmatched speakers were skipped."
+                        )
                     elif len(set(normalized_ids)) != len(normalized_ids):
                         st.error("The same Scholar ID has been entered for multiple speakers. Please check the entries.")
                     else:
                         validation_conn = None
                         valid_ids = set()
+                        validation_failed = False
                         try:
                             validation_conn = get_db_connection()
                             for scholar in normalized_ids:
@@ -9205,17 +9318,15 @@ elif selected_nav == "Group Discussion Hub":
                                 if student_row or roster_row:
                                     valid_ids.add(scholar)
                         except Exception as validation_exc:
+                            validation_failed = True
                             st.error(f"Could not validate the participant Scholar IDs: {validation_exc}")
                         finally:
                             if validation_conn is not None:
                                 validation_conn.close()
 
                         invalid_ids = [scholar for scholar in normalized_ids if scholar not in valid_ids]
-                        if not invalid_ids and len(valid_ids) == len(normalized_ids):
+                        if not validation_failed and not invalid_ids:
                             try:
-                                mapping_by_speaker = {
-                                    sid: submitted_scholar_ids[sid] for sid in final_speaker_ids
-                                }
                                 report_for_save = dict(saved_report)
                                 report_for_save["ParticipantScholarIDs"] = mapping_by_speaker
                                 for person in report_for_save.get("Participants", []) or []:
@@ -9228,7 +9339,7 @@ elif selected_nav == "Group Discussion Hub":
                                         "Name": final_speaker_map.get(sid, sid),
                                         "ScholarID": mapping_by_speaker[sid],
                                     }
-                                    for sid in final_speaker_ids
+                                    for sid in mapping_by_speaker
                                 ]
                                 saved_count = 0
                                 for scholar in normalized_ids:
@@ -9249,11 +9360,11 @@ elif selected_nav == "Group Discussion Hub":
                                 st.session_state["uploaded_gd_manual_saved_map"] = mapping_by_speaker
                                 st.session_state["uploaded_gd_mapped_save_token"] = share_token
                                 st.success(
-                                    f"Complete GD feedback saved for {saved_count} additional participant(s). "
-                                    "The uploader's own report remains saved in their progress history."
+                                    f"Feedback saved for {saved_count} additional participant(s) "
+                                    "whose Scholar IDs you entered. Unmatched speakers were skipped."
                                 )
                             except Exception as save_exc:
-                                st.error(f"Feedback could not be saved for all participants: {save_exc}")
+                                st.error(f"Feedback could not be saved for the selected participants: {save_exc}")
                         elif invalid_ids:
                             st.error(
                                 "These Scholar IDs were not found in registered student accounts or the active roster: "
